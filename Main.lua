@@ -177,3 +177,4 @@ else
 end
 
 LOG("BOOT", "✅ WHITE HUB — all systems running.")
+_G.WhiteHubModules = Modules
