@@ -1,40 +1,26 @@
 -- =====================
 -- Farm.lua
--- Main farm controller. Coordinates all systems and runs the farm loop.
--- Phase 1: Normal farm until 9 Lucky Arrows + $1,000,000
--- Phase 2: Keep-item farm until all disabled-sell items are maxed
--- Phase 3: Full idle — only collects Lucky Arrows from the ground
 -- =====================
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local MarketplaceService = game:GetService("MarketplaceService")
 local Workspace         = game:GetService("Workspace")
 
 local Player = Players.LocalPlayer
+local Farm   = {}
 
-local Farm = {}
-
--- Module references (set via Init)
 local _config    = nil
 local _inventory = nil
 local _movement  = nil
 local _serverHop = nil
 local _webhook   = nil
 
--- =====================
--- ITEM DETECTION STATE
--- =====================
-local SpawnedItems   = {}
+local SpawnedItems    = {}
 local ItemSpawnFolder = nil
-
 local NO_ITEM_TIMEOUT = 20
 local lastItemTime    = tick()
 
--- =====================
--- INIT
--- =====================
 function Farm:Init(Modules)
     _config    = Modules.Config
     _inventory = Modules.Inventory
@@ -43,29 +29,20 @@ function Farm:Init(Modules)
     _webhook   = Modules.Webhook
 end
 
--- =====================
--- HOOKS (magnitude bypass)
--- =====================
 local function ApplyHooks()
     pcall(function()
         local oldMag
         oldMag = hookmetamethod(Vector3.new(), "__index", newcclosure(function(self, index)
             local src = tostring(getcallingscript())
-            if not checkcaller() and index == "magnitude" and src == "ItemSpawn" then
-                return 0
-            end
+            if not checkcaller() and index == "magnitude" and src == "ItemSpawn" then return 0 end
             return oldMag(self, index)
         end))
     end)
-
-    -- Teleport bypass
     pcall(function()
         local oldNc
         oldNc = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
             local args = {...}
-            if not checkcaller()
-            and rawequal(self.Name, "Returner")
-            and rawequal(args[1], "idklolbrah2de") then
+            if not checkcaller() and rawequal(self.Name, "Returner") and rawequal(args[1], "idklolbrah2de") then
                 return "  ___XP DE KEY"
             end
             return oldNc(self, ...)
@@ -73,9 +50,6 @@ local function ApplyHooks()
     end)
 end
 
--- =====================
--- CRASH BYPASS
--- =====================
 local function ApplyCrashBypass()
     task.delay(3, function()
         pcall(function()
@@ -94,9 +68,6 @@ local function ApplyCrashBypass()
     end)
 end
 
--- =====================
--- ANTI AFK
--- =====================
 local function ApplyAntiAfk()
     pcall(function()
         Player.Idled:Connect(function()
@@ -105,9 +76,6 @@ local function ApplyAntiAfk()
     end)
 end
 
--- =====================
--- SKIP LOADING SCREEN
--- =====================
 local function SkipLoadingScreen()
     task.wait(1)
     pcall(function()
@@ -124,27 +92,19 @@ local function SkipLoadingScreen()
     end)
 end
 
--- =====================
--- ITEM DETECTION
--- =====================
 local function GetItemInfo(model)
-    if not (model and model:IsA("Model") and model.Parent and model.Parent.Name == "Items") then
-        return nil
-    end
+    if not (model and model:IsA("Model") and model.Parent and model.Parent.Name == "Items") then return nil end
     local pp = model.PrimaryPart
     if not pp then return nil end
     local prompt
     for _, v in pairs(model:GetChildren()) do
-        if v:IsA("ProximityPrompt") and v.MaxActivationDistance ~= 0 then
-            prompt = v break
-        end
+        if v:IsA("ProximityPrompt") and v.MaxActivationDistance ~= 0 then prompt = v break end
     end
     if not prompt then return nil end
-    return {Name=prompt.ObjectText, ProximityPrompt=prompt, Position=pp.Position}
+    return { Name = prompt.ObjectText, ProximityPrompt = prompt, Position = pp.Position }
 end
 
 local function InitItemDetection()
-    -- Find folder
     pcall(function()
         local spawns = Workspace:WaitForChild("Item_Spawns", 15)
         if spawns then ItemSpawnFolder = spawns:WaitForChild("Items", 15) end
@@ -156,25 +116,18 @@ local function InitItemDetection()
         end)
     end
     if not ItemSpawnFolder then
-        warn("[Farm] ERROR: Item_Spawns/Items folder not found.")
+        warn("[Farm] Item_Spawns/Items não encontrado.")
         return
     end
-    print("[Farm] Item_Spawns/Items folder found.")
-
-    -- Detect existing items
+    print("[Farm] Item_Spawns/Items encontrado.")
     for _, model in pairs(ItemSpawnFolder:GetChildren()) do
         pcall(function()
             if model:IsA("Model") then
                 local info = GetItemInfo(model)
-                if info then
-                    SpawnedItems[model] = info
-                    print("[Farm] Existing item detected: " .. info.Name)
-                end
+                if info then SpawnedItems[model] = info end
             end
         end)
     end
-
-    -- Detect new items
     ItemSpawnFolder.ChildAdded:Connect(function(model)
         task.wait(1)
         pcall(function()
@@ -182,16 +135,13 @@ local function InitItemDetection()
                 local info = GetItemInfo(model)
                 if info then
                     SpawnedItems[model] = info
-                    print("[Farm] Item detected: " .. info.Name)
+                    print("[Farm] Item detectado: " .. info.Name)
                 end
             end
         end)
     end)
 end
 
--- =====================
--- COLLECT ITEM
--- =====================
 local SAFE_SPOT = CFrame.new(978, -42, -49)
 
 local function CollectItem(itemInfo, index)
@@ -199,14 +149,9 @@ local function CollectItem(itemInfo, index)
     if not hrp then return end
     SpawnedItems[index] = nil
     if _inventory:HasMax(itemInfo.Name) then return end
-
     local bv = _movement:Freeze()
     _movement:SetNoclip(true)
-    _movement:Teleport(CFrame.new(
-        itemInfo.Position.X,
-        itemInfo.Position.Y - 25,
-        itemInfo.Position.Z
-    ))
+    _movement:Teleport(CFrame.new(itemInfo.Position.X, itemInfo.Position.Y - 25, itemInfo.Position.Z))
     task.wait(.5)
     pcall(function() fireproximityprompt(itemInfo.ProximityPrompt) end)
     task.wait(.5)
@@ -215,23 +160,17 @@ local function CollectItem(itemInfo, index)
     task.wait(.3)
     _movement:SetNoclip(false)
     lastItemTime = tick()
-    print("[Farm] Collected: " .. itemInfo.Name)
+    print("[Farm] Coletado: " .. itemInfo.Name)
 end
 
--- =====================
--- SERVER HOP WRAPPER
--- =====================
 local function DoHop()
-    print("[Farm] Server dry — selling, buying, then hopping...")
+    print("[Farm] Server seco — vendendo, comprando e trocando...")
     _inventory:SellAll()
     _inventory:BuyLucky()
     _serverHop:Hop()
     lastItemTime = tick()
 end
 
--- =====================
--- WEBHOOK LISTENER
--- =====================
 local function SetupWebhookListener()
     Player.Backpack.ChildAdded:Connect(function(tool)
         if tool.Name == "Lucky Arrow" and _inventory:ShouldStopPhase1() then
@@ -244,39 +183,38 @@ local function SetupWebhookListener()
     end)
 end
 
--- =====================
--- STARTUP SEQUENCE
--- =====================
 local function Startup()
     SkipLoadingScreen()
 
-    local playerChar = _movement:GetCharacter()
-    repeat task.wait() until playerChar and _movement:GetCharacter("RemoteEvent")
-    print("[Farm] Character loaded.")
+    -- ✅ PATCH: repeat com timeout de 30s em vez de loop infinito
+    local waitTime = 0
+    repeat
+        task.wait(0.5)
+        waitTime += 0.5
+        if waitTime > 30 then
+            warn("[Farm] Timeout esperando RemoteEvent — continuando mesmo assim.")
+            break
+        end
+    until _movement:GetCharacter("RemoteEvent")
 
+    print("[Farm] Character carregado.")
     pcall(function()
         _movement:GetCharacter("RemoteEvent"):FireServer("PressedPlay")
     end)
 
-    print("[Farm] Teleporting to safe spot...")
+    print("[Farm] Teleportando para safe spot...")
     _movement:Teleport(SAFE_SPOT)
     task.wait(1)
     _movement:FixCamera()
 
     local hrp = _movement:GetCharacter("HumanoidRootPart")
-    if hrp then
-        print("[Farm] Position: " .. tostring(hrp.Position))
-    else
-        warn("[Farm] HumanoidRootPart not found.")
-    end
+    if hrp then print("[Farm] Posição: " .. tostring(hrp.Position))
+    else warn("[Farm] HumanoidRootPart não encontrado.") end
 
-    print("[Farm] Waiting 5 seconds before starting farm loop...")
+    print("[Farm] Aguardando 5s antes do loop...")
     task.wait(5)
 end
 
--- =====================
--- MAIN FARM LOOP
--- =====================
 function Farm:Start()
     ApplyHooks()
     ApplyCrashBypass()
@@ -285,52 +223,39 @@ function Farm:Start()
     SetupWebhookListener()
     Startup()
 
-    print("[Farm] Farm loop started.")
+    print("[Farm] Loop iniciado.")
 
     while true do
-
-        -- ===== PHASE 1: Normal farm =====
-        print("[Farm] >>> Phase 1 started — farming normally.")
+        print("[Farm] >>> Phase 1 — farmando normalmente.")
         while not _inventory:ShouldStopPhase1() do
             local snapshot = {}
             for idx, info in pairs(SpawnedItems) do
                 table.insert(snapshot, {Index=idx, ItemInfo=info})
             end
-
             for _, entry in ipairs(snapshot) do
                 if _inventory:ShouldStopPhase1() then break end
                 CollectItem(entry.ItemInfo, entry.Index)
             end
-
             local elapsed = tick() - lastItemTime
             if elapsed > NO_ITEM_TIMEOUT then
                 if _inventory:ShouldStopPhase1() then break end
                 DoHop()
             else
                 if #snapshot == 0 then
-                    print("[Farm] Waiting for items... (" .. math.floor(NO_ITEM_TIMEOUT - elapsed) .. "s until hop)")
+                    print("[Farm] Aguardando items... (" .. math.floor(NO_ITEM_TIMEOUT - elapsed) .. "s até hop)")
                 end
             end
-
             task.wait(1)
         end
 
-        -- Phase 1 wrap-up
         _inventory:SellAll()
         _inventory:BuyLucky()
-        print("[Farm] >>> Phase 1 complete.")
-        _webhook:SendPhase1Complete(
-            _inventory:Count("Lucky Arrow"),
-            _inventory:GetLuckyStop(),
-            _inventory:GetMoney()
-        )
+        print("[Farm] >>> Phase 1 completa.")
+        _webhook:SendPhase1Complete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
 
-        -- ===== PHASE 2: Keep-item farm =====
         local keepItems = _inventory:GetKeepItems()
-
         if #keepItems > 0 then
-            print("[Farm] >>> Phase 2 started — farming keep-items: " .. table.concat(keepItems, ", "))
-
+            print("[Farm] >>> Phase 2 — farmando keep-items: " .. table.concat(keepItems, ", "))
             while not _inventory:AllKeepItemsFull() do
                 local snapshot = {}
                 for idx, info in pairs(SpawnedItems) do
@@ -341,39 +266,30 @@ function Farm:Start()
                         if not isKeep then SpawnedItems[idx] = nil end
                     end
                 end
-
                 for _, entry in ipairs(snapshot) do
                     if _inventory:AllKeepItemsFull() then break end
                     CollectItem(entry.ItemInfo, entry.Index)
                 end
-
                 local elapsed = tick() - lastItemTime
                 if elapsed > NO_ITEM_TIMEOUT then
                     if _inventory:AllKeepItemsFull() then break end
-                    print("[Farm] Phase 2 — server dry, hopping...")
+                    print("[Farm] Phase 2 — server seco, trocando...")
                     _serverHop:Hop()
                     lastItemTime = tick()
                 else
                     if #snapshot == 0 then
-                        print("[Farm] Waiting for keep-items... (" .. math.floor(NO_ITEM_TIMEOUT - elapsed) .. "s until hop)")
+                        print("[Farm] Aguardando keep-items... (" .. math.floor(NO_ITEM_TIMEOUT - elapsed) .. "s até hop)")
                     end
                 end
-
                 task.wait(1)
             end
-
-            print("[Farm] >>> Phase 2 complete — all keep-items maxed.")
+            print("[Farm] >>> Phase 2 completa.")
         else
-            print("[Farm] >>> No keep-items configured — skipping Phase 2.")
+            print("[Farm] >>> Sem keep-items — pulando Phase 2.")
         end
 
-        -- ===== PHASE 3: Full idle =====
-        print("[Farm] >>> Phase 3 — fully stopped. Idling, only collecting Lucky Arrows.")
-        _webhook:SendAllComplete(
-            _inventory:Count("Lucky Arrow"),
-            _inventory:GetLuckyStop(),
-            _inventory:GetMoney()
-        )
+        print("[Farm] >>> Phase 3 — idling, só coletando Lucky Arrows.")
+        _webhook:SendAllComplete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
 
         while true do
             local snapshot = {}
@@ -389,13 +305,11 @@ function Farm:Start()
             end
             task.wait(3)
         end
-
     end
 end
 
 function Farm:Stop()
-    -- Reserved for future pause/stop UI button
-    print("[Farm] Stop requested (not yet implemented).")
+    print("[Farm] Stop solicitado.")
 end
 
 return Farm
