@@ -1,7 +1,7 @@
 -- =====================
 -- UI.lua (WHITE HUB V2 - Mobile Optimized)
--- Optimized for Delta / mobile executors
--- Window: 380x320 | Toggle button moved up
+-- Fixed close button: "X" 
+-- Added background images on MainFrame and ToggleBtn
 -- =====================
 
 local Players          = game:GetService("Players")
@@ -85,7 +85,7 @@ end
 
 local function MakeSection(parent, text)
     local frame = Instance.new("Frame")
-    frame.Size             = UDim2.new(1,-4,0,24)  -- slightly taller for touch
+    frame.Size             = UDim2.new(1,-4,0,24)
     frame.BackgroundColor3 = Color3.fromRGB(22,22,30)
     frame.BorderSizePixel  = 0
     frame.Parent           = parent
@@ -106,7 +106,7 @@ end
 
 local function MakeToggle(parent, labelText, default, onChanged)
     local holder = Instance.new("Frame")
-    holder.Size             = UDim2.new(1,-4,0,32)  -- taller for mobile
+    holder.Size             = UDim2.new(1,-4,0,32)
     holder.BackgroundColor3 = Color3.fromRGB(22,22,30)
     holder.BorderSizePixel  = 0
     holder.Parent           = parent
@@ -128,7 +128,7 @@ local function MakeToggle(parent, labelText, default, onChanged)
     local enabled = (default == nil) and true or default
 
     local track = Instance.new("TextButton")
-    track.Size             = UDim2.new(0,44,0,22)  -- larger for touch
+    track.Size             = UDim2.new(0,44,0,22)
     track.Position         = UDim2.new(1,-52,0.5,-11)
     track.BackgroundColor3 = enabled and Color3.fromRGB(145,95,255) or Color3.fromRGB(30,30,42)
     track.Text             = ""
@@ -137,7 +137,7 @@ local function MakeToggle(parent, labelText, default, onChanged)
     Instance.new("UICorner", track).CornerRadius = UDim.new(1,0)
 
     local circle = Instance.new("Frame")
-    circle.Size             = UDim2.new(0,15,0,15)  -- bigger circle
+    circle.Size             = UDim2.new(0,15,0,15)
     circle.Position         = enabled and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
     circle.BackgroundColor3 = Color3.fromRGB(255,255,255)
     circle.BorderSizePixel  = 0
@@ -162,9 +162,8 @@ end
 function UI:Create()
     CreateCreditsPopup()
 
-    local W, H = 380, 320  -- new size
+    local W, H = 380, 320
 
-    -- ScreenGui
     local ScreenGui = Instance.new("ScreenGui")
     ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     ScreenGui.ResetOnSpawn   = false
@@ -178,10 +177,21 @@ function UI:Create()
     MainFrame.Position         = UDim2.new(0.5,-W/2,0.5,-H/2)
     MainFrame.Size             = UDim2.new(0,W,0,H)
     MainFrame.Visible          = false
-    Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0,12)
+    local mfCorner = Instance.new("UICorner", MainFrame)
+    mfCorner.CornerRadius = UDim.new(0,12)
     local mfStroke = Instance.new("UIStroke", MainFrame)
     mfStroke.Color     = Color3.fromRGB(60,55,85)
     mfStroke.Thickness = 1.5
+
+    -- BACKGROUND IMAGE for MainFrame (WHITE DRAGON Decal)
+    local bgMain = Instance.new("ImageLabel", MainFrame)
+    bgMain.Size = UDim2.new(1,0,1,0)
+    bgMain.Position = UDim2.new(0,0,0,0)
+    bgMain.BackgroundTransparency = 1
+    bgMain.Image = "rbxassetid://125960754305591"  -- WHITE DRAGON decal
+    bgMain.ZIndex = 0
+    local bgMainCorner = Instance.new("UICorner", bgMain)
+    bgMainCorner.CornerRadius = mfCorner.CornerRadius
 
     -- TopBar
     local TopBar = Instance.new("Frame", MainFrame)
@@ -207,12 +217,13 @@ function UI:Create()
     Title.Font                   = Enum.Font.GothamBold
     Title.TextXAlignment         = Enum.TextXAlignment.Left
 
+    -- Close button fixed with "X"
     local CloseButton = Instance.new("TextButton", TopBar)
     CloseButton.BackgroundColor3 = Color3.fromRGB(180,50,50)
     CloseButton.BorderSizePixel  = 0
     CloseButton.Position         = UDim2.new(1,-30,0.5,-11)
-    CloseButton.Size             = UDim2.new(0,24,0,24)  -- slightly larger
-    CloseButton.Text             = "✕"
+    CloseButton.Size             = UDim2.new(0,24,0,24)
+    CloseButton.Text             = "X"
     CloseButton.TextColor3       = Color3.fromRGB(255,255,255)
     CloseButton.TextSize         = 16
     CloseButton.Font             = Enum.Font.GothamBold
@@ -223,7 +234,7 @@ function UI:Create()
     Sidebar.BackgroundTransparency = 1
     Sidebar.BorderSizePixel        = 0
     Sidebar.Position               = UDim2.new(0,6,0,42)
-    Sidebar.Size                   = UDim2.new(0,90,1,-50)  -- slightly narrower for balance
+    Sidebar.Size                   = UDim2.new(0,90,1,-50)
     local sideLayout = Instance.new("UIListLayout", Sidebar)
     sideLayout.Padding   = UDim.new(0,5)
     sideLayout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -244,7 +255,7 @@ function UI:Create()
         scroll.Active                  = true
         scroll.BackgroundTransparency  = 1
         scroll.BorderSizePixel         = 0
-        scroll.ScrollBarThickness      = 6  -- thicker for touch
+        scroll.ScrollBarThickness      = 6
         scroll.ScrollBarImageColor3    = Color3.fromRGB(140,90,255)
         scroll.Size                    = UDim2.new(1,0,1,0)
         scroll.Visible                 = false
@@ -262,12 +273,9 @@ function UI:Create()
     local ItemsPage   = MakePage("ItemsPage")
     local WebhookPage = MakePage("WebhookPage")
     local CreditsPage = MakePage("CreditsPage")
-
     FarmPage.Visible = true
 
-    -- =====================
-    -- TAB BUTTONS
-    -- =====================
+    -- Tab buttons
     local tabDefs = {
         { name="Farm",    page=FarmPage    },
         { name="Items",   page=ItemsPage   },
@@ -303,7 +311,7 @@ function UI:Create()
         local btn = Instance.new("TextButton", Sidebar)
         btn.BackgroundColor3 = C_BG2
         btn.BorderSizePixel  = 0
-        btn.Size             = UDim2.new(1,0,0,36)  -- taller for touch
+        btn.Size             = UDim2.new(1,0,0,36)
         btn.Text             = def.name
         btn.TextColor3       = C_Text
         btn.TextSize         = 16
@@ -328,22 +336,18 @@ function UI:Create()
     -- FARM PAGE
     -- =====================
     MakeSection(FarmPage, "FARM SETTINGS")
-
     MakeToggle(FarmPage, "Auto Sell", _config and _config:Get("AutoSell"), function(v)
         if _config then _config:Set("AutoSell", v) end
     end)
-
     MakeToggle(FarmPage, "Auto Buy Lucky", _config and _config:Get("BuyLucky"), function(v)
         if _config then _config:Set("BuyLucky", v) end
     end)
-
     AutoCanvas(FarmPage)
 
     -- =====================
     -- ITEMS PAGE
     -- =====================
     MakeSection(ItemsPage, "SELL ITEMS")
-
     local itemOrder = {
         "Gold Coin","Diamond","Rokakaka","Pure Rokakaka",
         "Mysterious Arrow","Lucky Arrow","Lucky Stone Mask","Ancient Scroll",
@@ -357,23 +361,20 @@ function UI:Create()
             if _config then _config:SetSellItem(name, v) end
         end)
     end
-
     AutoCanvas(ItemsPage)
 
     -- =====================
     -- WEBHOOK PAGE
     -- =====================
     MakeSection(WebhookPage, "DISCORD WEBHOOK")
-
     local whHolder = Instance.new("Frame")
-    whHolder.Size             = UDim2.new(1,-4,0,42)  -- taller for touch
+    whHolder.Size             = UDim2.new(1,-4,0,42)
     whHolder.BackgroundColor3 = Color3.fromRGB(22,22,30)
     whHolder.BorderSizePixel  = 0
     whHolder.Parent           = WebhookPage
     Instance.new("UICorner", whHolder).CornerRadius = UDim.new(0,7)
     local whStroke = Instance.new("UIStroke", whHolder)
     whStroke.Color = Color3.fromRGB(60,55,85)
-
     local whBox = Instance.new("TextBox")
     whBox.Size               = UDim2.new(1,-12,1,0)
     whBox.Position           = UDim2.new(0,8,0,0)
@@ -388,7 +389,6 @@ function UI:Create()
     whBox.TextXAlignment     = Enum.TextXAlignment.Left
     whBox.ClearTextOnFocus   = false
     whBox.Parent             = whHolder
-
     whBox.Focused:Connect(function()
         TweenService:Create(whStroke, TweenInfo.new(0.1), {Color=Color3.fromRGB(120,90,255)}):Play()
         whBox.BackgroundColor3 = Color3.fromRGB(55,55,75)
@@ -398,16 +398,14 @@ function UI:Create()
         TweenService:Create(whStroke, TweenInfo.new(0.1), {Color=Color3.fromRGB(60,55,85)}):Play()
         whBox.BackgroundColor3 = Color3.fromRGB(40,40,55)
     end)
-
     AutoCanvas(WebhookPage)
 
     -- =====================
     -- CREDITS PAGE
     -- =====================
     MakeSection(CreditsPage, "WHITE HUB")
-
     local creditLabel = Instance.new("TextLabel")
-    creditLabel.Size             = UDim2.new(1,-4,0,44)  -- taller
+    creditLabel.Size             = UDim2.new(1,-4,0,44)
     creditLabel.BackgroundColor3 = Color3.fromRGB(22,22,30)
     creditLabel.BorderSizePixel  = 0
     creditLabel.Text             = "Made by WHITE DRAGON"
@@ -418,9 +416,8 @@ function UI:Create()
     Instance.new("UICorner", creditLabel).CornerRadius = UDim.new(0,7)
     local creditStroke = Instance.new("UIStroke", creditLabel)
     creditStroke.Color = Color3.fromRGB(60,55,85)
-
     local discordBtn = Instance.new("TextButton")
-    discordBtn.Size             = UDim2.new(1,-4,0,36)  -- taller for touch
+    discordBtn.Size             = UDim2.new(1,-4,0,36)
     discordBtn.BackgroundColor3 = Color3.fromRGB(88,101,242)
     discordBtn.BorderSizePixel  = 0
     discordBtn.Text             = "🔗 discord.gg/Qwd23ZRNxJ  —  Click to Copy"
@@ -430,7 +427,6 @@ function UI:Create()
     discordBtn.Parent           = CreditsPage
     Instance.new("UICorner", discordBtn).CornerRadius = UDim.new(0,7)
     Instance.new("UIStroke", discordBtn).Color = Color3.fromRGB(60,70,200)
-
     discordBtn.MouseEnter:Connect(function()
         TweenService:Create(discordBtn, TweenInfo.new(0.15), {BackgroundColor3=Color3.fromRGB(110,125,255)}):Play()
     end)
@@ -447,17 +443,16 @@ function UI:Create()
             TweenService:Create(discordBtn, TweenInfo.new(0.15), {BackgroundColor3=Color3.fromRGB(88,101,242)}):Play()
         end)
     end)
-
     AutoCanvas(CreditsPage)
 
     -- =====================
-    -- TOGGLE BUTTON (open/close) - MOVED UP
+    -- TOGGLE BUTTON (open/close)
     -- =====================
     local ToggleBtn = Instance.new("TextButton", ScreenGui)
     ToggleBtn.BackgroundColor3 = Color3.fromRGB(22,22,30)
     ToggleBtn.BorderSizePixel  = 0
-    ToggleBtn.Position         = UDim2.new(0,8,1,-280)  -- moved from -200 to -280 (higher up)
-    ToggleBtn.Size             = UDim2.new(0,110,0,32)  -- slightly larger for mobile
+    ToggleBtn.Position         = UDim2.new(0,8,1,-280)
+    ToggleBtn.Size             = UDim2.new(0,110,0,32)
     ToggleBtn.Text             = "⚡ WHITE HUB"
     ToggleBtn.TextColor3       = Color3.fromRGB(235,235,240)
     ToggleBtn.TextSize         = 14
@@ -466,6 +461,14 @@ function UI:Create()
     local tStroke = Instance.new("UIStroke", ToggleBtn)
     tStroke.Color     = Color3.fromRGB(60,55,85)
     tStroke.Thickness = 1.3
+
+    -- BACKGROUND IMAGE for ToggleBtn (WHITE DRAGON 2 Decal)
+    local bgToggle = Instance.new("ImageLabel", ToggleBtn)
+    bgToggle.Size = UDim2.new(1,0,1,0)
+    bgToggle.Position = UDim2.new(0,0,0,0)
+    bgToggle.BackgroundTransparency = 1
+    bgToggle.Image = "rbxassetid://138847580096139"  -- WHITE DRAGON 2 decal
+    bgToggle.ZIndex = 0
 
     ToggleBtn.MouseEnter:Connect(function()
         TweenService:Create(tStroke, TweenInfo.new(0.15), {Color=Color3.fromRGB(120,90,255)}):Play()
@@ -477,22 +480,21 @@ function UI:Create()
     -- =====================
     -- OPEN / CLOSE LOGIC
     -- =====================
-    local isOpen    = false
-    local btnVisible = true
+    local isOpen = false
 
     local function ToggleWindow()
         isOpen = not isOpen
         if isOpen then
-            MainFrame.Visible  = true
-            MainFrame.Size     = UDim2.new(0,0,0,0)
+            MainFrame.Visible = true
+            MainFrame.Size = UDim2.new(0,0,0,0)
             MainFrame.Position = UDim2.new(0.5,0,0.5,0)
             TweenService:Create(MainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-                Size     = UDim2.new(0,W,0,H),
+                Size = UDim2.new(0,W,0,H),
                 Position = UDim2.new(0.5,-W/2,0.5,-H/2),
             }):Play()
         else
             local t = TweenService:Create(MainFrame, TweenInfo.new(0.15, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
-                Size     = UDim2.new(0,0,0,0),
+                Size = UDim2.new(0,0,0,0),
                 Position = UDim2.new(0.5,0,0.5,0),
             })
             t:Play()
@@ -501,7 +503,6 @@ function UI:Create()
     end
 
     ToggleBtn.MouseButton1Click:Connect(ToggleWindow)
-
     CloseButton.MouseButton1Click:Connect(function()
         if isOpen then ToggleWindow() end
     end)
@@ -511,8 +512,7 @@ function UI:Create()
         if input.KeyCode == Enum.KeyCode.RightAlt then
             ToggleWindow()
         elseif input.KeyCode == Enum.KeyCode.RightControl then
-            btnVisible = not btnVisible
-            ToggleBtn.Visible = btnVisible
+            ToggleBtn.Visible = not ToggleBtn.Visible
         end
     end)
 
@@ -522,11 +522,10 @@ function UI:Create()
     local dragging, dragStart, startPos = false, nil, nil
 
     TopBar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-            dragging  = true
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
             dragStart = input.Position
-            startPos  = MainFrame.Position
+            startPos = MainFrame.Position
             input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     dragging = false
@@ -536,10 +535,7 @@ function UI:Create()
     end)
 
     UserInputService.InputChanged:Connect(function(input)
-        if dragging and (
-            input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch
-        ) then
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local d = input.Position - dragStart
             MainFrame.Position = UDim2.new(
                 startPos.X.Scale, startPos.X.Offset + d.X,
