@@ -21,8 +21,7 @@ wait(2)
 -- Change this to your own repo raw URL base.
 -- Example: "https://raw.githubusercontent.com/YOUR_USER/WHITE-HUB/main/"
 -- =====================
-local BASE_URL = "https://raw.githubusercontent.com/YOUR_USER/WHITE-HUB/main/"
-
+local BASE_URL = "https://raw.githubusercontent.com/WHITEDRAGONx/WHITE-HUB-V2/main/"
 local function Load(file)
     local url = BASE_URL .. file
     local ok, result = pcall(function()
