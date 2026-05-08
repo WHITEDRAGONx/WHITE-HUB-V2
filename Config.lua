@@ -1,12 +1,13 @@
 -- =====================
 -- Config.lua
+-- Handles all config loading, saving, and access.
 -- =====================
 
 local HttpService = game:GetService("HttpService")
 local CONFIG_FILE = "WhiteHubConfig.json"
 
 local Config = {}
-local _data = nil
+local _data  = nil
 
 local Defaults = {
     BuyLucky   = true,
@@ -52,10 +53,10 @@ function Config:Load()
     end)
     if ok and result and type(result) == "table" then
         _data = ApplyDefaults(result)
-        print("[Config] Carregado do arquivo.")
+        print("[Config] Loaded from file.")
     else
         _data = ApplyDefaults({})
-        print("[Config] Usando padrões.")
+        print("[Config] No existing config found — using defaults.")
     end
 end
 
