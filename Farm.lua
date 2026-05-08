@@ -4,6 +4,7 @@
 -- Phase 1: Normal farm until 9 Lucky Arrows + $1,000,000
 -- Phase 2: Keep-item farm until all disabled-sell items are maxed
 -- Phase 3: Full idle — only collects Lucky Arrows from the ground
+--          BUT can restart immediately if item toggles change via UI
 -- =====================
 
 local Players           = game:GetService("Players")
@@ -24,6 +25,9 @@ local ItemSpawnFolder = nil
 local NO_ITEM_TIMEOUT = 20
 local lastItemTime    = tick()
 
+-- Snapshot for detecting config changes (item toggles)
+local lastSellItemsSnapshot = nil
+
 function Farm:Init(Modules)
     _config    = Modules.Config
     _inventory = Modules.Inventory
@@ -32,6 +36,34 @@ function Farm:Init(Modules)
     _webhook   = Modules.Webhook
 end
 
+-- =====================
+-- Config change detection
+-- =====================
+local function updateConfigSnapshot()
+    lastSellItemsSnapshot = {}
+    local sellItems = _config:GetSellItems()
+    for k, v in pairs(sellItems) do
+        lastSellItemsSnapshot[k] = v
+    end
+end
+
+local function hasConfigChanged()
+    if lastSellItemsSnapshot == nil then
+        updateConfigSnapshot()
+        return false
+    end
+    local current = _config:GetSellItems()
+    for k, v in pairs(current) do
+        if lastSellItemsSnapshot[k] ~= v then
+            return true
+        end
+    end
+    return false
+end
+
+-- =====================
+-- Hooks & bypasses
+-- =====================
 local function ApplyHooks()
     pcall(function()
         local oldMag
@@ -95,6 +127,9 @@ local function SkipLoadingScreen()
     end)
 end
 
+-- =====================
+-- Item detection
+-- =====================
 local function GetItemInfo(model)
     if not (model and model:IsA("Model") and model.Parent and model.Parent.Name == "Items") then return nil end
     local pp = model.PrimaryPart
@@ -293,11 +328,20 @@ function Farm:Start()
             print("[Farm] >>> No keep-items configured — skipping Phase 2.")
         end
 
-        -- ===== PHASE 3 =====
+        -- ===== PHASE 3 (IDLE) with config change detection =====
         print("[Farm] >>> Phase 3 — fully stopped. Idling, only collecting Lucky Arrows.")
         _webhook:SendAllComplete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
+        updateConfigSnapshot()  -- capture current toggle states
 
         while true do
+            -- Check if user changed any item toggle via UI
+            if hasConfigChanged() then
+                print("[Farm] Configuration changed (item toggle). Restarting farm from Phase 1...")
+                updateConfigSnapshot()
+                break  -- exit Phase 3 loop, go back to outer while (restart farming)
+            end
+
+            -- Only collect Lucky Arrows / Lucky Stone Mask
             local snapshot = {}
             for idx, info in pairs(SpawnedItems) do
                 if info.Name == "Lucky Arrow" or info.Name == "Lucky Stone Mask" then
@@ -309,9 +353,8 @@ function Farm:Start()
             for _, entry in ipairs(snapshot) do
                 CollectItem(entry.ItemInfo, entry.Index)
             end
-            task.wait(3)
+            task.wait(1)  -- shorter wait for faster response (can be 3 if you prefer)
         end
-
     end
 end
 
