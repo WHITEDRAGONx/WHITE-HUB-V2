@@ -1,7 +1,7 @@
 -- =====================
--- UI.lua
--- All UI logic as direct Lua code. No LocalScript.Source.
--- Executor compatible.
+-- UI.lua (WHITE HUB V2 - Mobile Optimized)
+-- Optimized for Delta / mobile executors
+-- Window: 380x320 | Toggle button moved up
 -- =====================
 
 local Players          = game:GetService("Players")
@@ -85,7 +85,7 @@ end
 
 local function MakeSection(parent, text)
     local frame = Instance.new("Frame")
-    frame.Size             = UDim2.new(1,-4,0,22)
+    frame.Size             = UDim2.new(1,-4,0,24)  -- slightly taller for touch
     frame.BackgroundColor3 = Color3.fromRGB(22,22,30)
     frame.BorderSizePixel  = 0
     frame.Parent           = parent
@@ -106,7 +106,7 @@ end
 
 local function MakeToggle(parent, labelText, default, onChanged)
     local holder = Instance.new("Frame")
-    holder.Size             = UDim2.new(1,-4,0,28)
+    holder.Size             = UDim2.new(1,-4,0,32)  -- taller for mobile
     holder.BackgroundColor3 = Color3.fromRGB(22,22,30)
     holder.BorderSizePixel  = 0
     holder.Parent           = parent
@@ -128,8 +128,8 @@ local function MakeToggle(parent, labelText, default, onChanged)
     local enabled = (default == nil) and true or default
 
     local track = Instance.new("TextButton")
-    track.Size             = UDim2.new(0,40,0,18)
-    track.Position         = UDim2.new(1,-48,0.5,-9)
+    track.Size             = UDim2.new(0,44,0,22)  -- larger for touch
+    track.Position         = UDim2.new(1,-52,0.5,-11)
     track.BackgroundColor3 = enabled and Color3.fromRGB(145,95,255) or Color3.fromRGB(30,30,42)
     track.Text             = ""
     track.BorderSizePixel  = 0
@@ -137,8 +137,8 @@ local function MakeToggle(parent, labelText, default, onChanged)
     Instance.new("UICorner", track).CornerRadius = UDim.new(1,0)
 
     local circle = Instance.new("Frame")
-    circle.Size             = UDim2.new(0,13,0,13)
-    circle.Position         = enabled and UDim2.new(1,-16,0.5,-6.5) or UDim2.new(0,3,0.5,-6.5)
+    circle.Size             = UDim2.new(0,15,0,15)  -- bigger circle
+    circle.Position         = enabled and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
     circle.BackgroundColor3 = Color3.fromRGB(255,255,255)
     circle.BorderSizePixel  = 0
     circle.Parent           = track
@@ -150,7 +150,7 @@ local function MakeToggle(parent, labelText, default, onChanged)
             BackgroundColor3 = enabled and Color3.fromRGB(145,95,255) or Color3.fromRGB(30,30,42)
         }):Play()
         TweenService:Create(circle, TweenInfo.new(0.18), {
-            Position = enabled and UDim2.new(1,-16,0.5,-6.5) or UDim2.new(0,3,0.5,-6.5)
+            Position = enabled and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
         }):Play()
         onChanged(enabled)
     end)
@@ -162,7 +162,7 @@ end
 function UI:Create()
     CreateCreditsPopup()
 
-    local W, H = 500, 320
+    local W, H = 380, 320  -- new size
 
     -- ScreenGui
     local ScreenGui = Instance.new("ScreenGui")
@@ -211,7 +211,7 @@ function UI:Create()
     CloseButton.BackgroundColor3 = Color3.fromRGB(180,50,50)
     CloseButton.BorderSizePixel  = 0
     CloseButton.Position         = UDim2.new(1,-30,0.5,-11)
-    CloseButton.Size             = UDim2.new(0,22,0,22)
+    CloseButton.Size             = UDim2.new(0,24,0,24)  -- slightly larger
     CloseButton.Text             = "✕"
     CloseButton.TextColor3       = Color3.fromRGB(255,255,255)
     CloseButton.TextSize         = 16
@@ -222,8 +222,8 @@ function UI:Create()
     local Sidebar = Instance.new("Frame", MainFrame)
     Sidebar.BackgroundTransparency = 1
     Sidebar.BorderSizePixel        = 0
-    Sidebar.Position               = UDim2.new(0,8,0,42)
-    Sidebar.Size                   = UDim2.new(0,95,1,-50)
+    Sidebar.Position               = UDim2.new(0,6,0,42)
+    Sidebar.Size                   = UDim2.new(0,90,1,-50)  -- slightly narrower for balance
     local sideLayout = Instance.new("UIListLayout", Sidebar)
     sideLayout.Padding   = UDim.new(0,5)
     sideLayout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -232,8 +232,8 @@ function UI:Create()
     local PagesFrame = Instance.new("Frame", MainFrame)
     PagesFrame.BackgroundTransparency = 1
     PagesFrame.BorderSizePixel        = 0
-    PagesFrame.Position               = UDim2.new(0,107,0,42)
-    PagesFrame.Size                   = UDim2.new(1,-115,1,-50)
+    PagesFrame.Position               = UDim2.new(0,104,0,42)
+    PagesFrame.Size                   = UDim2.new(1,-116,1,-50)
 
     -- =====================
     -- BUILD PAGES
@@ -244,17 +244,17 @@ function UI:Create()
         scroll.Active                  = true
         scroll.BackgroundTransparency  = 1
         scroll.BorderSizePixel         = 0
-        scroll.ScrollBarThickness      = 3
-        scroll.ScrollBarImageColor3    = Color3.fromRGB(100,80,180)
+        scroll.ScrollBarThickness      = 6  -- thicker for touch
+        scroll.ScrollBarImageColor3    = Color3.fromRGB(140,90,255)
         scroll.Size                    = UDim2.new(1,0,1,0)
         scroll.Visible                 = false
         local layout = Instance.new("UIListLayout", scroll)
         layout.Padding   = UDim.new(0,4)
         layout.SortOrder = Enum.SortOrder.LayoutOrder
         local pad = Instance.new("UIPadding", scroll)
-        pad.PaddingLeft  = UDim.new(0,5)
-        pad.PaddingRight = UDim.new(0,5)
-        pad.PaddingTop   = UDim.new(0,5)
+        pad.PaddingLeft  = UDim.new(0,4)
+        pad.PaddingRight = UDim.new(0,4)
+        pad.PaddingTop   = UDim.new(0,4)
         return scroll
     end
 
@@ -303,7 +303,7 @@ function UI:Create()
         local btn = Instance.new("TextButton", Sidebar)
         btn.BackgroundColor3 = C_BG2
         btn.BorderSizePixel  = 0
-        btn.Size             = UDim2.new(1,0,0,32)
+        btn.Size             = UDim2.new(1,0,0,36)  -- taller for touch
         btn.Text             = def.name
         btn.TextColor3       = C_Text
         btn.TextSize         = 16
@@ -366,7 +366,7 @@ function UI:Create()
     MakeSection(WebhookPage, "DISCORD WEBHOOK")
 
     local whHolder = Instance.new("Frame")
-    whHolder.Size             = UDim2.new(1,-4,0,40)
+    whHolder.Size             = UDim2.new(1,-4,0,42)  -- taller for touch
     whHolder.BackgroundColor3 = Color3.fromRGB(22,22,30)
     whHolder.BorderSizePixel  = 0
     whHolder.Parent           = WebhookPage
@@ -407,7 +407,7 @@ function UI:Create()
     MakeSection(CreditsPage, "WHITE HUB")
 
     local creditLabel = Instance.new("TextLabel")
-    creditLabel.Size             = UDim2.new(1,-4,0,40)
+    creditLabel.Size             = UDim2.new(1,-4,0,44)  -- taller
     creditLabel.BackgroundColor3 = Color3.fromRGB(22,22,30)
     creditLabel.BorderSizePixel  = 0
     creditLabel.Text             = "Made by WHITE DRAGON"
@@ -420,7 +420,7 @@ function UI:Create()
     creditStroke.Color = Color3.fromRGB(60,55,85)
 
     local discordBtn = Instance.new("TextButton")
-    discordBtn.Size             = UDim2.new(1,-4,0,32)
+    discordBtn.Size             = UDim2.new(1,-4,0,36)  -- taller for touch
     discordBtn.BackgroundColor3 = Color3.fromRGB(88,101,242)
     discordBtn.BorderSizePixel  = 0
     discordBtn.Text             = "🔗 discord.gg/Qwd23ZRNxJ  —  Click to Copy"
@@ -451,13 +451,13 @@ function UI:Create()
     AutoCanvas(CreditsPage)
 
     -- =====================
-    -- TOGGLE BUTTON (open/close)
+    -- TOGGLE BUTTON (open/close) - MOVED UP
     -- =====================
     local ToggleBtn = Instance.new("TextButton", ScreenGui)
     ToggleBtn.BackgroundColor3 = Color3.fromRGB(22,22,30)
     ToggleBtn.BorderSizePixel  = 0
-    ToggleBtn.Position         = UDim2.new(0,8,1,-200)
-    ToggleBtn.Size             = UDim2.new(0,100,0,26)
+    ToggleBtn.Position         = UDim2.new(0,8,1,-280)  -- moved from -200 to -280 (higher up)
+    ToggleBtn.Size             = UDim2.new(0,110,0,32)  -- slightly larger for mobile
     ToggleBtn.Text             = "⚡ WHITE HUB"
     ToggleBtn.TextColor3       = Color3.fromRGB(235,235,240)
     ToggleBtn.TextSize         = 14
@@ -517,7 +517,7 @@ function UI:Create()
     end)
 
     -- =====================
-    -- DRAG
+    -- DRAG (mobile friendly)
     -- =====================
     local dragging, dragStart, startPos = false, nil, nil
 
