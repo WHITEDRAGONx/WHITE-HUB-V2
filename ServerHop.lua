@@ -1,8 +1,7 @@
 -- =====================
 -- ServerHop.lua
--- Handles server hopping, auto rejoin, and post-hop recovery.
--- Source based on: https://github.com/Vcsk/RobloxScripts/blob/main/ServerHop.lua
--- Internalized — no external loadstring dependency.
+-- Lógica original preservada.
+-- Crédito: https://github.com/Vcsk/RobloxScripts/blob/main/ServerHop.lua
 -- =====================
 
 local HttpService     = game:GetService("HttpService")
@@ -14,176 +13,106 @@ local Player  = Players.LocalPlayer
 local PlaceID = game.PlaceId
 
 local ServerHop = {}
-
 local _movement = nil
-local _config   = nil
 
--- Max server IDs stored per session to prevent unbounded file growth
-local MAX_STORED_IDS = 200
-local SERVER_FILE    = "NotSameServers.json"
+local AllIDs        = {}
+local foundAnything = ""
+local actualHour    = os.date("!*t").hour
 
-local _visitedIDs  = {}
-local _sessionHour = os.date("!*t").hour
-
--- =====================
--- VISITED ID PERSISTENCE
--- =====================
-local function LoadVisitedIDs()
-    local ok, data = pcall(function()
-        if isfile(SERVER_FILE) then
-            return HttpService:JSONDecode(readfile(SERVER_FILE))
-        end
-    end)
-    if ok and data and type(data) == "table" then
-        -- If the stored hour tag differs, the file is stale — reset it
-        if tonumber(data[1]) ~= tonumber(_sessionHour) then
-            _visitedIDs = { _sessionHour }
-            print("[ServerHop] Stale server list — resetting.")
-        else
-            _visitedIDs = data
-        end
-    else
-        _visitedIDs = { _sessionHour }
-    end
-end
-
-local function SaveVisitedIDs()
-    -- Cap size to prevent infinite growth
-    while #_visitedIDs > MAX_STORED_IDS do
-        table.remove(_visitedIDs, 2) -- keep index 1 (hour tag)
-    end
+local fileOk = pcall(function()
+    AllIDs = HttpService:JSONDecode(readfile("NotSameServers.json"))
+end)
+if not fileOk then
+    table.insert(AllIDs, actualHour)
     pcall(function()
-        writefile(SERVER_FILE, HttpService:JSONEncode(_visitedIDs))
+        writefile("NotSameServers.json", HttpService:JSONEncode(AllIDs))
     end)
 end
 
-local function MarkVisited(id)
-    table.insert(_visitedIDs, id)
-    SaveVisitedIDs()
-end
-
-local function WasVisited(id)
-    for i = 2, #_visitedIDs do -- skip index 1 (hour tag)
-        if tostring(_visitedIDs[i]) == tostring(id) then
-            return true
-        end
-    end
-    return false
-end
-
-LoadVisitedIDs()
-
--- =====================
--- SERVER FETCH + TELEPORT
--- =====================
-local _cursor = ""
-
-local function FetchAndTeleport()
-    local url = "https://games.roblox.com/v1/games/" .. PlaceID
-        .. "/servers/Public?sortOrder=Asc&limit=100"
-    if _cursor ~= "" then
-        url = url .. "&cursor=" .. _cursor
-    end
-
-    local ok, site = pcall(function()
-        return HttpService:JSONDecode(game:HttpGet(url))
-    end)
-    if not ok or not site or not site.data then
-        warn("[ServerHop] Failed to fetch server list.")
-        return false
-    end
-
-    -- Advance cursor for next call
-    if site.nextPageCursor and site.nextPageCursor ~= "null" and site.nextPageCursor ~= nil then
-        _cursor = site.nextPageCursor
+local function TPReturner()
+    local Site
+    if foundAnything == "" then
+        Site = HttpService:JSONDecode(game:HttpGet(
+            "https://games.roblox.com/v1/games/" .. PlaceID .. "/servers/Public?sortOrder=Asc&limit=100"
+        ))
     else
-        _cursor = "" -- reset when we hit the last page
+        Site = HttpService:JSONDecode(game:HttpGet(
+            "https://games.roblox.com/v1/games/" .. PlaceID .. "/servers/Public?sortOrder=Asc&limit=100&cursor=" .. foundAnything
+        ))
     end
 
-    for _, server in pairs(site.data) do
-        local id = tostring(server.id)
-        local hasRoom = tonumber(server.maxPlayers) > tonumber(server.playing)
+    if Site.nextPageCursor and Site.nextPageCursor ~= "null" and Site.nextPageCursor ~= nil then
+        foundAnything = Site.nextPageCursor
+    end
 
-        if hasRoom and not WasVisited(id) then
-            MarkVisited(id)
-            print("[ServerHop] Teleporting to server: " .. id)
-            local teleOk = pcall(function()
-                TeleportService:TeleportToPlaceInstance(PlaceID, id, Player)
-            end)
-            if teleOk then
-                task.wait(6)
-                return true
-            else
-                warn("[ServerHop] TeleportToPlaceInstance failed for: " .. id)
+    local ID  = ""
+    local num = 0
+
+    for _, v in pairs(Site.data) do
+        local Possible = true
+        ID = tostring(v.id)
+
+        if tonumber(v.maxPlayers) > tonumber(v.playing) then
+            for _, Existing in pairs(AllIDs) do
+                if num ~= 0 then
+                    if ID == tostring(Existing) then Possible = false end
+                else
+                    if tonumber(actualHour) ~= tonumber(Existing) then
+                        pcall(function()
+                            delfile("NotSameServers.json")
+                            AllIDs = {}
+                            table.insert(AllIDs, actualHour)
+                        end)
+                    end
+                end
+                num = num + 1
+            end
+
+            if Possible == true then
+                table.insert(AllIDs, ID)
+                task.wait()
+                pcall(function()
+                    writefile("NotSameServers.json", HttpService:JSONEncode(AllIDs))
+                    task.wait()
+                    TeleportService:TeleportToPlaceInstance(PlaceID, ID, Player)
+                end)
+                task.wait(4)
             end
         end
     end
-
-    return false
 end
 
--- =====================
--- PUBLIC API
--- =====================
 function ServerHop:Init(Modules)
     _movement = Modules.Movement
-    _config   = Modules.Config
 end
 
--- Main hop — tries current page then next page if needed
 function ServerHop:Hop()
     print("[ServerHop] Hopping...")
-    local hopStart = tick()
-
-    local success = FetchAndTeleport()
-    if not success then
-        -- Try next page
-        print("[ServerHop] No suitable server on first page — trying next page...")
-        success = FetchAndTeleport()
-    end
-
-    if not success then
-        warn("[ServerHop] Could not find a suitable server. Will retry next cycle.")
-    end
-
-    -- Timeout guard — if we're still here after 15s, hop likely failed
-    if tick() - hopStart < 15 then
-        task.wait(5)
-        if not success then
-            print("[ServerHop] Retry hop...")
-            FetchAndTeleport()
+    pcall(function()
+        TPReturner()
+        if foundAnything ~= "" then
+            TPReturner()
         end
+    end)
+    if _movement then
+        task.wait(3)
+        _movement:FixCamera()
     end
-
-    task.wait(3)
-    if _movement then _movement:FixCamera() end
 end
 
--- Force rejoin the same game (used by auto rejoin on kick)
 function ServerHop:Rejoin()
-    print("[ServerHop] Rejoining game...")
+    print("[ServerHop] Rejoining...")
     pcall(function()
         TeleportService:Teleport(PlaceID, Player)
     end)
 end
 
--- Recover character and camera after a hop
-function ServerHop:RecoverCharacter()
-    if _movement then
-        task.wait(2)
-        _movement:FixCamera()
-    end
-end
-
--- =====================
--- AUTO REJOIN ON KICK
--- =====================
 CoreGui.DescendantAdded:Connect(function(child)
     if child.Name == "ErrorPrompt" then
         local grabError = child:FindFirstChild("ErrorMessage", true)
         if grabError then
             repeat task.wait() until grabError.Text ~= "Label"
-            print("[ServerHop] Kick detected: " .. grabError.Text .. " — Rejoining...")
+            print("[ServerHop] Kick detectado: " .. grabError.Text .. " — Reconectando...")
             task.wait(1)
             ServerHop:Rejoin()
         end
