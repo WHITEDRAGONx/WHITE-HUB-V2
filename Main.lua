@@ -1,6 +1,5 @@
 -- =====================
--- Main.lua
--- WHITE HUB — Entry point. Robust version.
+-- Main.lua (modified for manual UI)
 -- =====================
 
 repeat task.wait(1) until game:IsLoaded()
@@ -16,14 +15,8 @@ LOG("BOOT", "Starting up...")
 task.wait(6)
 LOG("BOOT", "Initial wait done.")
 
--- =====================
--- BASE URL
--- =====================
 local BASE_URL = "https://raw.githubusercontent.com/WHITEDRAGONx/WHITE-HUB-V2/main/"
 
--- =====================
--- LOADER WITH TIMEOUT
--- =====================
 local function Load(file)
     local url = BASE_URL .. file
     LOG("LOAD", "Fetching: " .. url)
@@ -78,11 +71,8 @@ local function Load(file)
     return result
 end
 
--- =====================
--- LOAD MODULES
--- =====================
+-- Load modules
 LOG("MODULES", "Loading modules...")
-
 local Modules = {}
 local moduleFiles = {
     { key = "Config",    file = "Config.lua"    },
@@ -114,9 +104,7 @@ end
 
 LOG("MODULES", "All modules loaded successfully.")
 
--- =====================
--- CONFIG
--- =====================
+-- Config
 LOG("CONFIG", "Loading Config...")
 if Modules.Config and Modules.Config.Load then
     local ok, err = pcall(function() Modules.Config:Load() end)
@@ -126,10 +114,8 @@ else
     ERR("CONFIG", "Config.Load() is missing.")
 end
 
--- =====================
--- INITIALIZE MODULES
--- =====================
-local initOrder = { "Webhook", "Movement", "ServerHop", "Inventory", "UI", "Farm" }
+-- Initialize modules (skip UI because we use manual UI)
+local initOrder = { "Webhook", "Movement", "ServerHop", "Inventory", "Farm" }
 
 LOG("INIT", "Initializing modules...")
 for _, moduleName in ipairs(initOrder) do
@@ -144,21 +130,16 @@ for _, moduleName in ipairs(initOrder) do
     end
 end
 
--- =====================
--- UI
--- =====================
-LOG("UI", "Creating UI...")
-if Modules.UI and Modules.UI.Create then
-    local ok, err = pcall(function() Modules.UI:Create() end)
-    if not ok then ERR("UI", "UI:Create() — " .. tostring(err))
-    else LOG("UI", "✅ UI created.") end
-else
-    ERR("UI", "UI.Create() is missing.")
-end
+-- Expose modules globally for the manual UI
+_G.WhiteHubModules = Modules
+LOG("UI", "Manual UI will use _G.WhiteHubModules")
 
--- =====================
--- FARM WITH WATCHDOG
--- =====================
+-- DO NOT create the old UI (comment out)
+-- if Modules.UI and Modules.UI.Create then
+--    Modules.UI:Create()
+-- end
+
+-- Start Farm
 LOG("FARM", "Starting Farm...")
 if Modules.Farm and Modules.Farm.Start then
     task.spawn(function()
@@ -176,5 +157,4 @@ else
     ERR("FARM", "Farm.Start() is missing.")
 end
 
-LOG("BOOT", "✅ WHITE HUB — all systems running.")
-_G.WhiteHubModules = Modules
+LOG("BOOT", "✅ WHITE HUB — all systems running (manual UI active).")
