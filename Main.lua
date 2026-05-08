@@ -1,161 +1,179 @@
 -- =====================
 -- Main.lua
--- WHITE HUB — Entry point.
+-- WHITE HUB — Entry point. Robust version.
 -- =====================
 
 repeat task.wait(1) until game:IsLoaded()
 
-print("[WHITE HUB] Loading...")
-warn("[WHITE HUB] Loading...")
+local function LOG(tag, msg)
+    print(("[WHITE HUB][%s] %s"):format(tag, tostring(msg)))
+end
+local function ERR(tag, msg)
+    warn(("[WHITE HUB][ERROR][%s] %s"):format(tag, tostring(msg)))
+end
 
+LOG("BOOT", "Starting up...")
 task.wait(6)
-
-print("[WHITE HUB] Initialized.")
-
-task.wait(2)
+LOG("BOOT", "Initial wait done.")
 
 -- =====================
--- GITHUB RAW BASE URL
+-- BASE URL
 -- =====================
 local BASE_URL = "https://raw.githubusercontent.com/WHITEDRAGONx/WHITE-HUB-V2/main/"
 
 -- =====================
--- SAFE MODULE LOADER
+-- LOADER WITH TIMEOUT
 -- =====================
 local function Load(file)
     local url = BASE_URL .. file
+    LOG("LOAD", "Fetching: " .. url)
 
-    print("[WHITE HUB] Fetching:", url)
+    local response = nil
+    local done = false
 
-    local success, response = pcall(function()
-        return game:HttpGet(url, true)
+    task.spawn(function()
+        local ok, res = pcall(function()
+            return game:HttpGet(url, true)
+        end)
+        if ok and res then response = res end
+        done = true
     end)
 
-    if not success then
-        warn("[WHITE HUB] Failed to fetch module:", file)
-        warn(response)
+    local t = 0
+    while not done and t < 15 do
+        task.wait(0.5)
+        t += 0.5
+    end
+
+    if not response then
+        ERR("LOAD", "Timeout or fetch failed: " .. file)
         return nil
     end
 
-    print("[WHITE HUB] Response received for:", file)
+    if response:find("<!DOCTYPE") or response:sub(1,3) == "404" then
+        ERR("LOAD", "File not found on GitHub (404): " .. file)
+        return nil
+    end
 
-    local func, compileError = loadstring(response)
+    LOG("LOAD", "Download OK: " .. file .. " (" .. #response .. " bytes)")
 
+    local func, compileErr = loadstring(response)
     if not func then
-        warn("[WHITE HUB] Compile error in:", file)
-        warn(compileError)
+        ERR("COMPILE", file .. " — " .. tostring(compileErr))
         return nil
     end
 
     local ok, result = pcall(func)
-
     if not ok then
-        warn("[WHITE HUB] Runtime error in:", file)
-        warn(result)
+        ERR("RUNTIME", file .. " — " .. tostring(result))
         return nil
     end
 
-    print("[WHITE HUB] Loaded:", file)
+    if result == nil then
+        ERR("LOAD", file .. " returned nil. Make sure it has 'return Module' at the end.")
+        return nil
+    end
 
+    LOG("LOAD", "✅ Loaded: " .. file)
     return result
 end
 
 -- =====================
 -- LOAD MODULES
 -- =====================
+LOG("MODULES", "Loading modules...")
+
 local Modules = {}
+local moduleFiles = {
+    { key = "Config",    file = "Config.lua"    },
+    { key = "Webhook",   file = "Webhook.lua"   },
+    { key = "Movement",  file = "Movement.lua"  },
+    { key = "ServerHop", file = "ServerHop.lua" },
+    { key = "Inventory", file = "Inventory.lua" },
+    { key = "UI",        file = "UI.lua"        },
+    { key = "Farm",      file = "Farm.lua"      },
+}
 
-Modules.Config    = Load("Config.lua")
-Modules.Webhook   = Load("Webhook.lua")
-Modules.Movement  = Load("Movement.lua")
-Modules.ServerHop = Load("ServerHop.lua")
-Modules.Inventory = Load("Inventory.lua")
-Modules.UI        = Load("UI.lua")
-Modules.Farm      = Load("Farm.lua")
-
--- =====================
--- VERIFY MODULES
--- =====================
-for name, mod in pairs(Modules) do
+local allLoaded = true
+for _, entry in ipairs(moduleFiles) do
+    LOG("MODULES", "Loading " .. entry.key .. "...")
+    local mod = Load(entry.file)
     if mod == nil then
-        error("[WHITE HUB] Critical module failed to load: " .. name)
+        ERR("MODULES", "CRITICAL — failed to load: " .. entry.key)
+        allLoaded = false
+    else
+        Modules[entry.key] = mod
+        LOG("MODULES", "✅ " .. entry.key .. " OK")
     end
 end
 
-print("[WHITE HUB] All modules loaded successfully.")
+if not allLoaded then
+    ERR("BOOT", "Critical modules failed to load. Aborting.")
+    return
+end
+
+LOG("MODULES", "All modules loaded successfully.")
 
 -- =====================
--- LOAD CONFIG FIRST
+-- CONFIG
 -- =====================
-if Modules.Config.Load then
-    Modules.Config:Load()
+LOG("CONFIG", "Loading Config...")
+if Modules.Config and Modules.Config.Load then
+    local ok, err = pcall(function() Modules.Config:Load() end)
+    if not ok then ERR("CONFIG", tostring(err))
+    else LOG("CONFIG", "✅ Config loaded.") end
 else
-    warn("[WHITE HUB] Config.Load() missing.")
+    ERR("CONFIG", "Config.Load() is missing.")
 end
 
 -- =====================
 -- INITIALIZE MODULES
 -- =====================
-local initOrder = {
-    "Webhook",
-    "Movement",
-    "ServerHop",
-    "Inventory",
-    "UI",
-    "Farm"
-}
+local initOrder = { "Webhook", "Movement", "ServerHop", "Inventory", "UI", "Farm" }
 
+LOG("INIT", "Initializing modules...")
 for _, moduleName in ipairs(initOrder) do
     local module = Modules[moduleName]
-
     if module and module.Init then
-        local ok, err = pcall(function()
-            module:Init(Modules)
-        end)
-
-        if not ok then
-            warn("[WHITE HUB] Init failed for:", moduleName)
-            warn(err)
-        else
-            print("[WHITE HUB] Initialized:", moduleName)
-        end
+        LOG("INIT", "Initializing " .. moduleName .. "...")
+        local ok, err = pcall(function() module:Init(Modules) end)
+        if not ok then ERR("INIT", moduleName .. ":Init() — " .. tostring(err))
+        else LOG("INIT", "✅ " .. moduleName .. " initialized.") end
     else
-        warn("[WHITE HUB] Missing Init() in:", moduleName)
+        ERR("INIT", moduleName .. " has no Init() — skipping.")
     end
 end
 
 -- =====================
--- CREATE UI
+-- UI
 -- =====================
-if Modules.UI.Create then
-    local ok, err = pcall(function()
-        Modules.UI:Create()
-    end)
-
-    if not ok then
-        warn("[WHITE HUB] UI creation failed.")
-        warn(err)
-    end
+LOG("UI", "Creating UI...")
+if Modules.UI and Modules.UI.Create then
+    local ok, err = pcall(function() Modules.UI:Create() end)
+    if not ok then ERR("UI", "UI:Create() — " .. tostring(err))
+    else LOG("UI", "✅ UI created.") end
 else
-    warn("[WHITE HUB] UI.Create() missing.")
+    ERR("UI", "UI.Create() is missing.")
 end
 
 -- =====================
--- START FARM
+-- FARM WITH WATCHDOG
 -- =====================
-if Modules.Farm.Start then
+LOG("FARM", "Starting Farm...")
+if Modules.Farm and Modules.Farm.Start then
     task.spawn(function()
-        local ok, err = pcall(function()
-            Modules.Farm:Start()
-        end)
-
+        LOG("FARM", "Farm:Start() called.")
+        local ok, err = pcall(function() Modules.Farm:Start() end)
         if not ok then
-            warn("[WHITE HUB] Farm crashed.")
-            warn(err)
+            ERR("FARM", "Farm crashed — " .. tostring(err))
+            task.wait(10)
+            LOG("FARM", "Attempting Farm restart...")
+            local ok2, err2 = pcall(function() Modules.Farm:Start() end)
+            if not ok2 then ERR("FARM", "Farm restart failed — " .. tostring(err2)) end
         end
     end)
 else
-    warn("[WHITE HUB] Farm.Start() missing.")
+    ERR("FARM", "Farm.Start() is missing.")
 end
 
-print("[WHITE HUB] All systems running.")
+LOG("BOOT", "✅ WHITE HUB — all systems running.")
