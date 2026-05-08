@@ -1,7 +1,7 @@
 -- =====================
 -- ServerHop.lua
--- Lógica original preservada.
--- Crédito: https://github.com/Vcsk/RobloxScripts/blob/main/ServerHop.lua
+-- Handles server hopping and auto rejoin.
+-- Credit: https://github.com/Vcsk/RobloxScripts/blob/main/ServerHop.lua
 -- =====================
 
 local HttpService     = game:GetService("HttpService")
@@ -87,7 +87,7 @@ function ServerHop:Init(Modules)
 end
 
 function ServerHop:Hop()
-    print("[ServerHop] Hopping...")
+    print("[ServerHop] Hopping to a new server...")
     pcall(function()
         TPReturner()
         if foundAnything ~= "" then
@@ -101,7 +101,7 @@ function ServerHop:Hop()
 end
 
 function ServerHop:Rejoin()
-    print("[ServerHop] Rejoining...")
+    print("[ServerHop] Rejoining game...")
     pcall(function()
         TeleportService:Teleport(PlaceID, Player)
     end)
@@ -112,7 +112,7 @@ CoreGui.DescendantAdded:Connect(function(child)
         local grabError = child:FindFirstChild("ErrorMessage", true)
         if grabError then
             repeat task.wait() until grabError.Text ~= "Label"
-            print("[ServerHop] Kick detectado: " .. grabError.Text .. " — Reconectando...")
+            print("[ServerHop] Kick detected: " .. grabError.Text .. " — Rejoining...")
             task.wait(1)
             ServerHop:Rejoin()
         end
