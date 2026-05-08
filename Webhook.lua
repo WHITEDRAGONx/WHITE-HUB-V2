@@ -17,7 +17,6 @@ end
 local function Send(message)
     local url = _config:Get("WebhookURL")
     if not url or url == "" then return end
-
     pcall(function()
         local body = HttpService:JSONEncode({
             content = nil,
@@ -31,22 +30,15 @@ local function Send(message)
         })
         local req = http_request or request or (syn and syn.request)
         if req then
-            req({
-                Url     = url,
-                Method  = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body    = body,
-            })
+            req({ Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = body })
         end
     end)
 end
 
--- Generic send
 function Webhook:Send(message)
     Send(message)
 end
 
--- Phase 1 complete
 function Webhook:SendPhase1Complete(luckyCount, luckyStop, money)
     Send(
         "🎯 **Phase 1 complete — switching to keep-item farm!**\n"
@@ -56,7 +48,6 @@ function Webhook:SendPhase1Complete(luckyCount, luckyStop, money)
     )
 end
 
--- All farming complete
 function Webhook:SendAllComplete(luckyCount, luckyStop, money)
     Send(
         "✅ **All farming complete!**\n"
@@ -67,7 +58,6 @@ function Webhook:SendAllComplete(luckyCount, luckyStop, money)
     )
 end
 
--- Lucky arrow milestone
 function Webhook:SendLuckyFound(luckyCount, luckyStop, money)
     Send(
         "✅ **Phase 1 conditions met!**\n"
@@ -77,9 +67,12 @@ function Webhook:SendLuckyFound(luckyCount, luckyStop, money)
     )
 end
 
--- Generic error notification
 function Webhook:SendError(context)
-    Send("⚠️ **Error / Warning**\nPlayer: `" .. Player.Name .. "`\nContext: `" .. tostring(context) .. "`")
+    Send(
+        "⚠️ **Error / Warning**\n"
+        .. "Player: `" .. Player.Name .. "`\n"
+        .. "Context: `" .. tostring(context) .. "`"
+    )
 end
 
 return Webhook
