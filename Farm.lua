@@ -1,9 +1,12 @@
 -- =====================
 -- Farm.lua
+-- Main farm controller.
+-- Phase 1: Normal farm until 9 Lucky Arrows + $1,000,000
+-- Phase 2: Keep-item farm until all disabled-sell items are maxed
+-- Phase 3: Full idle — only collects Lucky Arrows from the ground
 -- =====================
 
 local Players           = game:GetService("Players")
-local RunService        = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace         = game:GetService("Workspace")
 
@@ -116,10 +119,10 @@ local function InitItemDetection()
         end)
     end
     if not ItemSpawnFolder then
-        warn("[Farm] Item_Spawns/Items não encontrado.")
+        warn("[Farm] ERROR: Item_Spawns/Items folder not found.")
         return
     end
-    print("[Farm] Item_Spawns/Items encontrado.")
+    print("[Farm] Item_Spawns/Items folder found.")
     for _, model in pairs(ItemSpawnFolder:GetChildren()) do
         pcall(function()
             if model:IsA("Model") then
@@ -135,7 +138,7 @@ local function InitItemDetection()
                 local info = GetItemInfo(model)
                 if info then
                     SpawnedItems[model] = info
-                    print("[Farm] Item detectado: " .. info.Name)
+                    print("[Farm] Item detected: " .. info.Name)
                 end
             end
         end)
@@ -160,11 +163,11 @@ local function CollectItem(itemInfo, index)
     task.wait(.3)
     _movement:SetNoclip(false)
     lastItemTime = tick()
-    print("[Farm] Coletado: " .. itemInfo.Name)
+    print("[Farm] Collected: " .. itemInfo.Name)
 end
 
 local function DoHop()
-    print("[Farm] Server seco — vendendo, comprando e trocando...")
+    print("[Farm] Server dry — selling, buying, then hopping...")
     _inventory:SellAll()
     _inventory:BuyLucky()
     _serverHop:Hop()
@@ -186,32 +189,31 @@ end
 local function Startup()
     SkipLoadingScreen()
 
-    -- ✅ PATCH: repeat com timeout de 30s em vez de loop infinito
     local waitTime = 0
     repeat
         task.wait(0.5)
         waitTime += 0.5
         if waitTime > 30 then
-            warn("[Farm] Timeout esperando RemoteEvent — continuando mesmo assim.")
+            warn("[Farm] Timeout waiting for RemoteEvent — continuing anyway.")
             break
         end
     until _movement:GetCharacter("RemoteEvent")
 
-    print("[Farm] Character carregado.")
+    print("[Farm] Character loaded.")
     pcall(function()
         _movement:GetCharacter("RemoteEvent"):FireServer("PressedPlay")
     end)
 
-    print("[Farm] Teleportando para safe spot...")
+    print("[Farm] Teleporting to safe spot...")
     _movement:Teleport(SAFE_SPOT)
     task.wait(1)
     _movement:FixCamera()
 
     local hrp = _movement:GetCharacter("HumanoidRootPart")
-    if hrp then print("[Farm] Posição: " .. tostring(hrp.Position))
-    else warn("[Farm] HumanoidRootPart não encontrado.") end
+    if hrp then print("[Farm] Position: " .. tostring(hrp.Position))
+    else warn("[Farm] HumanoidRootPart not found.") end
 
-    print("[Farm] Aguardando 5s antes do loop...")
+    print("[Farm] Waiting 5 seconds before starting farm loop...")
     task.wait(5)
 end
 
@@ -223,10 +225,12 @@ function Farm:Start()
     SetupWebhookListener()
     Startup()
 
-    print("[Farm] Loop iniciado.")
+    print("[Farm] Farm loop started.")
 
     while true do
-        print("[Farm] >>> Phase 1 — farmando normalmente.")
+
+        -- ===== PHASE 1 =====
+        print("[Farm] >>> Phase 1 started — farming normally.")
         while not _inventory:ShouldStopPhase1() do
             local snapshot = {}
             for idx, info in pairs(SpawnedItems) do
@@ -242,7 +246,7 @@ function Farm:Start()
                 DoHop()
             else
                 if #snapshot == 0 then
-                    print("[Farm] Aguardando items... (" .. math.floor(NO_ITEM_TIMEOUT - elapsed) .. "s até hop)")
+                    print("[Farm] Waiting for items... (" .. math.floor(NO_ITEM_TIMEOUT - elapsed) .. "s until hop)")
                 end
             end
             task.wait(1)
@@ -250,12 +254,13 @@ function Farm:Start()
 
         _inventory:SellAll()
         _inventory:BuyLucky()
-        print("[Farm] >>> Phase 1 completa.")
+        print("[Farm] >>> Phase 1 complete.")
         _webhook:SendPhase1Complete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
 
+        -- ===== PHASE 2 =====
         local keepItems = _inventory:GetKeepItems()
         if #keepItems > 0 then
-            print("[Farm] >>> Phase 2 — farmando keep-items: " .. table.concat(keepItems, ", "))
+            print("[Farm] >>> Phase 2 started — farming keep-items: " .. table.concat(keepItems, ", "))
             while not _inventory:AllKeepItemsFull() do
                 local snapshot = {}
                 for idx, info in pairs(SpawnedItems) do
@@ -273,22 +278,23 @@ function Farm:Start()
                 local elapsed = tick() - lastItemTime
                 if elapsed > NO_ITEM_TIMEOUT then
                     if _inventory:AllKeepItemsFull() then break end
-                    print("[Farm] Phase 2 — server seco, trocando...")
+                    print("[Farm] Phase 2 — server dry, hopping...")
                     _serverHop:Hop()
                     lastItemTime = tick()
                 else
                     if #snapshot == 0 then
-                        print("[Farm] Aguardando keep-items... (" .. math.floor(NO_ITEM_TIMEOUT - elapsed) .. "s até hop)")
+                        print("[Farm] Waiting for keep-items... (" .. math.floor(NO_ITEM_TIMEOUT - elapsed) .. "s until hop)")
                     end
                 end
                 task.wait(1)
             end
-            print("[Farm] >>> Phase 2 completa.")
+            print("[Farm] >>> Phase 2 complete — all keep-items maxed.")
         else
-            print("[Farm] >>> Sem keep-items — pulando Phase 2.")
+            print("[Farm] >>> No keep-items configured — skipping Phase 2.")
         end
 
-        print("[Farm] >>> Phase 3 — idling, só coletando Lucky Arrows.")
+        -- ===== PHASE 3 =====
+        print("[Farm] >>> Phase 3 — fully stopped. Idling, only collecting Lucky Arrows.")
         _webhook:SendAllComplete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
 
         while true do
@@ -305,11 +311,12 @@ function Farm:Start()
             end
             task.wait(3)
         end
+
     end
 end
 
 function Farm:Stop()
-    print("[Farm] Stop solicitado.")
+    print("[Farm] Stop requested.")
 end
 
 return Farm
