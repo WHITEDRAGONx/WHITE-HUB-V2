@@ -1,11 +1,12 @@
 -- =====================
 -- Inventory.lua
+-- Handles item counting, selling, buying, and keep-item logic.
 -- =====================
 
 local Players            = game:GetService("Players")
 local MarketplaceService = game:GetService("MarketplaceService")
 
-local Player = Players.LocalPlayer
+local Player    = Players.LocalPlayer
 local Inventory = {}
 
 local _config   = nil
@@ -43,7 +44,7 @@ function Inventory:Init(Modules)
     end)
     if _has2x then
         for k, v in pairs(MaxItemAmounts) do MaxItemAmounts[k] = v * 2 end
-        print("[Inventory] 2x gamepass detectado — caps dobrados.")
+        print("[Inventory] 2x gamepass detected — item caps doubled.")
     end
 end
 
@@ -77,10 +78,10 @@ function Inventory:GetMoney()
     return ok and val or 0
 end
 
-function Inventory:GetLuckyStop()  return LUCKY_STOP end
-function Inventory:GetMoneyStop()  return MONEY_STOP end
-function Inventory:HasEnoughLucky() return self:Count("Lucky Arrow") >= LUCKY_STOP end
-function Inventory:IsMoneyMaxed()   return self:GetMoney() >= MONEY_STOP end
+function Inventory:GetLuckyStop()     return LUCKY_STOP end
+function Inventory:GetMoneyStop()     return MONEY_STOP end
+function Inventory:HasEnoughLucky()   return self:Count("Lucky Arrow") >= LUCKY_STOP end
+function Inventory:IsMoneyMaxed()     return self:GetMoney() >= MONEY_STOP end
 function Inventory:ShouldStopPhase1() return self:HasEnoughLucky() and self:IsMoneyMaxed() end
 
 function Inventory:GetKeepItems()
@@ -105,7 +106,7 @@ end
 
 function Inventory:SellAll()
     if self:IsMoneyMaxed() then
-        print("[Inventory] Dinheiro no máximo — pulando sell.")
+        print("[Inventory] Money already maxed — skipping sell.")
         return
     end
     if not _config:Get("AutoSell") then return end
@@ -118,10 +119,9 @@ function Inventory:SellAll()
                 if not char then return end
                 local hum = char:FindFirstChildWhichIsA("Humanoid")
                 if not hum then return end
-                -- ✅ PATCH: nil-check no RemoteEvent
                 local re = char:FindFirstChild("RemoteEvent")
                 if not re then
-                    warn("[Inventory] RemoteEvent não encontrado — sell abortado para: " .. name)
+                    warn("[Inventory] RemoteEvent not found — sell skipped for: " .. name)
                     return
                 end
                 hum:EquipTool(Player.Backpack:FindFirstChild(name))
@@ -142,7 +142,7 @@ function Inventory:BuyLucky()
     local money = self:GetMoney()
     if money < 75000 then return end
 
-    print("[Inventory] Comprando Lucky Arrows... ($" .. money .. ")")
+    print("[Inventory] Buying Lucky Arrows... ($" .. money .. ")")
     local attempts = 0
 
     while self:GetMoney() >= 75000 and attempts < 15 do
@@ -158,7 +158,7 @@ function Inventory:BuyLucky()
         local count = self:Count("Lucky Arrow")
         print("[Inventory] Lucky Arrows: " .. count .. "/" .. LUCKY_STOP)
         if count >= LUCKY_STOP then
-            print("[Inventory] Limite atingido — parando compra.")
+            print("[Inventory] Reached " .. LUCKY_STOP .. " Lucky Arrows — stopping purchase (YBA bug).")
             break
         end
     end
