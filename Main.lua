@@ -1,37 +1,62 @@
 -- =====================
 -- Main.lua
 -- WHITE HUB — Entry point.
--- Loads all modules, initializes systems, and starts the farm.
---
--- HOW TO USE:
--- Host each .lua file on your GitHub repo and paste the raw URLs below.
--- The user only needs to run this file via their executor.
 -- =====================
 
 repeat task.wait(1) until game:IsLoaded()
 
 print("[WHITE HUB] Loading...")
 warn("[WHITE HUB] Loading...")
-wait(6)
+
+task.wait(6)
+
 print("[WHITE HUB] Initialized.")
-wait(2)
+
+task.wait(2)
 
 -- =====================
 -- GITHUB RAW BASE URL
--- Change this to your own repo raw URL base.
--- Example: "https://raw.githubusercontent.com/YOUR_USER/WHITE-HUB/main/"
 -- =====================
 local BASE_URL = "https://raw.githubusercontent.com/WHITEDRAGONx/WHITE-HUB-V2/main/"
+
+-- =====================
+-- SAFE MODULE LOADER
+-- =====================
 local function Load(file)
     local url = BASE_URL .. file
-    local ok, result = pcall(function()
-        return loadstring(game:HttpGet(url, true))()
+
+    print("[WHITE HUB] Fetching:", url)
+
+    local success, response = pcall(function()
+        return game:HttpGet(url, true)
     end)
-    if not ok then
-        warn("[WHITE HUB] Failed to load module: " .. file .. "\n" .. tostring(result))
+
+    if not success then
+        warn("[WHITE HUB] Failed to fetch module:", file)
+        warn(response)
         return nil
     end
-    print("[WHITE HUB] Loaded: " .. file)
+
+    print("[WHITE HUB] Response received for:", file)
+
+    local func, compileError = loadstring(response)
+
+    if not func then
+        warn("[WHITE HUB] Compile error in:", file)
+        warn(compileError)
+        return nil
+    end
+
+    local ok, result = pcall(func)
+
+    if not ok then
+        warn("[WHITE HUB] Runtime error in:", file)
+        warn(result)
+        return nil
+    end
+
+    print("[WHITE HUB] Loaded:", file)
+
     return result
 end
 
@@ -48,42 +73,89 @@ Modules.Inventory = Load("Inventory.lua")
 Modules.UI        = Load("UI.lua")
 Modules.Farm      = Load("Farm.lua")
 
--- Abort if any critical module failed
+-- =====================
+-- VERIFY MODULES
+-- =====================
 for name, mod in pairs(Modules) do
     if mod == nil then
-        error("[WHITE HUB] Critical module failed to load: " .. name .. " — aborting.")
+        error("[WHITE HUB] Critical module failed to load: " .. name)
+    end
+end
+
+print("[WHITE HUB] All modules loaded successfully.")
+
+-- =====================
+-- LOAD CONFIG FIRST
+-- =====================
+if Modules.Config.Load then
+    Modules.Config:Load()
+else
+    warn("[WHITE HUB] Config.Load() missing.")
+end
+
+-- =====================
+-- INITIALIZE MODULES
+-- =====================
+local initOrder = {
+    "Webhook",
+    "Movement",
+    "ServerHop",
+    "Inventory",
+    "UI",
+    "Farm"
+}
+
+for _, moduleName in ipairs(initOrder) do
+    local module = Modules[moduleName]
+
+    if module and module.Init then
+        local ok, err = pcall(function()
+            module:Init(Modules)
+        end)
+
+        if not ok then
+            warn("[WHITE HUB] Init failed for:", moduleName)
+            warn(err)
+        else
+            print("[WHITE HUB] Initialized:", moduleName)
+        end
+    else
+        warn("[WHITE HUB] Missing Init() in:", moduleName)
     end
 end
 
 -- =====================
--- LOAD CONFIG FIRST
--- (other modules depend on it)
+-- CREATE UI
 -- =====================
-Modules.Config:Load()
+if Modules.UI.Create then
+    local ok, err = pcall(function()
+        Modules.UI:Create()
+    end)
 
--- =====================
--- INITIALIZE MODULES
--- Each module receives the full Modules table so it can
--- reference other systems without tight coupling.
--- =====================
-Modules.Webhook:Init(Modules)
-Modules.Movement:Init(Modules)  -- Movement.lua has a light Init (currently no-op, reserved)
-Modules.ServerHop:Init(Modules)
-Modules.Inventory:Init(Modules)
-Modules.UI:Init(Modules)
-Modules.Farm:Init(Modules)
-
--- =====================
--- START UI
--- =====================
-Modules.UI:Create()
+    if not ok then
+        warn("[WHITE HUB] UI creation failed.")
+        warn(err)
+    end
+else
+    warn("[WHITE HUB] UI.Create() missing.")
+end
 
 -- =====================
 -- START FARM
--- This call blocks (runs the infinite farm loop internally via task.spawn)
 -- =====================
-task.spawn(function()
-    Modules.Farm:Start()
-end)
+if Modules.Farm.Start then
+    task.spawn(function()
+        local ok, err = pcall(function()
+            Modules.Farm:Start()
+        end)
+
+        if not ok then
+            warn("[WHITE HUB] Farm crashed.")
+            warn(err)
+        end
+    end)
+else
+    warn("[WHITE HUB] Farm.Start() missing.")
+end
 
 print("[WHITE HUB] All systems running.")
