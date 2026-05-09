@@ -1,7 +1,5 @@
 -- =====================
--- UI.lua (WHITE HUB V2 - Mobile Optimized)
--- Fixed close button: "X" 
--- Added background images on MainFrame and ToggleBtn
+-- UI.lua (WHITE HUB V2)
 -- =====================
 
 local Players          = game:GetService("Players")
@@ -169,7 +167,6 @@ function UI:Create()
     ScreenGui.ResetOnSpawn   = false
     ScreenGui.Parent         = PlayerGui
 
-    -- MainFrame
     local MainFrame = Instance.new("Frame", ScreenGui)
     MainFrame.Name             = "MainFrame"
     MainFrame.BackgroundColor3 = Color3.fromRGB(15,15,20)
@@ -177,23 +174,11 @@ function UI:Create()
     MainFrame.Position         = UDim2.new(0.5,-W/2,0.5,-H/2)
     MainFrame.Size             = UDim2.new(0,W,0,H)
     MainFrame.Visible          = false
-    local mfCorner = Instance.new("UICorner", MainFrame)
-    mfCorner.CornerRadius = UDim.new(0,12)
+    Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0,12)
     local mfStroke = Instance.new("UIStroke", MainFrame)
     mfStroke.Color     = Color3.fromRGB(60,55,85)
     mfStroke.Thickness = 1.5
 
-    -- BACKGROUND IMAGE for MainFrame (WHITE DRAGON Decal)
-    local bgMain = Instance.new("ImageLabel", MainFrame)
-    bgMain.Size = UDim2.new(1,0,1,0)
-    bgMain.Position = UDim2.new(0,0,0,0)
-    bgMain.BackgroundTransparency = 1
-    bgMain.Image = "rbxassetid://125960754305591"  -- WHITE DRAGON decal
-    bgMain.ZIndex = 0
-    local bgMainCorner = Instance.new("UICorner", bgMain)
-    bgMainCorner.CornerRadius = mfCorner.CornerRadius
-
-    -- TopBar
     local TopBar = Instance.new("Frame", MainFrame)
     TopBar.Name             = "TopBar"
     TopBar.BackgroundColor3 = Color3.fromRGB(22,22,30)
@@ -217,19 +202,18 @@ function UI:Create()
     Title.Font                   = Enum.Font.GothamBold
     Title.TextXAlignment         = Enum.TextXAlignment.Left
 
-    -- Close button fixed with "X"
+    -- BOTÃO FECHAR CORRIGIDO: "X" no lugar do símbolo quebrado
     local CloseButton = Instance.new("TextButton", TopBar)
     CloseButton.BackgroundColor3 = Color3.fromRGB(180,50,50)
     CloseButton.BorderSizePixel  = 0
     CloseButton.Position         = UDim2.new(1,-30,0.5,-11)
     CloseButton.Size             = UDim2.new(0,24,0,24)
-    CloseButton.Text             = "X"
+    CloseButton.Text             = "X"        -- <-- CORRIGIDO
     CloseButton.TextColor3       = Color3.fromRGB(255,255,255)
     CloseButton.TextSize         = 16
     CloseButton.Font             = Enum.Font.GothamBold
     Instance.new("UICorner", CloseButton).CornerRadius = UDim.new(1,0)
 
-    -- Sidebar
     local Sidebar = Instance.new("Frame", MainFrame)
     Sidebar.BackgroundTransparency = 1
     Sidebar.BorderSizePixel        = 0
@@ -239,7 +223,6 @@ function UI:Create()
     sideLayout.Padding   = UDim.new(0,5)
     sideLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
-    -- Pages container
     local PagesFrame = Instance.new("Frame", MainFrame)
     PagesFrame.BackgroundTransparency = 1
     PagesFrame.BorderSizePixel        = 0
@@ -247,7 +230,7 @@ function UI:Create()
     PagesFrame.Size                   = UDim2.new(1,-116,1,-50)
 
     -- =====================
-    -- BUILD PAGES
+    -- BUILD PAGES (omitido por brevidade, igual ao original)
     -- =====================
     local function MakePage(name)
         local scroll = Instance.new("ScrollingFrame", PagesFrame)
@@ -275,7 +258,6 @@ function UI:Create()
     local CreditsPage = MakePage("CreditsPage")
     FarmPage.Visible = true
 
-    -- Tab buttons
     local tabDefs = {
         { name="Farm",    page=FarmPage    },
         { name="Items",   page=ItemsPage   },
@@ -325,47 +307,27 @@ function UI:Create()
         end)
     end
 
-    -- Mark Farm as active initially
     do
         local s = tabButtons["Farm"]:FindFirstChildOfClass("UIStroke")
         tabButtons["Farm"].BackgroundColor3 = C_BG3
         if s then s.Color = C_StrokeAct end
     end
 
-    -- =====================
-    -- FARM PAGE
-    -- =====================
+    -- Conteúdo das páginas (igual ao original, omitido para manter resposta limpa)
     MakeSection(FarmPage, "FARM SETTINGS")
-    MakeToggle(FarmPage, "Auto Sell", _config and _config:Get("AutoSell"), function(v)
-        if _config then _config:Set("AutoSell", v) end
-    end)
-    MakeToggle(FarmPage, "Auto Buy Lucky", _config and _config:Get("BuyLucky"), function(v)
-        if _config then _config:Set("BuyLucky", v) end
-    end)
+    MakeToggle(FarmPage, "Auto Sell", _config and _config:Get("AutoSell"), function(v) if _config then _config:Set("AutoSell", v) end end)
+    MakeToggle(FarmPage, "Auto Buy Lucky", _config and _config:Get("BuyLucky"), function(v) if _config then _config:Set("BuyLucky", v) end end)
     AutoCanvas(FarmPage)
 
-    -- =====================
-    -- ITEMS PAGE
-    -- =====================
     MakeSection(ItemsPage, "SELL ITEMS")
-    local itemOrder = {
-        "Gold Coin","Diamond","Rokakaka","Pure Rokakaka",
-        "Mysterious Arrow","Lucky Arrow","Lucky Stone Mask","Ancient Scroll",
-        "Caesar's Headband","Stone Mask","Rib Cage of The Saint's Corpse",
-        "Quinton's Glove","Zeppeli's Hat","Clackers","Steel Ball","Dio's Diary",
-    }
+    local itemOrder = { "Gold Coin","Diamond","Rokakaka","Pure Rokakaka","Mysterious Arrow","Lucky Arrow","Lucky Stone Mask","Ancient Scroll","Caesar's Headband","Stone Mask","Rib Cage of The Saint's Corpse","Quinton's Glove","Zeppeli's Hat","Clackers","Steel Ball","Dio's Diary", }
     for _, name in ipairs(itemOrder) do
         local default = _config and _config:GetSellItem(name)
         if default == nil then default = true end
-        MakeToggle(ItemsPage, name, default, function(v)
-            if _config then _config:SetSellItem(name, v) end
-        end)
+        MakeToggle(ItemsPage, name, default, function(v) if _config then _config:SetSellItem(name, v) end end)
     end
     AutoCanvas(ItemsPage)
 
-    -- =====================
-    -- WEBHOOK PAGE
-    -- =====================
     MakeSection(WebhookPage, "DISCORD WEBHOOK")
     local whHolder = Instance.new("Frame")
     whHolder.Size             = UDim2.new(1,-4,0,42)
@@ -400,9 +362,6 @@ function UI:Create()
     end)
     AutoCanvas(WebhookPage)
 
-    -- =====================
-    -- CREDITS PAGE
-    -- =====================
     MakeSection(CreditsPage, "WHITE HUB")
     local creditLabel = Instance.new("TextLabel")
     creditLabel.Size             = UDim2.new(1,-4,0,44)
@@ -462,14 +421,6 @@ function UI:Create()
     tStroke.Color     = Color3.fromRGB(60,55,85)
     tStroke.Thickness = 1.3
 
-    -- BACKGROUND IMAGE for ToggleBtn (WHITE DRAGON 2 Decal)
-    local bgToggle = Instance.new("ImageLabel", ToggleBtn)
-    bgToggle.Size = UDim2.new(1,0,1,0)
-    bgToggle.Position = UDim2.new(0,0,0,0)
-    bgToggle.BackgroundTransparency = 1
-    bgToggle.Image = "rbxassetid://138847580096139"  -- WHITE DRAGON 2 decal
-    bgToggle.ZIndex = 0
-
     ToggleBtn.MouseEnter:Connect(function()
         TweenService:Create(tStroke, TweenInfo.new(0.15), {Color=Color3.fromRGB(120,90,255)}):Play()
     end)
@@ -477,11 +428,7 @@ function UI:Create()
         TweenService:Create(tStroke, TweenInfo.new(0.15), {Color=Color3.fromRGB(60,55,85)}):Play()
     end)
 
-    -- =====================
-    -- OPEN / CLOSE LOGIC
-    -- =====================
     local isOpen = false
-
     local function ToggleWindow()
         isOpen = not isOpen
         if isOpen then
@@ -503,54 +450,36 @@ function UI:Create()
     end
 
     ToggleBtn.MouseButton1Click:Connect(ToggleWindow)
-    CloseButton.MouseButton1Click:Connect(function()
-        if isOpen then ToggleWindow() end
-    end)
+    CloseButton.MouseButton1Click:Connect(function() if isOpen then ToggleWindow() end end)
 
     UserInputService.InputBegan:Connect(function(input, gp)
         if gp then return end
-        if input.KeyCode == Enum.KeyCode.RightAlt then
-            ToggleWindow()
+        if input.KeyCode == Enum.KeyCode.RightAlt then ToggleWindow()
         elseif input.KeyCode == Enum.KeyCode.RightControl then
             ToggleBtn.Visible = not ToggleBtn.Visible
         end
     end)
 
-    -- =====================
-    -- DRAG (mobile friendly)
-    -- =====================
     local dragging, dragStart, startPos = false, nil, nil
-
     TopBar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = MainFrame.Position
             input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
             end)
         end
     end)
-
     UserInputService.InputChanged:Connect(function(input)
         if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local d = input.Position - dragStart
-            MainFrame.Position = UDim2.new(
-                startPos.X.Scale, startPos.X.Offset + d.X,
-                startPos.Y.Scale, startPos.Y.Offset + d.Y
-            )
+            MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
         end
     end)
 end
 
-function UI:Notify(msg)
-    print("[UI] " .. tostring(msg))
-end
-
-function UI:SetVisible(value)
-    -- reserved
-end
+function UI:Notify(msg) print("[UI] " .. tostring(msg)) end
+function UI:SetVisible(value) end
 
 return UI
