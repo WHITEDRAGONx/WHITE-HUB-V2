@@ -153,7 +153,7 @@ local function InitItemDetection()
             if spawns then ItemSpawnFolder = spawns:FindFirstChild("Items") end
         end)
     end
-    if not ItemSpawnFolder else
+    if not ItemSpawnFolder then
         warn("[Farm] ERROR: Item_Spawns/Items folder not found.")
         return
     end
@@ -342,7 +342,7 @@ function Farm:Start()
             -- PATCH: if Lucky Arrows drop below minimum, return to Phase 1
             if not _inventory:ShouldStopPhase1() then
                 print("[Farm] >>> Lucky count dropped below minimum — returning to Phase 1.")
-                _config:Set("Phase1Notified", false)   -- allow new notification on next completion
+                _config:Set("Phase1Notified", false)
                 lastItemTime = tick()
                 break
             end
@@ -351,7 +351,7 @@ function Farm:Start()
             if hasConfigChanged() then
                 print("[Farm] >>> Configuration changed (item toggle) — returning to Phase 1.")
                 updateConfigSnapshot()
-                _config:Set("Phase1Notified", false)   -- allow new notification on next completion
+                _config:Set("Phase1Notified", false)
                 lastItemTime = tick()
                 break
             end
