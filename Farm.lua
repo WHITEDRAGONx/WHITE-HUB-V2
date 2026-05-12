@@ -27,7 +27,6 @@ local NO_ITEM_TIMEOUT = 20
 local lastItemTime    = tick()
 
 local lastSellItemsSnapshot = nil
-local _phase1Notified = false   -- <-- FLAG ADICIONADA
 
 function Farm:Init(Modules)
     _config    = Modules.Config
@@ -154,7 +153,7 @@ local function InitItemDetection()
             if spawns then ItemSpawnFolder = spawns:FindFirstChild("Items") end
         end)
     end
-    if not ItemSpawnFolder then
+    if not ItemSpawnFolder else
         warn("[Farm] ERROR: Item_Spawns/Items folder not found.")
         return
     end
@@ -295,10 +294,10 @@ function Farm:Start()
         -- ===== PHASE 2 =====
         local keepItems = _inventory:GetKeepItems()
         if #keepItems > 0 then
-            -- Only send webhook ONCE per script session
-            if not _phase1Notified then
+            -- Send webhook only once (persists across server hops)
+            if not _config:Get("Phase1Notified") then
                 _webhook:SendPhase1Complete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
-                _phase1Notified = true
+                _config:Set("Phase1Notified", true)
             end
 
             print("[Farm] >>> Phase 2 started — farming keep-items: " .. table.concat(keepItems, ", "))
@@ -343,6 +342,7 @@ function Farm:Start()
             -- PATCH: if Lucky Arrows drop below minimum, return to Phase 1
             if not _inventory:ShouldStopPhase1() then
                 print("[Farm] >>> Lucky count dropped below minimum — returning to Phase 1.")
+                _config:Set("Phase1Notified", false)   -- allow new notification on next completion
                 lastItemTime = tick()
                 break
             end
@@ -351,6 +351,7 @@ function Farm:Start()
             if hasConfigChanged() then
                 print("[Farm] >>> Configuration changed (item toggle) — returning to Phase 1.")
                 updateConfigSnapshot()
+                _config:Set("Phase1Notified", false)   -- allow new notification on next completion
                 lastItemTime = tick()
                 break
             end
