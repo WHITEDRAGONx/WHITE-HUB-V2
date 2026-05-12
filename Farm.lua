@@ -290,11 +290,13 @@ function Farm:Start()
         _inventory:SellAll()
         _inventory:BuyLucky()
         print("[Farm] >>> Phase 1 complete.")
-        _webhook:SendPhase1Complete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
 
         -- ===== PHASE 2 =====
         local keepItems = _inventory:GetKeepItems()
         if #keepItems > 0 then
+            -- Only send webhook if we actually have keep-items to farm
+            _webhook:SendPhase1Complete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
+
             print("[Farm] >>> Phase 2 started — farming keep-items: " .. table.concat(keepItems, ", "))
             while not _inventory:AllKeepItemsFull() do
                 local snapshot = {}
@@ -334,7 +336,7 @@ function Farm:Start()
         updateConfigSnapshot()
 
         while true do
-            -- ✅ PATCH: if Lucky Arrows drop below minimum, return to Phase 1
+            -- PATCH: if Lucky Arrows drop below minimum, return to Phase 1
             if not _inventory:ShouldStopPhase1() then
                 print("[Farm] >>> Lucky count dropped below minimum — returning to Phase 1.")
                 break
