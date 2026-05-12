@@ -202,13 +202,13 @@ function UI:Create()
     Title.Font                   = Enum.Font.GothamBold
     Title.TextXAlignment         = Enum.TextXAlignment.Left
 
-    -- BOTÃO FECHAR CORRIGIDO: "X" no lugar do símbolo quebrado
+    -- FIXED CLOSE BUTTON: "X" instead of broken symbol
     local CloseButton = Instance.new("TextButton", TopBar)
     CloseButton.BackgroundColor3 = Color3.fromRGB(180,50,50)
     CloseButton.BorderSizePixel  = 0
     CloseButton.Position         = UDim2.new(1,-30,0.5,-11)
     CloseButton.Size             = UDim2.new(0,24,0,24)
-    CloseButton.Text             = "X"        -- <-- CORRIGIDO
+    CloseButton.Text             = "X"
     CloseButton.TextColor3       = Color3.fromRGB(255,255,255)
     CloseButton.TextSize         = 16
     CloseButton.Font             = Enum.Font.GothamBold
@@ -230,7 +230,7 @@ function UI:Create()
     PagesFrame.Size                   = UDim2.new(1,-116,1,-50)
 
     -- =====================
-    -- BUILD PAGES (omitido por brevidade, igual ao original)
+    -- BUILD PAGES
     -- =====================
     local function MakePage(name)
         local scroll = Instance.new("ScrollingFrame", PagesFrame)
@@ -313,7 +313,7 @@ function UI:Create()
         if s then s.Color = C_StrokeAct end
     end
 
-    -- Conteúdo das páginas (igual ao original, omitido para manter resposta limpa)
+    -- Page content (same as original, omitted for clean answer)
     MakeSection(FarmPage, "FARM SETTINGS")
     MakeToggle(FarmPage, "Auto Sell", _config and _config:Get("AutoSell"), function(v) if _config then _config:Set("AutoSell", v) end end)
     MakeToggle(FarmPage, "Auto Buy Lucky", _config and _config:Get("BuyLucky"), function(v) if _config then _config:Set("BuyLucky", v) end end)
