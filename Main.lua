@@ -1,5 +1,5 @@
 -- =====================
--- Main.lua (modificado para UI manual com criação ativa)
+-- Main.lua (modified for manual UI with active creation)
 -- =====================
 
 repeat task.wait(1) until game:IsLoaded()
@@ -114,7 +114,7 @@ else
     ERR("CONFIG", "Config.Load() is missing.")
 end
 
--- Initialize modules (incluindo UI)
+-- Initialize modules (including UI)
 local initOrder = { "Webhook", "Movement", "ServerHop", "Inventory", "UI", "Farm" }
 
 LOG("INIT", "Initializing modules...")
@@ -134,7 +134,7 @@ end
 _G.WhiteHubModules = Modules
 LOG("UI", "Manual UI will use _G.WhiteHubModules")
 
--- ========== CRIAÇÃO DA UI ==========
+-- ========== UI CREATION ==========
 LOG("UI", "Creating UI...")
 if Modules.UI and Modules.UI.Create then
     local ok, err = pcall(function() Modules.UI:Create() end)
