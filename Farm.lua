@@ -27,6 +27,7 @@ local NO_ITEM_TIMEOUT = 20
 local lastItemTime    = tick()
 
 local lastSellItemsSnapshot = nil
+local _phase1Notified = false   -- <-- FLAG ADICIONADA
 
 function Farm:Init(Modules)
     _config    = Modules.Config
@@ -294,8 +295,11 @@ function Farm:Start()
         -- ===== PHASE 2 =====
         local keepItems = _inventory:GetKeepItems()
         if #keepItems > 0 then
-            -- Only send webhook if we actually have keep-items to farm
-            _webhook:SendPhase1Complete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
+            -- Only send webhook ONCE per script session
+            if not _phase1Notified then
+                _webhook:SendPhase1Complete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
+                _phase1Notified = true
+            end
 
             print("[Farm] >>> Phase 2 started — farming keep-items: " .. table.concat(keepItems, ", "))
             while not _inventory:AllKeepItemsFull() do
@@ -339,7 +343,7 @@ function Farm:Start()
             -- PATCH: if Lucky Arrows drop below minimum, return to Phase 1
             if not _inventory:ShouldStopPhase1() then
                 print("[Farm] >>> Lucky count dropped below minimum — returning to Phase 1.")
-                lastItemTime = tick()   -- Reset timer to avoid immediate hop
+                lastItemTime = tick()
                 break
             end
 
@@ -347,7 +351,7 @@ function Farm:Start()
             if hasConfigChanged() then
                 print("[Farm] >>> Configuration changed (item toggle) — returning to Phase 1.")
                 updateConfigSnapshot()
-                lastItemTime = tick()   -- Reset timer to avoid immediate hop
+                lastItemTime = tick()
                 break
             end
 
