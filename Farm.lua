@@ -339,6 +339,7 @@ function Farm:Start()
             -- PATCH: if Lucky Arrows drop below minimum, return to Phase 1
             if not _inventory:ShouldStopPhase1() then
                 print("[Farm] >>> Lucky count dropped below minimum — returning to Phase 1.")
+                lastItemTime = tick()   -- Reset timer to avoid immediate hop
                 break
             end
 
@@ -346,6 +347,7 @@ function Farm:Start()
             if hasConfigChanged() then
                 print("[Farm] >>> Configuration changed (item toggle) — returning to Phase 1.")
                 updateConfigSnapshot()
+                lastItemTime = tick()   -- Reset timer to avoid immediate hop
                 break
             end
 
