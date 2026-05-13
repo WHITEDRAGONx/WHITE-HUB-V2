@@ -58,6 +58,15 @@ function Webhook:SendAllComplete(luckyCount, luckyStop, money)
     )
 end
 
+function Webhook:SendFarmDisabled()
+    Send(
+        "🛑 **Farm manually disabled**\n"
+        .. "Player: `" .. Player.Name .. "`\n"
+        .. "Farming has been paused by the user.\n"
+        .. "Use the UI toggle to resume."
+    )
+end
+
 function Webhook:SendLuckyFound(luckyCount, luckyStop, money)
     Send(
         "✅ **Phase 1 conditions met!**\n"
