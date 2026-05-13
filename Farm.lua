@@ -1,11 +1,6 @@
 -- =====================
 -- Farm.lua
 -- Main farm controller.
--- Phase 1: Normal farm until 9 Lucky Arrows + $1,000,000
--- Phase 2: Keep-item farm until all disabled-sell items are maxed
--- Phase 3: Full idle — only collects Lucky Arrows from the ground
---          BUT can restart immediately if item toggles change via UI
---          OR if Lucky Arrow count drops below the stop condition
 -- =====================
 
 local Players           = game:GetService("Players")
@@ -27,7 +22,6 @@ local NO_ITEM_TIMEOUT = 20
 local lastItemTime    = tick()
 
 local lastSellItemsSnapshot = nil
-local _phase3Notified = false   -- SESSION FLAG (resets each script run)
 
 function Farm:Init(Modules)
     _config    = Modules.Config
@@ -258,9 +252,6 @@ local function Startup()
 end
 
 function Farm:Start()
-    -- Reset session flag at start of each execution
-    _phase3Notified = false
-    
     ApplyHooks()
     ApplyCrashBypass()
     ApplyAntiAfk()
@@ -358,12 +349,13 @@ function Farm:Start()
         end
 
         -- ===== PHASE 3 (IDLE) =====
-        if not _phase3Notified then
+        -- Check persistent flag; if false, send webhook and set to true
+        if not _config:Get("Phase3Notified") then
             print("[Farm] Sending 'All farming complete' webhook...")
             _webhook:SendAllComplete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
-            _phase3Notified = true
+            _config:Set("Phase3Notified", true)
         else
-            print("[Farm] 'All farming complete' already sent this session.")
+            print("[Farm] 'All farming complete' already sent (persistent flag). Use UI reset button if needed.")
         end
         print("[Farm] >>> Phase 3 — fully stopped. Idling, only collecting Lucky Arrows.")
         updateConfigSnapshot()
@@ -374,23 +366,26 @@ function Farm:Start()
                 break
             end
             
+            -- If Phase 1 conditions are no longer met, reset everything and restart
             if not _inventory:ShouldStopPhase1() then
-                print("[Farm] >>> Lucky count dropped below minimum — returning to Phase 1.")
+                print("[Farm] >>> Lucky count or money dropped below minimum — resetting flags and returning to Phase 1.")
                 _config:Set("Phase1Notified", false)
-                _phase3Notified = false
+                _config:Set("Phase3Notified", false)   -- RESET PERSISTENT FLAG
                 lastItemTime = tick()
                 break
             end
 
+            -- If user changed item sell toggles, restart farm
             if hasConfigChanged() then
-                print("[Farm] >>> Configuration changed (item toggle) — returning to Phase 1.")
+                print("[Farm] >>> Configuration changed (item toggle) — resetting flags and returning to Phase 1.")
                 updateConfigSnapshot()
                 _config:Set("Phase1Notified", false)
-                _phase3Notified = false
+                _config:Set("Phase3Notified", false)   -- RESET PERSISTENT FLAG
                 lastItemTime = tick()
                 break
             end
 
+            -- Only collect Lucky Arrows / Lucky Stone Mask
             local snapshot = {}
             for idx, info in pairs(SpawnedItems) do
                 if info.Name == "Lucky Arrow" or info.Name == "Lucky Stone Mask" then
