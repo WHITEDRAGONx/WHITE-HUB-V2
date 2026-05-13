@@ -14,6 +14,7 @@ local Defaults = {
     AutoSell   = true,
     WebhookURL = "",
     Phase1Notified = false,   -- Prevents repeated webhook on server hop
+    FarmEnabled = true,       -- Master toggle to pause/resume all farming actions
     SellItems  = {
         ["Gold Coin"]                       = true,
         ["Rokakaka"]                        = true,
@@ -39,6 +40,7 @@ local function ApplyDefaults(data)
     if data.AutoSell   == nil then data.AutoSell   = Defaults.AutoSell   end
     if data.WebhookURL == nil then data.WebhookURL = Defaults.WebhookURL end
     if data.Phase1Notified == nil then data.Phase1Notified = Defaults.Phase1Notified end
+    if data.FarmEnabled == nil then data.FarmEnabled = Defaults.FarmEnabled end
     if type(data.SellItems) ~= "table" then data.SellItems = {} end
     for k, v in pairs(Defaults.SellItems) do
         if data.SellItems[k] == nil then data.SellItems[k] = v end
