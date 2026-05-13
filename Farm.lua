@@ -275,6 +275,8 @@ function Farm:Start()
             task.wait(1)
             print("[Farm] Farm disabled by user. Waiting...")
         end
+        -- Reset timer when farm is re-enabled to avoid immediate hop
+        lastItemTime = tick()
 
         -- ===== PHASE 1 =====
         print("[Farm] >>> Phase 1 started — farming normally.")
