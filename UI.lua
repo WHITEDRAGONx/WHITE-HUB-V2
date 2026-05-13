@@ -313,21 +313,44 @@ function UI:Create()
         if s then s.Color = C_StrokeAct end
     end
 
-    -- Page content (same as original, omitted for clean answer)
+    -- =====================
+    -- PAGE CONTENTS
+    -- =====================
+    
+    -- FARM PAGE
     MakeSection(FarmPage, "FARM SETTINGS")
-    MakeToggle(FarmPage, "Auto Sell", _config and _config:Get("AutoSell"), function(v) if _config then _config:Set("AutoSell", v) end end)
-    MakeToggle(FarmPage, "Auto Buy Lucky", _config and _config:Get("BuyLucky"), function(v) if _config then _config:Set("BuyLucky", v) end end)
+    
+    -- MASTER TOGGLE: Enable Farm
+    MakeToggle(FarmPage, "Enable Farm", _config and _config:Get("FarmEnabled"), function(v)
+        if _config then _config:Set("FarmEnabled", v) end
+        if not v then
+            print("[UI] Farm disabled by user. Player will not be moved.")
+        else
+            print("[UI] Farm enabled. Resuming...")
+        end
+    end)
+    
+    MakeToggle(FarmPage, "Auto Sell", _config and _config:Get("AutoSell"), function(v)
+        if _config then _config:Set("AutoSell", v) end
+    end)
+    MakeToggle(FarmPage, "Auto Buy Lucky", _config and _config:Get("BuyLucky"), function(v)
+        if _config then _config:Set("BuyLucky", v) end
+    end)
     AutoCanvas(FarmPage)
 
+    -- ITEMS PAGE
     MakeSection(ItemsPage, "SELL ITEMS")
     local itemOrder = { "Gold Coin","Diamond","Rokakaka","Pure Rokakaka","Mysterious Arrow","Lucky Arrow","Lucky Stone Mask","Ancient Scroll","Caesar's Headband","Stone Mask","Rib Cage of The Saint's Corpse","Quinton's Glove","Zeppeli's Hat","Clackers","Steel Ball","Dio's Diary", }
     for _, name in ipairs(itemOrder) do
         local default = _config and _config:GetSellItem(name)
         if default == nil then default = true end
-        MakeToggle(ItemsPage, name, default, function(v) if _config then _config:SetSellItem(name, v) end end)
+        MakeToggle(ItemsPage, name, default, function(v)
+            if _config then _config:SetSellItem(name, v) end
+        end)
     end
     AutoCanvas(ItemsPage)
 
+    -- WEBHOOK PAGE
     MakeSection(WebhookPage, "DISCORD WEBHOOK")
     local whHolder = Instance.new("Frame")
     whHolder.Size             = UDim2.new(1,-4,0,42)
@@ -362,6 +385,7 @@ function UI:Create()
     end)
     AutoCanvas(WebhookPage)
 
+    -- CREDITS PAGE
     MakeSection(CreditsPage, "WHITE HUB")
     local creditLabel = Instance.new("TextLabel")
     creditLabel.Size             = UDim2.new(1,-4,0,44)
