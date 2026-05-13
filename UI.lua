@@ -11,10 +11,12 @@ local PlayerGui = Player:WaitForChild("PlayerGui")
 
 local UI = {}
 
-local _config = nil
+local _config  = nil
+local _webhook = nil
 
 function UI:Init(Modules)
-    _config = Modules.Config
+    _config  = Modules.Config
+    _webhook = Modules.Webhook
 end
 
 -- =====================
@@ -324,7 +326,10 @@ function UI:Create()
     MakeToggle(FarmPage, "Enable Farm", _config and _config:Get("FarmEnabled"), function(v)
         if _config then _config:Set("FarmEnabled", v) end
         if not v then
-            print("[UI] Farm disabled by user. Player will not be moved.")
+            print("[UI] Farm disabled by user.")
+            if _webhook then
+                _webhook:SendFarmDisabled()
+            end
         else
             print("[UI] Farm enabled. Resuming...")
         end
