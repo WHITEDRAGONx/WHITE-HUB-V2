@@ -387,6 +387,37 @@ function UI:Create()
         TweenService:Create(whStroke, TweenInfo.new(0.1), {Color=Color3.fromRGB(60,55,85)}):Play()
         whBox.BackgroundColor3 = Color3.fromRGB(40,40,55)
     end)
+
+    -- Reset Webhook Flags Button
+    local resetBtn = Instance.new("TextButton")
+    resetBtn.Size = UDim2.new(1,-4,0,36)
+    resetBtn.Position = UDim2.new(0,0,0,50)
+    resetBtn.BackgroundColor3 = Color3.fromRGB(88,101,242)
+    resetBtn.BorderSizePixel = 0
+    resetBtn.Text = "🔄 Reset Webhook Flags"
+    resetBtn.TextColor3 = Color3.fromRGB(255,255,255)
+    resetBtn.TextScaled = true
+    resetBtn.Font = Enum.Font.GothamBold
+    resetBtn.Parent = WebhookPage
+    Instance.new("UICorner", resetBtn).CornerRadius = UDim.new(0,7)
+    Instance.new("UIStroke", resetBtn).Color = Color3.fromRGB(60,70,200)
+    resetBtn.MouseButton1Click:Connect(function()
+        if _config then
+            _config:Set("Phase1Notified", false)
+            _config:Set("Phase3Notified", false)
+            print("[UI] Webhook flags reset. Phase1 and Phase3 will be re‑sent on next completion.")
+            if _webhook then
+                _webhook:Send("🔄 **Webhook flags reset**\nPlayer: `" .. Player.Name .. "`\nPhase1 and Phase3 notifications will be re‑sent on next completion.")
+            end
+        end
+    end)
+    resetBtn.MouseEnter:Connect(function()
+        TweenService:Create(resetBtn, TweenInfo.new(0.15), {BackgroundColor3=Color3.fromRGB(110,125,255)}):Play()
+    end)
+    resetBtn.MouseLeave:Connect(function()
+        TweenService:Create(resetBtn, TweenInfo.new(0.15), {BackgroundColor3=Color3.fromRGB(88,101,242)}):Play()
+    end)
+
     AutoCanvas(WebhookPage)
 
     -- CREDITS PAGE
