@@ -105,6 +105,7 @@ function Inventory:AllKeepItemsFull()
 end
 
 function Inventory:SellAll()
+    if not _config:Get("FarmEnabled") then return end   -- Pause if farm disabled
     if self:IsMoneyMaxed() then
         print("[Inventory] Money already maxed — skipping sell.")
         return
@@ -137,6 +138,7 @@ function Inventory:SellAll()
 end
 
 function Inventory:BuyLucky()
+    if not _config:Get("FarmEnabled") then return end   -- Pause if farm disabled
     if not _config:Get("BuyLucky") then return end
     if self:Count("Lucky Arrow") >= LUCKY_STOP then return end
     local money = self:GetMoney()
