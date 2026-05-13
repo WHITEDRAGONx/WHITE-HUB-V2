@@ -183,6 +183,9 @@ end
 local SAFE_SPOT = CFrame.new(978, -42, -49)
 
 local function CollectItem(itemInfo, index)
+    -- Immediately exit if farm is disabled
+    if not _config:Get("FarmEnabled") then return end
+    
     local hrp = _movement:GetCharacter("HumanoidRootPart")
     if not hrp then return end
     SpawnedItems[index] = nil
@@ -202,6 +205,9 @@ local function CollectItem(itemInfo, index)
 end
 
 local function DoHop()
+    -- Do not hop if farm is disabled
+    if not _config:Get("FarmEnabled") then return end
+    
     print("[Farm] Server dry — selling, buying, then hopping...")
     _inventory:SellAll()
     _inventory:BuyLucky()
@@ -263,10 +269,22 @@ function Farm:Start()
     print("[Farm] Farm loop started.")
 
     while true do
+        
+        -- ===== WAIT IF FARM IS DISABLED =====
+        while not _config:Get("FarmEnabled") do
+            task.wait(1)
+            print("[Farm] Farm disabled by user. Waiting...")
+        end
 
         -- ===== PHASE 1 =====
         print("[Farm] >>> Phase 1 started — farming normally.")
         while not _inventory:ShouldStopPhase1() do
+            -- Check farm enable inside loop to break immediately
+            if not _config:Get("FarmEnabled") then
+                print("[Farm] Farm disabled mid-phase 1. Breaking out.")
+                break
+            end
+            
             local snapshot = {}
             for idx, info in pairs(SpawnedItems) do
                 table.insert(snapshot, {Index=idx, ItemInfo=info})
@@ -302,6 +320,12 @@ function Farm:Start()
 
             print("[Farm] >>> Phase 2 started — farming keep-items: " .. table.concat(keepItems, ", "))
             while not _inventory:AllKeepItemsFull() do
+                -- Check farm enable inside loop
+                if not _config:Get("FarmEnabled") then
+                    print("[Farm] Farm disabled mid-phase 2. Breaking out.")
+                    break
+                end
+                
                 local snapshot = {}
                 for idx, info in pairs(SpawnedItems) do
                     local isKeep = _config:GetSellItem(info.Name) == false
@@ -339,6 +363,12 @@ function Farm:Start()
         updateConfigSnapshot()
 
         while true do
+            -- Check farm enable inside idle loop
+            if not _config:Get("FarmEnabled") then
+                print("[Farm] Farm disabled while idle. Breaking out to wait loop.")
+                break
+            end
+            
             -- PATCH: if Lucky Arrows drop below minimum, return to Phase 1
             if not _inventory:ShouldStopPhase1() then
                 print("[Farm] >>> Lucky count dropped below minimum — returning to Phase 1.")
