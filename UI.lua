@@ -327,11 +327,10 @@ function UI:Create()
         if _config then _config:Set("FarmEnabled", v) end
         if not v then
             print("[UI] Farm disabled by user.")
-            if _webhook then
-                _webhook:SendFarmDisabled()
-            end
+            if _webhook then _webhook:SendFarmDisabled() end
         else
             print("[UI] Farm enabled. Resuming...")
+            if _webhook then _webhook:SendFarmResumed() end
         end
     end)
     
