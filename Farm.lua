@@ -27,6 +27,7 @@ local NO_ITEM_TIMEOUT = 20
 local lastItemTime    = tick()
 
 local lastSellItemsSnapshot = nil
+local _phase3Notified = false   -- SESSION FLAG (resets each script run)
 
 function Farm:Init(Modules)
     _config    = Modules.Config
@@ -183,7 +184,6 @@ end
 local SAFE_SPOT = CFrame.new(978, -42, -49)
 
 local function CollectItem(itemInfo, index)
-    -- Immediately exit if farm is disabled
     if not _config:Get("FarmEnabled") then return end
     
     local hrp = _movement:GetCharacter("HumanoidRootPart")
@@ -205,7 +205,6 @@ local function CollectItem(itemInfo, index)
 end
 
 local function DoHop()
-    -- Do not hop if farm is disabled
     if not _config:Get("FarmEnabled") then return end
     
     print("[Farm] Server dry — selling, buying, then hopping...")
@@ -259,6 +258,9 @@ local function Startup()
 end
 
 function Farm:Start()
+    -- Reset session flag at start of each execution
+    _phase3Notified = false
+    
     ApplyHooks()
     ApplyCrashBypass()
     ApplyAntiAfk()
@@ -275,13 +277,11 @@ function Farm:Start()
             task.wait(1)
             print("[Farm] Farm disabled by user. Waiting...")
         end
-        -- Reset timer when farm is re-enabled to avoid immediate hop
         lastItemTime = tick()
 
         -- ===== PHASE 1 =====
         print("[Farm] >>> Phase 1 started — farming normally.")
         while not _inventory:ShouldStopPhase1() do
-            -- Check farm enable inside loop to break immediately
             if not _config:Get("FarmEnabled") then
                 print("[Farm] Farm disabled mid-phase 1. Breaking out.")
                 break
@@ -314,7 +314,6 @@ function Farm:Start()
         -- ===== PHASE 2 =====
         local keepItems = _inventory:GetKeepItems()
         if #keepItems > 0 then
-            -- Send webhook only once per farming session (persists across hops)
             if not _config:Get("Phase1Notified") then
                 _webhook:SendPhase1Complete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
                 _config:Set("Phase1Notified", true)
@@ -322,7 +321,6 @@ function Farm:Start()
 
             print("[Farm] >>> Phase 2 started — farming keep-items: " .. table.concat(keepItems, ", "))
             while not _inventory:AllKeepItemsFull() do
-                -- Check farm enable inside loop
                 if not _config:Get("FarmEnabled") then
                     print("[Farm] Farm disabled mid-phase 2. Breaking out.")
                     break
@@ -360,41 +358,39 @@ function Farm:Start()
         end
 
         -- ===== PHASE 3 (IDLE) =====
-        if not _config:Get("Phase3Notified") then
+        if not _phase3Notified then
             print("[Farm] Sending 'All farming complete' webhook...")
             _webhook:SendAllComplete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
-            _config:Set("Phase3Notified", true)
+            _phase3Notified = true
         else
-            print("[Farm] Phase3Notified is true, skipping 'All farming complete' webhook.")
+            print("[Farm] 'All farming complete' already sent this session.")
         end
         print("[Farm] >>> Phase 3 — fully stopped. Idling, only collecting Lucky Arrows.")
         updateConfigSnapshot()
 
         while true do
-            -- Check farm enable inside idle loop
             if not _config:Get("FarmEnabled") then
                 print("[Farm] Farm disabled while idle. Breaking out to wait loop.")
                 break
             end
             
-            -- PATCH: if Lucky Arrows drop below minimum, return to Phase 1
             if not _inventory:ShouldStopPhase1() then
                 print("[Farm] >>> Lucky count dropped below minimum — returning to Phase 1.")
                 _config:Set("Phase1Notified", false)
-                lastItemTime = tick()   -- reset timer to avoid immediate hop
+                _phase3Notified = false
+                lastItemTime = tick()
                 break
             end
 
-            -- Config changed via UI toggle
             if hasConfigChanged() then
                 print("[Farm] >>> Configuration changed (item toggle) — returning to Phase 1.")
                 updateConfigSnapshot()
                 _config:Set("Phase1Notified", false)
-                lastItemTime = tick()   -- reset timer to avoid immediate hop
+                _phase3Notified = false
+                lastItemTime = tick()
                 break
             end
 
-            -- Only collect Lucky Arrows / Lucky Stone Mask
             local snapshot = {}
             for idx, info in pairs(SpawnedItems) do
                 if info.Name == "Lucky Arrow" or info.Name == "Lucky Stone Mask" then
