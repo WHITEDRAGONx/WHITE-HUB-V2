@@ -360,8 +360,11 @@ function Farm:Start()
         end
 
         -- ===== PHASE 3 (IDLE) =====
+        if not _config:Get("Phase3Notified") then
+            _webhook:SendAllComplete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
+            _config:Set("Phase3Notified", true)
+        end
         print("[Farm] >>> Phase 3 — fully stopped. Idling, only collecting Lucky Arrows.")
-        _webhook:SendAllComplete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
         updateConfigSnapshot()
 
         while true do
