@@ -92,7 +92,6 @@ function Webhook:SendError(context)
     )
 end
 
--- NEW: Notify when prestige reaches max (Prestige 3, Level 50)
 function Webhook:SendPrestigeComplete()
     Send(
         "🏆 **Prestige maxed out!**\n"
