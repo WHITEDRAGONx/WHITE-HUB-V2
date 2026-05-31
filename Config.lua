@@ -10,15 +10,14 @@ local Config = {}
 local _data  = nil
 
 local Defaults = {
-    BuyLucky   = true,
-    AutoSell   = true,
-    WebhookURL = "",
-    Phase1Notified = false,
-    Phase3Notified = false,
-    FarmEnabled = true,
-    AutoPrestige = false,
-    PrestigeMaxNotified = false,
-    SellItems  = {
+    BuyLucky        = true,
+    AutoSell        = true,
+    WebhookURL      = "",
+    Phase1Notified  = false,  -- Prevents repeated "Phase 1 complete" webhook
+    Phase3Notified  = false,  -- Prevents repeated "All farming complete" webhook
+    FarmEnabled     = true,   -- Master toggle to pause/resume all farming actions
+    AutoPrestige    = false,  -- Toggle to enable/disable AutoPrestige module
+    SellItems = {
         ["Gold Coin"]                       = true,
         ["Rokakaka"]                        = true,
         ["Pure Rokakaka"]                   = true,
@@ -39,14 +38,13 @@ local Defaults = {
 }
 
 local function ApplyDefaults(data)
-    if data.BuyLucky   == nil then data.BuyLucky   = Defaults.BuyLucky   end
-    if data.AutoSell   == nil then data.AutoSell   = Defaults.AutoSell   end
-    if data.WebhookURL == nil then data.WebhookURL = Defaults.WebhookURL end
+    if data.BuyLucky       == nil then data.BuyLucky       = Defaults.BuyLucky       end
+    if data.AutoSell       == nil then data.AutoSell       = Defaults.AutoSell       end
+    if data.WebhookURL     == nil then data.WebhookURL     = Defaults.WebhookURL     end
     if data.Phase1Notified == nil then data.Phase1Notified = Defaults.Phase1Notified end
     if data.Phase3Notified == nil then data.Phase3Notified = Defaults.Phase3Notified end
-    if data.FarmEnabled == nil then data.FarmEnabled = Defaults.FarmEnabled end
-    if data.AutoPrestige == nil then data.AutoPrestige = Defaults.AutoPrestige end
-    if data.PrestigeMaxNotified == nil then data.PrestigeMaxNotified = Defaults.PrestigeMaxNotified end
+    if data.FarmEnabled    == nil then data.FarmEnabled    = Defaults.FarmEnabled    end
+    if data.AutoPrestige   == nil then data.AutoPrestige   = Defaults.AutoPrestige   end
     if type(data.SellItems) ~= "table" then data.SellItems = {} end
     for k, v in pairs(Defaults.SellItems) do
         if data.SellItems[k] == nil then data.SellItems[k] = v end
