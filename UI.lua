@@ -14,6 +14,9 @@ local UI = {}
 local _config  = nil
 local _webhook = nil
 
+-- Store toggle objects for external updates
+local toggleObjects = {}
+
 function UI:Init(Modules)
     _config  = Modules.Config
     _webhook = Modules.Webhook
@@ -154,10 +157,77 @@ local function MakeToggle(parent, labelText, default, onChanged)
         }):Play()
         onChanged(enabled)
     end)
+
+    -- Store for external access
+    toggleObjects[labelText] = {
+        holder = holder,
+        track = track,
+        circle = circle,
+        enabled = enabled
+    }
 end
 
 -- =====================
--- CREATE
+-- POPUP MESSAGE
+-- =====================
+function UI:ShowPopup(message, duration)
+    duration = duration or 3
+    local screenGui = PlayerGui:FindFirstChild("WhiteHubPopup")
+    if not screenGui then
+        screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "WhiteHubPopup"
+        screenGui.ResetOnSpawn = false
+        screenGui.Parent = PlayerGui
+    end
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 240, 0, 44)
+    frame.Position = UDim2.new(1, -250, 1, -60)
+    frame.BackgroundColor3 = Color3.fromRGB(22,22,30)
+    frame.BackgroundTransparency = 0.1
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0,8)
+    local stroke = Instance.new("UIStroke", frame)
+    stroke.Color = Color3.fromRGB(145,95,255)
+    stroke.Thickness = 1.2
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -10, 1, 0)
+    label.Position = UDim2.new(0, 5, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = message
+    label.TextColor3 = Color3.fromRGB(255,255,255)
+    label.TextSize = 13
+    label.Font = Enum.Font.Gotham
+    label.TextWrapped = true
+    label.Parent = frame
+    
+    TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {BackgroundTransparency = 0}):Play()
+    task.delay(duration, function()
+        TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {BackgroundTransparency = 1}):Play()
+        task.wait(0.3)
+        frame:Destroy()
+    end)
+end
+
+-- =====================
+-- SET TOGGLE VALUE EXTERNALLY
+-- =====================
+function UI:SetToggleValue(toggleName, value)
+    local toggle = toggleObjects[toggleName]
+    if toggle then
+        toggle.enabled = value
+        toggle.track.BackgroundColor3 = value and Color3.fromRGB(145,95,255) or Color3.fromRGB(30,30,42)
+        toggle.circle.Position = value and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
+        if _config then _config:Set(toggleName, value) end
+    else
+        warn("[UI] Toggle not found: " .. toggleName)
+    end
+end
+
+-- =====================
+-- CREATE MAIN UI
 -- =====================
 function UI:Create()
     CreateCreditsPopup()
@@ -204,7 +274,6 @@ function UI:Create()
     Title.Font                   = Enum.Font.GothamBold
     Title.TextXAlignment         = Enum.TextXAlignment.Left
 
-    -- FIXED CLOSE BUTTON: "X" instead of broken symbol
     local CloseButton = Instance.new("TextButton", TopBar)
     CloseButton.BackgroundColor3 = Color3.fromRGB(180,50,50)
     CloseButton.BorderSizePixel  = 0
@@ -334,6 +403,17 @@ function UI:Create()
         end
     end)
     
+    -- NEW: Auto Prestige Mode toggle
+    MakeToggle(FarmPage, "Auto Prestige Mode", _config and _config:Get("AutoPrestige"), function(v)
+        if _config then _config:Set("AutoPrestige", v) end
+        print("[UI] Auto Prestige Mode set to " .. tostring(v))
+        if v then
+            if _webhook then _webhook:Send("🔄 **Auto Prestige enabled**\nPlayer: `" .. Player.Name .. "`") end
+        else
+            if _webhook then _webhook:Send("⏸️ **Auto Prestige disabled**\nPlayer: `" .. Player.Name .. "`") end
+        end
+    end)
+    
     MakeToggle(FarmPage, "Auto Sell", _config and _config:Get("AutoSell"), function(v)
         if _config then _config:Set("AutoSell", v) end
     end)
@@ -387,7 +467,7 @@ function UI:Create()
         TweenService:Create(whStroke, TweenInfo.new(0.1), {Color=Color3.fromRGB(60,55,85)}):Play()
         whBox.BackgroundColor3 = Color3.fromRGB(40,40,55)
     end)
-
+    
     -- Reset Webhook Flags Button
     local resetBtn = Instance.new("TextButton")
     resetBtn.Size = UDim2.new(1,-4,0,36)
@@ -405,7 +485,7 @@ function UI:Create()
         if _config then
             _config:Set("Phase1Notified", false)
             _config:Set("Phase3Notified", false)
-            print("[UI] Webhook flags reset. Phase1 and Phase3 will be re‑sent on next completion.")
+            print("[UI] Webhook flags reset.")
             if _webhook then
                 _webhook:Send("🔄 **Webhook flags reset**\nPlayer: `" .. Player.Name .. "`\nPhase1 and Phase3 notifications will be re‑sent on next completion.")
             end
@@ -417,7 +497,7 @@ function UI:Create()
     resetBtn.MouseLeave:Connect(function()
         TweenService:Create(resetBtn, TweenInfo.new(0.15), {BackgroundColor3=Color3.fromRGB(88,101,242)}):Play()
     end)
-
+    
     AutoCanvas(WebhookPage)
 
     -- CREDITS PAGE
