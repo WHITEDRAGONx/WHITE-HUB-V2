@@ -1,8 +1,7 @@
 -- =====================
 -- Prestige.lua
 -- Auto prestige / leveling module for YBA.
--- Integrates with WHITE HUB V2 modules.
--- Item collection logic is identical to Farm.lua.
+-- Item collection uses improved teleport (above the item).
 -- =====================
 
 local Players = game:GetService("Players")
@@ -31,7 +30,6 @@ local _stopRequested = false
 local lastItemTime = tick()
 local NO_ITEM_TIMEOUT = 20
 
--- Item detection (same as Farm)
 local SpawnedItems = {}
 local ItemSpawnFolder = nil
 
@@ -66,7 +64,7 @@ local function showPopup(msg)
 end
 
 -- =====================
--- ITEM DETECTION (exactly like Farm)
+-- ITEM DETECTION (same as Farm)
 -- =====================
 local function GetItemInfo(model)
     if not (model and model:IsA("Model") and model.Parent and model.Parent.Name == "Items") then return nil end
@@ -121,7 +119,7 @@ end
 local SAFE_SPOT = CFrame.new(978, -42, -49)
 
 -- =====================
--- COLLECT ITEM (identical to Farm)
+-- COLLECT ITEM (IMPROVED: teleport above item, not below)
 -- =====================
 local function CollectItem(itemInfo, index)
     if not _config:Get("FarmEnabled") then return end
@@ -129,22 +127,33 @@ local function CollectItem(itemInfo, index)
     if not hrp then return end
     SpawnedItems[index] = nil
     if _inventory:HasMax(itemInfo.Name) then return end
+    
+    -- Freeze and noclip
     local bv = _movement:Freeze()
     _movement:SetNoclip(true)
-    _movement:Teleport(CFrame.new(itemInfo.Position.X, itemInfo.Position.Y - 25, itemInfo.Position.Z))
-    task.wait(0.5)
+    
+    -- Teleport to item position + a bit above (to avoid falling through floor)
+    local itemPos = itemInfo.Position
+    local teleportPos = CFrame.new(itemPos.X, itemPos.Y + 3, itemPos.Z) -- 3 studs above item
+    _movement:Teleport(teleportPos)
+    task.wait(0.2)
+    
+    -- Fire proximity prompt
     pcall(function() fireproximityprompt(itemInfo.ProximityPrompt) end)
     task.wait(0.5)
+    
+    -- Unfreeze and return to safe spot
     _movement:Unfreeze(bv)
     _movement:Teleport(SAFE_SPOT)
     task.wait(0.3)
     _movement:SetNoclip(false)
+    
     lastItemTime = tick()
     print("[Prestige] Collected: " .. itemInfo.Name)
 end
 
 -- =====================
--- FARM ITEM FROM GROUND (identical to Farm's phase loop)
+-- FARM ITEM FROM GROUND (using snapshot, same as Farm)
 -- =====================
 local function FarmItemFromGround(itemName, targetCount)
     local startTime = tick()
@@ -152,7 +161,7 @@ local function FarmItemFromGround(itemName, targetCount)
         if not _config:Get("FarmEnabled") then return false end
         if _stopRequested then return false end
         
-        -- Timeout check
+        -- Timeout -> hop
         local elapsed = tick() - lastItemTime
         if elapsed > NO_ITEM_TIMEOUT then
             print("[Prestige] No items for " .. elapsed .. "s, hopping...")
@@ -162,7 +171,7 @@ local function FarmItemFromGround(itemName, targetCount)
             task.wait(2)
         end
         
-        -- Snapshot current items
+        -- Snapshot current items of the desired type
         local snapshot = {}
         for idx, info in pairs(SpawnedItems) do
             if info.Name == itemName then
@@ -185,7 +194,7 @@ local function FarmItemFromGround(itemName, targetCount)
 end
 
 -- =====================
--- USE ITEM FROM BACKPACK (equip + activate)
+-- USE ITEM (equip + activate)
 -- =====================
 local function UseItem(itemName, worthinessLevel)
     local item = Player.Backpack:FindFirstChild(itemName)
@@ -211,7 +220,7 @@ local function UseItem(itemName, worthinessLevel)
 end
 
 -- =====================
--- DIALOGUE & NPC KILLING (unchanged, but ensure no m1 spam on items)
+-- DIALOGUE & NPC KILLING (only for quests)
 -- =====================
 local function endDialogue(npc, dialogue, option)
     local remoteEvent = _movement:GetCharacter("RemoteEvent")
@@ -241,8 +250,10 @@ local function killNPC(npcName, distance)
             print("[Prestige] Timeout killing " .. npcName)
             return false
         end
+        -- Teleport close to NPC
         local npcPos = npc.HumanoidRootPart.Position
         hrp.CFrame = CFrame.new(npcPos.X, npcPos.Y - distance, npcPos.Z)
+        -- Attack
         if remoteFunc then
             remoteFunc:InvokeServer("Attack", "m1")
         end
@@ -252,7 +263,7 @@ local function killNPC(npcName, distance)
 end
 
 -- =====================
--- PRESTIGE PHASES (using updated collection)
+-- PRESTIGE PHASES
 -- =====================
 local function runStoryPhase()
     print("[Prestige] Phase: STORY")
@@ -409,7 +420,6 @@ function Prestige:Start()
             else
                 -- Prestige
                 prestigeCheckPhase()
-                -- after prestige, loop restarts from story
             end
         end
         task.wait(2)
