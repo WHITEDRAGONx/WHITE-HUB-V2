@@ -296,13 +296,11 @@ function Farm:Start()
     print("[Farm] Farm loop started.")
 
     while true do
-        -- Wait if farm disabled globally
         while not _config:Get("FarmEnabled") do
             task.wait(1)
             print("[Farm] Farm disabled by user. Waiting...")
         end
 
-        -- If Auto Prestige is enabled, run prestige mode (no selling)
         if _config:Get("AutoPrestige") then
             print("[Farm] Auto Prestige enabled – starting Prestige module.")
             if _webhook then
@@ -323,7 +321,6 @@ function Farm:Start()
                 end
                 prestigeRunning = false
             end)
-            -- Wait until prestige finishes or AutoPrestige is disabled
             while prestigeRunning and _config:Get("AutoPrestige") do
                 task.wait(1)
             end
@@ -334,7 +331,6 @@ function Farm:Start()
                 end
                 task.cancel(prestigeThread)
             end
-            -- Reset farm state after prestige stops
             lastItemTime = tick()
             _config:Set("Phase1Notified", false)
             _config:Set("Phase3Notified", false)
