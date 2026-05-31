@@ -67,6 +67,8 @@ local function showPopup(msg)
 end
 
 local function deepStabilize()
+    local bv = _movement:Freeze()
+    _movement:SetNoclip(true)
     _movement:Teleport(SAFE_SPOT)
     task.wait(0.5)
     local hum = Player.Character and Player.Character:FindFirstChildWhichIsA("Humanoid")
@@ -77,6 +79,8 @@ local function deepStabilize()
             task.wait(0.5)
         end
     end
+    _movement:Unfreeze(bv)
+    _movement:SetNoclip(false)
     _movement:FixCamera()
     local re = _movement:GetCharacter("RemoteEvent")
     if re then
@@ -149,12 +153,22 @@ local function killNPC(npcName, distance)
     local hrp = _movement:GetCharacter("HumanoidRootPart")
     local remoteFunc = _movement:GetCharacter("RemoteFunction")
     if not hrp then return false end
+
+    _movement:SetNoclip(true)
+
     local startTime = tick()
     while true do
-        if stopRequested then return false end
-        if not _config:Get("FarmEnabled") then return false end
+        if stopRequested then
+            _movement:SetNoclip(false)
+            return false
+        end
+        if not _config:Get("FarmEnabled") then
+            _movement:SetNoclip(false)
+            return false
+        end
         if tick() - startTime > 90 then
             print("[Prestige] Timeout killing " .. npcName)
+            _movement:SetNoclip(false)
             return false
         end
         npc = workspace.Living:FindFirstChild(npcName)
@@ -171,6 +185,8 @@ local function killNPC(npcName, distance)
         chargeHamon()
         task.wait(0.5)
     end
+
+    _movement:SetNoclip(false)
     deepStabilize()
     print("[Prestige] Killed: " .. npcName)
     return true
