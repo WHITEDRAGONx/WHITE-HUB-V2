@@ -1,7 +1,6 @@
 -- =====================
 -- Prestige.lua
 -- Auto prestige / leveling module for YBA.
--- Item collection uses SAME logic as Farm.lua (teleport below item, noclip, etc.)
 -- =====================
 
 local Players = game:GetService("Players")
@@ -33,7 +32,6 @@ local NO_ITEM_TIMEOUT   = 20
 local SpawnedItems    = {}
 local ItemSpawnFolder = nil
 
--- FIX 1: Use same SAFE_SPOT as Farm (under the map, stable position)
 local SAFE_SPOT = CFrame.new(978, -42, -49)
 
 function Prestige:Init(Modules)
@@ -66,14 +64,25 @@ local function showPopup(msg)
 end
 
 -- =====================
--- ITEM DETECTION (same as Farm)
--- FIX 2: InitItemDetection called before Start() loop so SpawnedItems
---        is populated before FarmItemFromGround needs it
+-- FUNÇÃO DE ESTABILIZAÇÃO (copiada do Startup do Farm)
+-- =====================
+local function StabilizeCharacter()
+    local remoteEvent = _movement:GetCharacter("RemoteEvent")
+    if remoteEvent then
+        remoteEvent:FireServer("PressedPlay")
+    end
+    _movement:Teleport(SAFE_SPOT)
+    task.wait(1)
+    _movement:FixCamera()
+    -- Pequena pausa extra para garantir que o chão do mapa carregue
+    task.wait(2)
+end
+
+-- =====================
+-- ITEM DETECTION
 -- =====================
 local function GetItemInfo(model)
-    if not (model and model:IsA("Model")
-        and model.Parent
-        and model.Parent.Name == "Items") then return nil end
+    if not (model and model:IsA("Model") and model.Parent and model.Parent.Name == "Items") then return nil end
     local pp = model.PrimaryPart
     if not pp then return nil end
     local prompt
@@ -107,7 +116,6 @@ local function InitItemDetection()
     end
     print("[Prestige] Item_Spawns/Items folder found.")
 
-    -- Scan existing items on the ground
     for _, model in pairs(ItemSpawnFolder:GetChildren()) do
         pcall(function()
             if model:IsA("Model") then
@@ -133,21 +141,28 @@ local function InitItemDetection()
 end
 
 -- =====================
--- COLLECT ITEM
--- FIX 3: validate prompt still exists before firing
---        validate item still in Items folder before teleporting
+-- COLLECT ITEM (com estabilização extra antes de teleportar)
 -- =====================
 local function CollectItem(itemInfo, index)
     if not _config:Get("FarmEnabled") then return end
+
+    -- Aguarda o personagem estar completamente estável (mesmo procedimento do Farm)
+    local hum = Player.Character and Player.Character:FindFirstChildWhichIsA("Humanoid")
+    if hum then
+        -- Se estiver em queda ou física, espera 1s
+        local state = hum:GetState()
+        if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Physics then
+            print("[Prestige] Character falling, waiting 1s...")
+            task.wait(1)
+        end
+    end
 
     local hrp = _movement:GetCharacter("HumanoidRootPart")
     if not hrp then return end
 
     SpawnedItems[index] = nil
-
     if _inventory:HasMax(itemInfo.Name) then return end
 
-    -- Validate the prompt and model still exist before doing anything
     local prompt = itemInfo.ProximityPrompt
     if not prompt or not prompt.Parent or not prompt.Parent.Parent
         or prompt.Parent.Parent.Name ~= "Items" then
@@ -155,8 +170,11 @@ local function CollectItem(itemInfo, index)
         return
     end
 
+    -- Congela e ativa noclip (exatamente igual ao Farm)
     local bv = _movement:Freeze()
     _movement:SetNoclip(true)
+
+    -- Teleporta 25 studs abaixo do item (mesma lógica do Farm)
     _movement:Teleport(CFrame.new(
         itemInfo.Position.X,
         itemInfo.Position.Y - 25,
@@ -164,7 +182,7 @@ local function CollectItem(itemInfo, index)
     ))
     task.wait(0.5)
 
-    -- Re-validate before firing prompt
+    -- Revalida e dispara prompt
     if prompt and prompt.Parent and prompt.Parent.Parent
         and prompt.Parent.Parent.Name == "Items" then
         pcall(function() fireproximityprompt(prompt) end)
@@ -175,6 +193,7 @@ local function CollectItem(itemInfo, index)
     _movement:Teleport(SAFE_SPOT)
     task.wait(0.3)
     _movement:SetNoclip(false)
+
     lastItemTime = tick()
     print("[Prestige] Collected: " .. itemInfo.Name)
 end
@@ -191,8 +210,9 @@ local function FarmItemFromGround(itemName, targetCount)
         if elapsed > NO_ITEM_TIMEOUT then
             print("[Prestige] No " .. itemName .. " for " .. math.floor(elapsed) .. "s — hopping...")
             _serverHop:Hop()
+            StabilizeCharacter()  -- Após hop, estabiliza como no Farm
             lastItemTime = tick()
-            task.wait(3)
+            task.wait(2)
         end
 
         local snapshot = {}
@@ -219,7 +239,7 @@ local function FarmItemFromGround(itemName, targetCount)
 end
 
 -- =====================
--- USE ITEM (equip + activate)
+-- USE ITEM
 -- =====================
 local function UseItem(itemName, withWorthiness)
     local item = Player.Backpack:FindFirstChild(itemName)
@@ -249,7 +269,7 @@ local function UseItem(itemName, withWorthiness)
 end
 
 -- =====================
--- END DIALOGUE
+-- DIALOGUE & KILL NPC
 -- =====================
 local function endDialogue(npc, dialogue, option)
     local re = _movement:GetCharacter("RemoteEvent")
@@ -262,12 +282,6 @@ local function endDialogue(npc, dialogue, option)
     end
 end
 
--- =====================
--- KILL NPC
--- FIX 4: Added NPC existence check before loop
---        Added health check to avoid attacking items or dead models
---        m1 only fires when NPC is clearly alive and is a Living model
--- =====================
 local function killNPC(npcName, distance)
     local npc = workspace.Living:FindFirstChild(npcName)
     if not npc then
@@ -280,7 +294,6 @@ local function killNPC(npcName, distance)
     if not hrp then return false end
 
     local startTime = tick()
-
     while true do
         if _stopRequested then return false end
         if not _config:Get("FarmEnabled") then return false end
@@ -289,32 +302,26 @@ local function killNPC(npcName, distance)
             return false
         end
 
-        -- Re-fetch NPC every iteration — it may have respawned or been removed
         npc = workspace.Living:FindFirstChild(npcName)
         if not npc then break end
 
         local npcHum = npc:FindFirstChildWhichIsA("Humanoid")
         local npcHRP = npc:FindFirstChild("HumanoidRootPart")
-
-        -- Stop if dead
         if not npcHum or not npcHRP or npcHum.Health <= 0 then break end
 
-        -- Teleport under the NPC to attack
         hrp.CFrame = CFrame.new(
             npcHRP.Position.X,
             npcHRP.Position.Y - distance,
             npcHRP.Position.Z
         )
-
         if remoteFunc then
-            pcall(function()
-                remoteFunc:InvokeServer("Attack", "m1")
-            end)
+            pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
         end
-
         task.wait(0.5)
     end
 
+    -- Após matar NPC, estabiliza personagem (importante)
+    StabilizeCharacter()
     print("[Prestige] Killed: " .. npcName)
     return true
 end
@@ -325,7 +332,7 @@ end
 local function runStoryPhase()
     print("[Prestige] Phase: STORY")
     _movement:Teleport(CFrame.new(500, 2010, 500))
-    task.wait(1)
+    StabilizeCharacter()  -- estabiliza antes dos NPCs
 
     local quests = {
         { name = "Help Giorno by Defeating Security Guards", npc = "Security Guard" },
@@ -344,6 +351,7 @@ local function runStoryPhase()
         if not killNPC(quest.npc, 15) then
             print("[Prestige] Failed " .. quest.npc .. " — hopping...")
             _serverHop:Hop()
+            StabilizeCharacter()
             return false
         end
         task.wait(2)
@@ -356,7 +364,7 @@ end
 local function obtainStandPhase()
     print("[Prestige] Phase: STAND FARM")
     _movement:Teleport(CFrame.new(500, 2010, 500))
-    task.wait(1)
+    StabilizeCharacter()
 
     local currentStand = Player.PlayerStats.Stand.Value
     if currentStand ~= "None" and KEEP_STANDS[currentStand] then
@@ -364,18 +372,17 @@ local function obtainStandPhase()
         return true
     end
 
-    -- Need Rokakaka to reset unwanted stand
     if currentStand ~= "None" and not KEEP_STANDS[currentStand] then
         print("[Prestige] Unwanted stand: " .. currentStand .. " — using Rokakaka")
         if _inventory:Count("Rokakaka") < 1 then
             if not FarmItemFromGround("Rokakaka", 1) then return false end
         end
         UseItem("Rokakaka", true)
+        StabilizeCharacter()
         task.wait(3)
         return false
     end
 
-    -- Get arrow
     if _inventory:Count("Mysterious Arrow") < 1 then
         if not FarmItemFromGround("Mysterious Arrow", 1) then return false end
     end
@@ -389,6 +396,7 @@ local function obtainStandPhase()
         if waited > 30 then
             print("[Prestige] Timeout waiting for stand — hopping")
             _serverHop:Hop()
+            StabilizeCharacter()
             return false
         end
     until Player.PlayerStats.Stand.Value ~= "None" or _stopRequested
@@ -423,6 +431,7 @@ local function prestigeCheckPhase()
             endDialogue("Prestige", "Dialogue2", "Option1")
             task.wait(2)
             _serverHop:Hop()
+            StabilizeCharacter()
             return false
         end
         return true
@@ -432,8 +441,6 @@ end
 
 -- =====================
 -- MAIN LOOP
--- FIX 2 applied: InitItemDetection is called at the top of Start()
--- so SpawnedItems is populated before any phase needs it
 -- =====================
 function Prestige:Start()
     if isPrestigeRunning then
@@ -456,15 +463,15 @@ function Prestige:Start()
     isPrestigeRunning = true
     print("[Prestige] Starting prestige automation...")
 
-    -- FIX 2: Initialize item detection first, before any farming starts
     InitItemDetection()
+    StabilizeCharacter()  -- estabilização inicial (similar ao Startup do Farm)
 
     while not _stopRequested do
-        -- Pause if farm is disabled via UI
         if not _config:Get("FarmEnabled") then
             print("[Prestige] Farm disabled — waiting...")
             repeat task.wait(1) until _config:Get("FarmEnabled") or _stopRequested
             if _stopRequested then break end
+            StabilizeCharacter()  -- ao reativar, estabiliza novamente
         end
 
         if isMaxPrestige() then
@@ -477,31 +484,38 @@ function Prestige:Start()
             break
         end
 
-        -- Story phase
+        -- Story
         if not runStoryPhase() then
             if _stopRequested or not _config:Get("FarmEnabled") then break end
-            _serverHop:Hop() task.wait(5)
+            _serverHop:Hop()
+            StabilizeCharacter()
+            task.wait(5)
             continue
         end
 
-        -- Stand phase
+        -- Stand
         local standOk = false
         while not standOk and not _stopRequested and _config:Get("FarmEnabled") do
             standOk = obtainStandPhase()
-            if not standOk then _serverHop:Hop() task.wait(5) end
+            if not standOk then
+                _serverHop:Hop()
+                StabilizeCharacter()
+                task.wait(5)
+            end
         end
         if _stopRequested or not _config:Get("FarmEnabled") then break end
 
-        -- Level phase
+        -- Level
         if not levelUpPhase() then
             if _stopRequested or not _config:Get("FarmEnabled") then break end
-            _serverHop:Hop() task.wait(5)
+            _serverHop:Hop()
+            StabilizeCharacter()
+            task.wait(5)
             continue
         end
 
-        -- Prestige check
+        -- Prestige
         prestigeCheckPhase()
-
         task.wait(2)
     end
 
