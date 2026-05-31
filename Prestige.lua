@@ -1,7 +1,7 @@
 -- =====================
 -- Prestige.lua
 -- Auto prestige / leveling module for YBA.
--- Item collection uses improved teleport (above the item).
+-- Item collection uses SAME logic as Farm.lua (teleport below item, noclip, etc.)
 -- =====================
 
 local Players = game:GetService("Players")
@@ -119,7 +119,7 @@ end
 local SAFE_SPOT = CFrame.new(978, -42, -49)
 
 -- =====================
--- COLLECT ITEM (IMPROVED: teleport above item, not below)
+-- COLLECT ITEM (IDENTICAL TO FARM)
 -- =====================
 local function CollectItem(itemInfo, index)
     if not _config:Get("FarmEnabled") then return end
@@ -127,33 +127,22 @@ local function CollectItem(itemInfo, index)
     if not hrp then return end
     SpawnedItems[index] = nil
     if _inventory:HasMax(itemInfo.Name) then return end
-    
-    -- Freeze and noclip
     local bv = _movement:Freeze()
     _movement:SetNoclip(true)
-    
-    -- Teleport to item position + a bit above (to avoid falling through floor)
-    local itemPos = itemInfo.Position
-    local teleportPos = CFrame.new(itemPos.X, itemPos.Y + 3, itemPos.Z) -- 3 studs above item
-    _movement:Teleport(teleportPos)
-    task.wait(0.2)
-    
-    -- Fire proximity prompt
+    _movement:Teleport(CFrame.new(itemInfo.Position.X, itemInfo.Position.Y - 25, itemInfo.Position.Z))
+    task.wait(0.5)
     pcall(function() fireproximityprompt(itemInfo.ProximityPrompt) end)
     task.wait(0.5)
-    
-    -- Unfreeze and return to safe spot
     _movement:Unfreeze(bv)
     _movement:Teleport(SAFE_SPOT)
     task.wait(0.3)
     _movement:SetNoclip(false)
-    
     lastItemTime = tick()
     print("[Prestige] Collected: " .. itemInfo.Name)
 end
 
 -- =====================
--- FARM ITEM FROM GROUND (using snapshot, same as Farm)
+-- FARM ITEM FROM GROUND (same snapshot logic as Farm)
 -- =====================
 local function FarmItemFromGround(itemName, targetCount)
     local startTime = tick()
@@ -161,7 +150,6 @@ local function FarmItemFromGround(itemName, targetCount)
         if not _config:Get("FarmEnabled") then return false end
         if _stopRequested then return false end
         
-        -- Timeout -> hop
         local elapsed = tick() - lastItemTime
         if elapsed > NO_ITEM_TIMEOUT then
             print("[Prestige] No items for " .. elapsed .. "s, hopping...")
@@ -171,7 +159,6 @@ local function FarmItemFromGround(itemName, targetCount)
             task.wait(2)
         end
         
-        -- Snapshot current items of the desired type
         local snapshot = {}
         for idx, info in pairs(SpawnedItems) do
             if info.Name == itemName then
@@ -250,10 +237,8 @@ local function killNPC(npcName, distance)
             print("[Prestige] Timeout killing " .. npcName)
             return false
         end
-        -- Teleport close to NPC
         local npcPos = npc.HumanoidRootPart.Position
         hrp.CFrame = CFrame.new(npcPos.X, npcPos.Y - distance, npcPos.Z)
-        -- Attack
         if remoteFunc then
             remoteFunc:InvokeServer("Attack", "m1")
         end
