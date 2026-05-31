@@ -26,6 +26,7 @@ local KEEP_STANDS = {
 }
 
 local isPrestigeRunning = false
+local _stopRequested = false
 local lastItemTime = tick()
 local NO_ITEM_TIMEOUT = 20
 
@@ -139,6 +140,7 @@ local function farmItemFromGround(itemName, targetCount)
     local startTime = tick()
     while _inventory:Count(itemName) < targetCount do
         if not _config:Get("FarmEnabled") then return false end
+        if _stopRequested then return false end
         local elapsed = tick() - lastItemTime
         if elapsed > NO_ITEM_TIMEOUT then
             print("[Prestige] No items for " .. elapsed .. "s, hopping...")
@@ -212,6 +214,7 @@ local function killNPC(npcName, distance, onTick)
     local startTime = tick()
     while npc and npc.Parent and npc.Humanoid and npc.Humanoid.Health > 0 do
         if not _config:Get("FarmEnabled") then return false end
+        if _stopRequested then return false end
         if tick() - startTime > 60 then
             print("[Prestige] Timeout killing " .. npcName)
             return false
@@ -242,6 +245,7 @@ local function runStoryPhase()
     }
     for _, quest in ipairs(quests) do
         if not _config:Get("FarmEnabled") then return false end
+        if _stopRequested then return false end
         print("[Prestige] Starting quest: " .. quest.name)
         if not killNPC(quest.npc, 15) then
             print("[Prestige] Failed to kill " .. quest.npc .. ", hopping...")
@@ -264,15 +268,16 @@ local function obtainStandPhase()
         return true
     end
     if _inventory:Count("Mysterious Arrow") < 1 then
-        farmItemFromGround("Mysterious Arrow", 1)
+        if not farmItemFromGround("Mysterious Arrow", 1) then return false end
     end
     useItem("Mysterious Arrow", "II")
-    repeat task.wait(1) until Player.PlayerStats.Stand.Value ~= "None"
+    repeat task.wait(1) until Player.PlayerStats.Stand.Value ~= "None" or _stopRequested
+    if _stopRequested then return false end
     local newStand = Player.PlayerStats.Stand.Value
     if not KEEP_STANDS[newStand] then
         print("[Prestige] Got undesired stand: " .. newStand .. ", using Rokakaka")
         if _inventory:Count("Rokakaka") < 1 then
-            farmItemFromGround("Rokakaka", 1)
+            if not farmItemFromGround("Rokakaka", 1) then return false end
         end
         useItem("Rokakaka", "II")
         task.wait(2)
@@ -286,6 +291,7 @@ local function levelUpPhase()
     print("[Prestige] Phase: LEVELING (passive)")
     while Player.PlayerStats.Level.Value < 50 do
         if not _config:Get("FarmEnabled") then return false end
+        if _stopRequested then return false end
         task.wait(5)
         if Player.PlayerStats.Level.Value >= 50 then break end
     end
@@ -315,10 +321,9 @@ function Prestige:Start()
         return
     end
     
-    -- Check if already maxed (notify once)
     if isMaxPrestige() then
         if not _config:Get("PrestigeMaxNotified") then
-            if _webhook then task.spawn(function() _webhook:SendPrestigeComplete() end) end
+            if _webhook then _webhook:SendPrestigeComplete() end
             _config:Set("PrestigeMaxNotified", true)
         end
         showPopup("You are already Prestige 3, Level 50.\nAuto Prestige cannot be enabled.")
@@ -327,22 +332,21 @@ function Prestige:Start()
         return
     end
     
+    _stopRequested = false
     isPrestigeRunning = true
     print("[Prestige] Starting prestige automation...")
     initItemDetection()
     
-    while true do
-        -- ===== WAIT IF FARM IS DISABLED =====
-        while not _config:Get("FarmEnabled") do
-            task.wait(1)
+    while not _stopRequested do
+        if not _config:Get("FarmEnabled") then
             print("[Prestige] Farm disabled, waiting...")
-            if not isPrestigeRunning then break end
+            repeat task.wait(1) until _config:Get("FarmEnabled") or _stopRequested
+            if _stopRequested then break end
         end
-        if not isPrestigeRunning then break end
         
         if isMaxPrestige() then
             if not _config:Get("PrestigeMaxNotified") then
-                if _webhook then task.spawn(function() _webhook:SendPrestigeComplete() end) end
+                if _webhook then _webhook:SendPrestigeComplete() end
                 _config:Set("PrestigeMaxNotified", true)
             end
             showPopup("Congratulations! You reached Prestige 3, Level 50.\nAuto Prestige will now disable.")
@@ -352,6 +356,7 @@ function Prestige:Start()
         
         if not runStoryPhase() then
             if not _config:Get("FarmEnabled") then break end
+            if _stopRequested then break end
             _serverHop:Hop()
             task.wait(5)
             continue
@@ -359,12 +364,15 @@ function Prestige:Start()
         
         while not obtainStandPhase() do
             if not _config:Get("FarmEnabled") then break end
+            if _stopRequested then break end
             _serverHop:Hop()
             task.wait(5)
         end
+        if _stopRequested then break
         
         if not levelUpPhase() then
             if not _config:Get("FarmEnabled") then break end
+            if _stopRequested then break end
             _serverHop:Hop()
             task.wait(5)
             continue
@@ -382,6 +390,7 @@ function Prestige:Start()
 end
 
 function Prestige:Stop()
+    _stopRequested = true
     isPrestigeRunning = false
     print("[Prestige] Stop requested.")
 end
