@@ -81,7 +81,7 @@ local moduleFiles = {
     { key = "ServerHop", file = "ServerHop.lua" },
     { key = "Inventory", file = "Inventory.lua" },
     { key = "UI",        file = "UI.lua"        },
-    { key = "Prestige",  file = "Prestige.lua"  },   -- <-- ADICIONADO
+    { key = "Prestige",  file = "Prestige.lua"  },
     { key = "Farm",      file = "Farm.lua"      },
 }
 
