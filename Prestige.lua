@@ -160,7 +160,6 @@ local function runStoryPhase()
     print("[Prestige] Phase: STORY")
     _movement:Teleport(CFrame.new(500, 2010, 500))
     deepStabilize()
-    
     local quests = {
         { name = "Help Giorno by Defeating Security Guards", npc = "Security Guard" },
         { name = "Defeat Leaky Eye Luca",                   npc = "Leaky Eye Luca" },
@@ -170,7 +169,6 @@ local function runStoryPhase()
         { name = "Defeat Ghiaccio",                         npc = "Ghiaccio"       },
         { name = "Defeat Diavolo",                          npc = "Diavolo"        },
     }
-    
     for _, q in ipairs(quests) do
         if not _config:Get("FarmEnabled") then return false end
         if stopRequested then return false end
@@ -193,16 +191,11 @@ local function obtainStandPhase()
     print("[Prestige] Phase: STAND FARM")
     _movement:Teleport(CFrame.new(500, 2010, 500))
     deepStabilize()
-    
     local currentStand = Player.PlayerStats.Stand.Value
-    
-    -- Already have a desired stand
     if currentStand ~= "None" and KEEP_STANDS[currentStand] then
         print("[Prestige] Already have desired stand: " .. currentStand)
         return true
     end
-    
-    -- Unwanted stand: use Rokakaka
     if currentStand ~= "None" and not KEEP_STANDS[currentStand] then
         print("[Prestige] Unwanted stand: " .. currentStand .. " — using Rokakaka")
         if _inventory:Count("Rokakaka") < 1 then
@@ -213,17 +206,14 @@ local function obtainStandPhase()
         task.wait(3)
         return false
     end
-    
-    -- No stand: use Mysterious Arrow
     if _inventory:Count("Mysterious Arrow") < 1 then
         if not collectItem("Mysterious Arrow", 1) then return false end
     end
     useItem("Mysterious Arrow", true)
-    
     local waited = 0
     repeat
         task.wait(1)
-        waited += 1
+        waited = waited + 1
         if waited > 30 then
             print("[Prestige] Timeout waiting for stand — hopping")
             _serverHop:Hop()
@@ -231,15 +221,12 @@ local function obtainStandPhase()
             return false
         end
     until Player.PlayerStats.Stand.Value ~= "None" or stopRequested
-    
     if stopRequested then return false end
-    
     local newStand = Player.PlayerStats.Stand.Value
     if not KEEP_STANDS[newStand] then
         print("[Prestige] Got unwanted stand: " .. newStand .. " — will reset next cycle")
         return false
     end
-    
     print("[Prestige] Obtained desired stand: " .. newStand)
     return true
 end
@@ -282,7 +269,6 @@ function Prestige:Start()
         print("[Prestige] Already running.")
         return
     end
-    
     if isMaxPrestige() then
         if not _config:Get("PrestigeMaxNotified") then
             if _webhook then _webhook:SendPrestigeComplete() end
@@ -293,22 +279,17 @@ function Prestige:Start()
         print("[Prestige] Max prestige reached — disabling.")
         return
     end
-    
     stopRequested = false
     isRunning = true
     print("[Prestige] Starting prestige automation...")
     deepStabilize()
-    
     while not stopRequested do
-        -- Pause if farm disabled globally
         if not _config:Get("FarmEnabled") then
             print("[Prestige] Farm disabled — waiting...")
             repeat task.wait(1) until _config:Get("FarmEnabled") or stopRequested
             if stopRequested then break end
             deepStabilize()
         end
-        
-        -- Check if max reached during loop
         if isMaxPrestige() then
             if not _config:Get("PrestigeMaxNotified") then
                 if _webhook then _webhook:SendPrestigeComplete() end
@@ -318,7 +299,6 @@ function Prestige:Start()
             disableAutoPrestige()
             break
         end
-        
         -- Story phase
         local storyOk = runStoryPhase()
         if not storyOk then
@@ -328,8 +308,7 @@ function Prestige:Start()
             task.wait(5)
             goto continue_loop
         end
-        
-        -- Stand phase (may loop)
+        -- Stand phase
         local standOk = false
         while not standOk and not stopRequested and _config:Get("FarmEnabled") do
             standOk = obtainStandPhase()
@@ -340,7 +319,6 @@ function Prestige:Start()
             end
         end
         if stopRequested or not _config:Get("FarmEnabled") then break end
-        
         -- Level phase
         local levelOk = levelUpPhase()
         if not levelOk then
@@ -350,14 +328,11 @@ function Prestige:Start()
             task.wait(5)
             goto continue_loop
         end
-        
         -- Prestige check
         prestigeCheckPhase()
-        
         ::continue_loop::
         task.wait(2)
     end
-    
     isRunning = false
     print("[Prestige] Stopped.")
 end
