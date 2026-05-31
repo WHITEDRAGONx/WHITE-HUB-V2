@@ -1,6 +1,5 @@
 -- =====================
 -- Config.lua
--- Handles all config loading, saving, and access.
 -- =====================
 
 local HttpService = game:GetService("HttpService")
