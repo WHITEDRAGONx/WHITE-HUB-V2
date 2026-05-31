@@ -270,7 +270,9 @@ function Farm:Start()
     if _config:Get("AutoPrestige") then
         print("[Farm] Auto Prestige enabled – delegating to Prestige module.")
         if _webhook then
-            _webhook:Send("🔄 **Auto Prestige started**\nPlayer: `" .. Player.Name .. "`")
+            task.spawn(function()
+                _webhook:Send("🔄 **Auto Prestige started**\nPlayer: `" .. Player.Name .. "`")
+            end)
         end
         
         task.spawn(function()
@@ -283,7 +285,7 @@ function Farm:Start()
             end)
             if not ok then
                 warn("[Farm] Prestige crashed: " .. tostring(err))
-                if _webhook then _webhook:SendError("Prestige crashed: " .. tostring(err)) end
+                if _webhook then task.spawn(function() _webhook:SendError("Prestige crashed: " .. tostring(err)) end) end
             end
         end)
         
@@ -304,6 +306,7 @@ function Farm:Start()
         while not _inventory:ShouldStopPhase1() do
             if not _config:Get("FarmEnabled") then
                 print("[Farm] Farm disabled mid-phase 1. Breaking out.")
+                task.wait(0.1)
                 break
             end
             
@@ -343,6 +346,7 @@ function Farm:Start()
             while not _inventory:AllKeepItemsFull() do
                 if not _config:Get("FarmEnabled") then
                     print("[Farm] Farm disabled mid-phase 2. Breaking out.")
+                    task.wait(0.1)
                     break
                 end
                 
@@ -391,6 +395,7 @@ function Farm:Start()
         while true do
             if not _config:Get("FarmEnabled") then
                 print("[Farm] Farm disabled while idle. Breaking out to wait loop.")
+                task.wait(0.1)
                 break
             end
             
