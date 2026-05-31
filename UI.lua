@@ -158,7 +158,7 @@ local function MakeToggle(parent, labelText, default, onChanged)
         onChanged(enabled)
     end)
 
-    -- Store for external access
+    -- Store toggle for external access
     toggleObjects[labelText] = {
         holder = holder,
         track = track,
@@ -391,27 +391,33 @@ function UI:Create()
     -- FARM PAGE
     MakeSection(FarmPage, "FARM SETTINGS")
     
-    -- MASTER TOGGLE: Enable Farm
+    -- MASTER TOGGLE: Enable Farm (with async webhook to prevent freezing)
     MakeToggle(FarmPage, "Enable Farm", _config and _config:Get("FarmEnabled"), function(v)
         if _config then _config:Set("FarmEnabled", v) end
         if not v then
             print("[UI] Farm disabled by user.")
-            if _webhook then _webhook:SendFarmDisabled() end
+            task.spawn(function()
+                if _webhook then _webhook:SendFarmDisabled() end
+            end)
         else
             print("[UI] Farm enabled. Resuming...")
-            if _webhook then _webhook:SendFarmResumed() end
+            task.spawn(function()
+                if _webhook then _webhook:SendFarmResumed() end
+            end)
         end
     end)
     
-    -- NEW: Auto Prestige Mode toggle
+    -- Auto Prestige Mode toggle
     MakeToggle(FarmPage, "Auto Prestige Mode", _config and _config:Get("AutoPrestige"), function(v)
         if _config then _config:Set("AutoPrestige", v) end
         print("[UI] Auto Prestige Mode set to " .. tostring(v))
-        if v then
-            if _webhook then _webhook:Send("🔄 **Auto Prestige enabled**\nPlayer: `" .. Player.Name .. "`") end
-        else
-            if _webhook then _webhook:Send("⏸️ **Auto Prestige disabled**\nPlayer: `" .. Player.Name .. "`") end
-        end
+        task.spawn(function()
+            if v then
+                if _webhook then _webhook:Send("🔄 **Auto Prestige enabled**\nPlayer: `" .. Player.Name .. "`") end
+            else
+                if _webhook then _webhook:Send("⏸️ **Auto Prestige disabled**\nPlayer: `" .. Player.Name .. "`") end
+            end
+        end)
     end)
     
     MakeToggle(FarmPage, "Auto Sell", _config and _config:Get("AutoSell"), function(v)
@@ -486,9 +492,11 @@ function UI:Create()
             _config:Set("Phase1Notified", false)
             _config:Set("Phase3Notified", false)
             print("[UI] Webhook flags reset.")
-            if _webhook then
-                _webhook:Send("🔄 **Webhook flags reset**\nPlayer: `" .. Player.Name .. "`\nPhase1 and Phase3 notifications will be re‑sent on next completion.")
-            end
+            task.spawn(function()
+                if _webhook then
+                    _webhook:Send("🔄 **Webhook flags reset**\nPlayer: `" .. Player.Name .. "`\nPhase1 and Phase3 notifications will be re‑sent on next completion.")
+                end
+            end)
         end
     end)
     resetBtn.MouseEnter:Connect(function()
