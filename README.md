@@ -1,5 +1,3 @@
-📘 README.md (para o GitHub)
-markdown
 # WHITE HUB V2
 
 **Modular, executor‑compatible, feature‑rich script for YBA (Your Bizarre Adventure).**
