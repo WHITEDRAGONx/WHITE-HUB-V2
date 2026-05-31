@@ -426,44 +426,49 @@ function Prestige:Start()
         --     _serverHop:Hop()
         --     deepStabilize()
         --     task.wait(5)
-        --     continue
+        --     -- restart loop
+        -- else
+        --     -- continue
         -- end
         -- Story
-        if not runStoryPhase() then
+        local storyOk = runStoryPhase()
+        if not storyOk then
             if stopRequested or not _config:Get("FarmEnabled") then
                 break
             end
             _serverHop:Hop()
             deepStabilize()
             task.wait(5)
-            goto continue_loop
-        end
-        -- Stand
-        local standOk = false
-        while not standOk and not stopRequested and _config:Get("FarmEnabled") do
-            standOk = obtainStandPhase()
-            if not standOk then
+            -- retry story phase
+        else
+            -- Stand phase
+            local standOk = false
+            while not standOk and not stopRequested and _config:Get("FarmEnabled") do
+                standOk = obtainStandPhase()
+                if not standOk then
+                    _serverHop:Hop()
+                    deepStabilize()
+                    task.wait(5)
+                end
+            end
+            if stopRequested or not _config:Get("FarmEnabled") then
+                break
+            end
+            -- Level phase
+            local levelOk = levelUpPhase()
+            if not levelOk then
+                if stopRequested or not _config:Get("FarmEnabled") then
+                    break
+                end
                 _serverHop:Hop()
                 deepStabilize()
                 task.wait(5)
+                -- retry level phase
+            else
+                -- Prestige check
+                prestigeCheckPhase()
             end
         end
-        if stopRequested or not _config:Get("FarmEnabled") then
-            break
-        end
-        -- Level
-        if not levelUpPhase() then
-            if stopRequested or not _config:Get("FarmEnabled") then
-                break
-            end
-            _serverHop:Hop()
-            deepStabilize()
-            task.wait(5)
-            goto continue_loop
-        end
-        -- Prestige
-        prestigeCheckPhase()
-        ::continue_loop::
         task.wait(2)
     end
     Prestige.isRunning = false
