@@ -25,10 +25,8 @@ local KEEP_STANDS = {
     ["King Crimson Requiem"] = true
 }
 
--- Public flag for Farm to check if Prestige is running
 Prestige.isRunning = false
 local stopRequested = false
-
 local SAFE_SPOT = CFrame.new(978, -42, -49)
 local HAMON_CHARGE_THRESHOLD = 90
 
@@ -80,12 +78,16 @@ local function deepStabilize()
     end
     _movement:FixCamera()
     local re = _movement:GetCharacter("RemoteEvent")
-    if re then re:FireServer("PressedPlay") end
+    if re then
+        re:FireServer("PressedPlay")
+    end
     task.wait(1)
 end
 
 local function collectItem(itemName, targetCount)
-    if not _farm then return false end
+    if not _farm then
+        return false
+    end
     deepStabilize()
     return _farm:CollectItemFromGround(itemName, targetCount)
 end
@@ -98,7 +100,9 @@ local function useItem(itemName, learnWorthiness)
     end
     local char = Player.Character
     local hum = char and char:FindFirstChildWhichIsA("Humanoid")
-    if not hum then return false end
+    if not hum then
+        return false
+    end
     hum:EquipTool(item)
     task.wait(0.3)
     if learnWorthiness then
@@ -120,9 +124,13 @@ end
 
 local function chargeHamon()
     local char = Player.Character
-    if not char then return end
+    if not char then
+        return
+    end
     local hamonVal = char:FindFirstChild("Hamon")
-    if not hamonVal then return end
+    if not hamonVal then
+        return
+    end
     if hamonVal.Value <= HAMON_CHARGE_THRESHOLD then
         local remoteFunc = char:FindFirstChild("RemoteFunction")
         if remoteFunc then
@@ -143,23 +151,35 @@ local function killNPC(npcName, distance)
     end
     local hrp = _movement:GetCharacter("HumanoidRootPart")
     local remoteFunc = _movement:GetCharacter("RemoteFunction")
-    if not hrp then return false end
+    if not hrp then
+        return false
+    end
     local startTime = tick()
     while true do
-        if stopRequested then return false end
-        if not _config:Get("FarmEnabled") then return false end
+        if stopRequested then
+            return false
+        end
+        if not _config:Get("FarmEnabled") then
+            return false
+        end
         if tick() - startTime > 90 then
             print("[Prestige] Timeout killing " .. npcName)
             return false
         end
         npc = workspace.Living:FindFirstChild(npcName)
-        if not npc then break
+        if not npc then
+            break
+        end
         local npcHum = npc:FindFirstChildWhichIsA("Humanoid")
         local npcHRP = npc:FindFirstChild("HumanoidRootPart")
-        if not npcHum or not npcHRP or npcHum.Health <= 0 then break
+        if not npcHum or not npcHRP or npcHum.Health <= 0 then
+            break
+        end
         hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y - distance, npcHRP.Position.Z)
         if remoteFunc then
-            pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
+            pcall(function()
+                remoteFunc:InvokeServer("Attack", "m1")
+            end)
         end
         chargeHamon()
         task.wait(0.5)
@@ -171,7 +191,9 @@ end
 
 local function allocateSkills()
     local rf = _movement:GetCharacter("RemoteFunction")
-    if not rf then return end
+    if not rf then
+        return
+    end
     local skills = {
         "Destructive Power V",
         "Destructive Power IV",
@@ -206,7 +228,9 @@ local function obtainHamonPhase()
     end
     print("[Prestige] Acquiring Hamon...")
     if _inventory:Count("Zeppeli's Hat") < 1 then
-        if not collectItem("Zeppeli's Hat", 1) then return false end
+        if not collectItem("Zeppeli's Hat", 1) then
+            return false
+        end
     end
     local hat = Player.Backpack:FindFirstChild("Zeppeli's Hat")
     if not hat then
@@ -215,7 +239,9 @@ local function obtainHamonPhase()
     end
     local char = Player.Character
     local hum = char and char:FindFirstChildWhichIsA("Humanoid")
-    if hum then hum:EquipTool(hat) end
+    if hum then
+        hum:EquipTool(hat)
+    end
     task.wait(0.5)
     local lisa = game.ReplicatedStorage.NewDialogue:FindFirstChild("Lisa Lisa")
     if lisa then
@@ -244,8 +270,12 @@ local function runStoryPhase()
         { name = "Defeat Diavolo",                          npc = "Diavolo"        },
     }
     for _, q in ipairs(quests) do
-        if not _config:Get("FarmEnabled") then return false end
-        if stopRequested then return false end
+        if not _config:Get("FarmEnabled") then
+            return false
+        end
+        if stopRequested then
+            return false
+        end
         print("[Prestige] Quest: " .. q.name)
         if not killNPC(q.npc, 15) then
             print("[Prestige] Failed " .. q.npc .. " — hopping...")
@@ -279,7 +309,9 @@ local function obtainStandPhase()
     if currentStand ~= "None" and not KEEP_STANDS[currentStand] then
         print("[Prestige] Unwanted stand: " .. currentStand .. " — using Rokakaka")
         if _inventory:Count("Rokakaka") < 1 then
-            if not collectItem("Rokakaka", 1) then return false end
+            if not collectItem("Rokakaka", 1) then
+                return false
+            end
         end
         useItem("Rokakaka", false)
         deepStabilize()
@@ -287,7 +319,9 @@ local function obtainStandPhase()
         return false
     end
     if _inventory:Count("Mysterious Arrow") < 1 then
-        if not collectItem("Mysterious Arrow", 1) then return false end
+        if not collectItem("Mysterious Arrow", 1) then
+            return false
+        end
     end
     useItem("Mysterious Arrow", true)
     local waited = 0
@@ -301,7 +335,9 @@ local function obtainStandPhase()
             return false
         end
     until Player.PlayerStats.Stand.Value ~= "None" or stopRequested
-    if stopRequested then return false end
+    if stopRequested then
+        return false
+    end
     local newStand = Player.PlayerStats.Stand.Value
     if not KEEP_STANDS[newStand] then
         print("[Prestige] Got unwanted stand: " .. newStand .. " — will reset next cycle")
@@ -315,8 +351,12 @@ end
 local function levelUpPhase()
     print("[Prestige] Phase: LEVELING (waiting for level 50)")
     while Player.PlayerStats.Level.Value < 50 do
-        if not _config:Get("FarmEnabled") then return false end
-        if stopRequested then return false end
+        if not _config:Get("FarmEnabled") then
+            return false
+        end
+        if stopRequested then
+            return false
+        end
         task.wait(5)
     end
     return true
@@ -344,7 +384,9 @@ function Prestige:Start()
     end
     if isMaxPrestige() then
         if not _config:Get("PrestigeMaxNotified") then
-            if _webhook then _webhook:SendPrestigeComplete() end
+            if _webhook then
+                _webhook:SendPrestigeComplete()
+            end
             _config:Set("PrestigeMaxNotified", true)
         end
         showPopup("You are already Prestige 3, Level 50.\nAuto Prestige cannot be enabled.")
@@ -359,13 +401,19 @@ function Prestige:Start()
     while not stopRequested do
         if not _config:Get("FarmEnabled") then
             print("[Prestige] Farm disabled — waiting...")
-            repeat task.wait(1) until _config:Get("FarmEnabled") or stopRequested
-            if stopRequested then break end
+            repeat
+                task.wait(1)
+            until _config:Get("FarmEnabled") or stopRequested
+            if stopRequested then
+                break
+            end
             deepStabilize()
         end
         if isMaxPrestige() then
             if not _config:Get("PrestigeMaxNotified") then
-                if _webhook then _webhook:SendPrestigeComplete() end
+                if _webhook then
+                    _webhook:SendPrestigeComplete()
+                end
                 _config:Set("PrestigeMaxNotified", true)
             end
             showPopup("Congratulations! Prestige 3, Level 50.\nAuto Prestige disabled.")
@@ -382,11 +430,13 @@ function Prestige:Start()
         -- end
         -- Story
         if not runStoryPhase() then
-            if stopRequested or not _config:Get("FarmEnabled") then break end
+            if stopRequested or not _config:Get("FarmEnabled") then
+                break
+            end
             _serverHop:Hop()
             deepStabilize()
             task.wait(5)
-            continue
+            goto continue_loop
         end
         -- Stand
         local standOk = false
@@ -398,17 +448,22 @@ function Prestige:Start()
                 task.wait(5)
             end
         end
-        if stopRequested or not _config:Get("FarmEnabled") then break end
+        if stopRequested or not _config:Get("FarmEnabled") then
+            break
+        end
         -- Level
         if not levelUpPhase() then
-            if stopRequested or not _config:Get("FarmEnabled") then break end
+            if stopRequested or not _config:Get("FarmEnabled") then
+                break
+            end
             _serverHop:Hop()
             deepStabilize()
             task.wait(5)
-            continue
+            goto continue_loop
         end
         -- Prestige
         prestigeCheckPhase()
+        ::continue_loop::
         task.wait(2)
     end
     Prestige.isRunning = false
