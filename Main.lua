@@ -81,8 +81,8 @@ local moduleFiles = {
     { key = "ServerHop", file = "ServerHop.lua" },
     { key = "Inventory", file = "Inventory.lua" },
     { key = "UI",        file = "UI.lua"        },
-    { key = "Prestige",  file = "Prestige.lua"  },
     { key = "Farm",      file = "Farm.lua"      },
+    -- AutoPrestige is loaded separately below (standalone script, not a module)
 }
 
 local allLoaded = true
@@ -115,8 +115,8 @@ else
     ERR("CONFIG", "Config.Load() is missing.")
 end
 
--- Initialize modules
-local initOrder = { "Webhook", "Movement", "ServerHop", "Inventory", "UI", "Prestige", "Farm" }
+-- Initialize modules (including UI)
+local initOrder = { "Webhook", "Movement", "ServerHop", "Inventory", "UI", "Farm" }
 
 LOG("INIT", "Initializing modules...")
 for _, moduleName in ipairs(initOrder) do
@@ -131,7 +131,7 @@ for _, moduleName in ipairs(initOrder) do
     end
 end
 
--- Expose modules globally
+-- Expose modules globally for the manual UI
 _G.WhiteHubModules = Modules
 LOG("UI", "Manual UI will use _G.WhiteHubModules")
 
@@ -164,3 +164,56 @@ else
 end
 
 LOG("BOOT", "✅ WHITE HUB — all systems running (manual UI active).")
+
+-- =====================
+-- AUTO PRESTIGE LOADER
+-- AutoPrestige.lua is a standalone script, not a module.
+-- It is loaded once in a task.spawn and polls getgenv().AutoPrestigeEnabled.
+-- It will wait indefinitely until the toggle is turned on via the UI.
+-- Disabling the toggle sets the flag to false, causing internal loops to exit.
+-- =====================
+LOG("AUTOPRESTIGE", "Launching AutoPrestige loader...")
+
+-- Sync the initial flag from config before AutoPrestige.lua starts polling
+getgenv().AutoPrestigeEnabled = Modules.Config:Get("AutoPrestige") == true
+
+task.spawn(function()
+    local url = BASE_URL .. "AutoPrestige.lua"
+    LOG("AUTOPRESTIGE", "Fetching AutoPrestige.lua from: " .. url)
+
+    local response = nil
+    local done = false
+    task.spawn(function()
+        local ok, res = pcall(function() return game:HttpGet(url, true) end)
+        if ok and res then response = res end
+        done = true
+    end)
+
+    local t = 0
+    while not done and t < 15 do
+        task.wait(0.5)
+        t += 0.5
+    end
+
+    if not response then
+        ERR("AUTOPRESTIGE", "Timeout or fetch failed for AutoPrestige.lua — skipping.")
+        return
+    end
+    if response:find("<!DOCTYPE") or response:sub(1,3) == "404" then
+        ERR("AUTOPRESTIGE", "AutoPrestige.lua not found on GitHub (404) — skipping.")
+        return
+    end
+
+    LOG("AUTOPRESTIGE", "Downloaded AutoPrestige.lua (" .. #response .. " bytes). Executing...")
+
+    local func, compileErr = loadstring(response)
+    if not func then
+        ERR("AUTOPRESTIGE", "Compile error — " .. tostring(compileErr))
+        return
+    end
+
+    local ok, err = pcall(func)
+    if not ok then
+        ERR("AUTOPRESTIGE", "Runtime error — " .. tostring(err))
+    end
+end)
