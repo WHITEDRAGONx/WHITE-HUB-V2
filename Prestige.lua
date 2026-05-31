@@ -1,7 +1,7 @@
 -- =====================
 -- Prestige.lua
 -- Auto prestige / leveling module for WHITE HUB V2.
--- Fixed: replaced goto/::label:: with repeat...until true (Lua 5.1 compatible)
+-- Dynamic quest detection – skips already completed story missions.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -30,6 +30,28 @@ Prestige.isRunning = false
 local stopRequested = false
 local SAFE_SPOT = CFrame.new(978, -42, -49)
 local HAMON_CHARGE_THRESHOLD = 90
+
+-- Mapeia texto da quest -> NPC a matar (e diálogo opcional)
+local QUEST_NPC = {
+    ["Help Giorno by Defeating Security Guards"] = "Security Guard",
+    ["Defeat Leaky Eye Luca"]                   = "Leaky Eye Luca",
+    ["Defeat Bucciarati"]                       = "Bucciarati",
+    ["Defeat Fugo And His Purple Haze"]         = "Fugo",
+    ["Defeat Pesci"]                            = "Pesci",
+    ["Defeat Ghiaccio"]                         = "Ghiaccio",
+    ["Defeat Diavolo"]                          = "Diavolo",
+}
+
+-- Ordem das quests (usada apenas para fallback, mas a detecção principal é dinâmica)
+local QUEST_ORDER = {
+    "Help Giorno by Defeating Security Guards",
+    "Defeat Leaky Eye Luca",
+    "Defeat Bucciarati",
+    "Defeat Fugo And His Purple Haze",
+    "Defeat Pesci",
+    "Defeat Ghiaccio",
+    "Defeat Diavolo",
+}
 
 function Prestige:Init(Modules)
     _config    = Modules.Config
@@ -66,19 +88,12 @@ local function showPopup(msg)
     end
 end
 
+-- Estabilização (sem enum problemático)
 local function deepStabilize()
     local bv = _movement:Freeze()
     _movement:SetNoclip(true)
     _movement:Teleport(SAFE_SPOT)
     task.wait(0.5)
-    local hum = Player.Character and Player.Character:FindFirstChildWhichIsA("Humanoid")
-    if hum then
-        local state = hum:GetState()
-        if state ~= Enum.HumanoidStateType.Running and state ~= Enum.HumanoidStateType.Landed then
-            hum:ChangeState(Enum.HumanoidStateType.Running)
-            task.wait(0.5)
-        end
-    end
     _movement:Unfreeze(bv)
     _movement:SetNoclip(false)
     _movement:FixCamera()
@@ -89,10 +104,30 @@ local function deepStabilize()
     task.wait(1)
 end
 
-local function collectItem(itemName, targetCount)
-    if not _farm then
-        return false
+-- Detecta a próxima quest ativa no painel
+local function getCurrentQuest()
+    local questPanel = Player.PlayerGui:FindFirstChild("HUD")
+    if not questPanel then return nil end
+    questPanel = questPanel:FindFirstChild("Main")
+    if not questPanel then return nil end
+    questPanel = questPanel:FindFirstChild("Frames")
+    if not questPanel then return nil end
+    questPanel = questPanel:FindFirstChild("Quest")
+    if not questPanel then return nil end
+    questPanel = questPanel:FindFirstChild("Quests")
+    if not questPanel then return nil end
+
+    -- Procura na ordem definida a primeira quest que ainda está presente
+    for _, questName in ipairs(QUEST_ORDER) do
+        if questPanel:FindFirstChild(questName) then
+            return questName
+        end
     end
+    return nil
+end
+
+local function collectItem(itemName, targetCount)
+    if not _farm then return false end
     deepStabilize()
     return _farm:CollectItemFromGround(itemName, targetCount)
 end
@@ -105,9 +140,7 @@ local function useItem(itemName, learnWorthiness)
     end
     local char = Player.Character
     local hum = char and char:FindFirstChildWhichIsA("Humanoid")
-    if not hum then
-        return false
-    end
+    if not hum then return false end
     hum:EquipTool(item)
     task.wait(0.3)
     if learnWorthiness then
@@ -229,9 +262,7 @@ local function obtainHamonPhase()
     end
     print("[Prestige] Acquiring Hamon...")
     if _inventory:Count("Zeppeli's Hat") < 1 then
-        if not collectItem("Zeppeli's Hat", 1) then
-            return false
-        end
+        if not collectItem("Zeppeli's Hat", 1) then return false end
     end
     local hat = Player.Backpack:FindFirstChild("Zeppeli's Hat")
     if not hat then
@@ -255,33 +286,34 @@ local function obtainHamonPhase()
     return true
 end
 
+-- Função principal da história: pega a próxima quest ativa e mata o NPC correspondente
 local function runStoryPhase()
     print("[Prestige] Phase: STORY")
     _movement:Teleport(CFrame.new(500, 2010, 500))
     deepStabilize()
-    local quests = {
-        { name = "Help Giorno by Defeating Security Guards", npc = "Security Guard" },
-        { name = "Defeat Leaky Eye Luca",                   npc = "Leaky Eye Luca" },
-        { name = "Defeat Bucciarati",                       npc = "Bucciarati"     },
-        { name = "Defeat Fugo And His Purple Haze",         npc = "Fugo"           },
-        { name = "Defeat Pesci",                            npc = "Pesci"          },
-        { name = "Defeat Ghiaccio",                         npc = "Ghiaccio"       },
-        { name = "Defeat Diavolo",                          npc = "Diavolo"        },
-    }
-    for _, q in ipairs(quests) do
-        if not _config:Get("FarmEnabled") then return false end
-        if stopRequested then return false end
-        print("[Prestige] Quest: " .. q.name)
-        if not killNPC(q.npc, 15) then
-            print("[Prestige] Failed " .. q.npc .. " — hopping...")
-            _serverHop:Hop()
-            deepStabilize()
-            return false
-        end
-        task.wait(2)
-        endDialogue("Storyline", "Dialogue1", "Option1")
-        task.wait(1)
+
+    local currentQuestName = getCurrentQuest()
+    if not currentQuestName then
+        print("[Prestige] No active story quest found. Story phase complete.")
+        return true
     end
+
+    local npcName = QUEST_NPC[currentQuestName]
+    if not npcName then
+        print("[Prestige] Unknown quest: " .. currentQuestName .. " — skipping.")
+        return true
+    end
+
+    print("[Prestige] Current quest: " .. currentQuestName .. " (NPC: " .. npcName .. ")")
+    if not killNPC(npcName, 15) then
+        print("[Prestige] Failed to kill " .. npcName .. " — hopping...")
+        _serverHop:Hop()
+        deepStabilize()
+        return false
+    end
+    task.wait(2)
+    endDialogue("Storyline", "Dialogue1", "Option1")
+    task.wait(1)
     return true
 end
 
@@ -382,8 +414,6 @@ function Prestige:Start()
     print("[Prestige] Starting prestige automation...")
     deepStabilize()
 
-    -- _breakLoop signals that the inner block wants to exit the outer while loop.
-    -- Using a flag instead of goto/::label:: for Lua 5.1 compatibility.
     local _breakLoop = false
 
     while not stopRequested do
@@ -406,11 +436,8 @@ function Prestige:Start()
             break
         end
 
-        -- repeat...until true acts as a breakable scope, replacing goto continue_loop.
-        -- A plain `break` here skips to task.wait(2) (retry next cycle).
-        -- Setting _breakLoop = true before break exits the outer while loop instead.
         repeat
-            -- Optional Hamon acquisition (uncomment block below to enable)
+            -- Optional Hamon (uncomment to enable)
             -- if not obtainHamonPhase() then
             --     if stopRequested or not _config:Get("FarmEnabled") then
             --         _breakLoop = true
@@ -422,7 +449,7 @@ function Prestige:Start()
             --     break
             -- end
 
-            -- Story
+            -- Story (dynamic quest detection)
             if not runStoryPhase() then
                 if stopRequested or not _config:Get("FarmEnabled") then
                     _breakLoop = true
