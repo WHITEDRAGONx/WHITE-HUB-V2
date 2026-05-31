@@ -245,6 +245,46 @@ local function Startup()
     task.wait(5)
 end
 
+-- =====================
+-- PUBLIC FUNCTION FOR PRESTIGE TO COLLECT ITEMS
+-- =====================
+function Farm:CollectItemFromGround(itemName, targetCount)
+    print("[Farm] Collecting " .. targetCount .. "x " .. itemName .. " for Prestige")
+    local startTime = tick()
+    while _inventory:Count(itemName) < targetCount do
+        if not _config:Get("FarmEnabled") then return false end
+        
+        local elapsed = tick() - lastItemTime
+        if elapsed > NO_ITEM_TIMEOUT then
+            print("[Farm] No " .. itemName .. " for " .. math.floor(elapsed) .. "s — hopping...")
+            DoHop()
+            startTime = tick()
+            lastItemTime = tick()
+            task.wait(2)
+        end
+        
+        local snapshot = {}
+        for idx, info in pairs(SpawnedItems) do
+            if info.Name == itemName then
+                table.insert(snapshot, {Index=idx, ItemInfo=info})
+            end
+        end
+        
+        if #snapshot == 0 then
+            local waiting = math.floor(NO_ITEM_TIMEOUT - (tick() - lastItemTime))
+            print("[Farm] Waiting for " .. itemName .. "... (" .. waiting .. "s until hop)")
+            task.wait(2)
+        else
+            for _, entry in ipairs(snapshot) do
+                if _inventory:Count(itemName) >= targetCount then break end
+                CollectItem(entry.ItemInfo, entry.Index)
+            end
+        end
+        task.wait(1)
+    end
+    return true
+end
+
 function Farm:Start()
     ApplyHooks()
     ApplyCrashBypass()
@@ -262,13 +302,12 @@ function Farm:Start()
             print("[Farm] Farm disabled by user. Waiting...")
         end
 
-        -- If Auto Prestige is enabled, run prestige mode
+        -- If Auto Prestige is enabled, run prestige mode (no selling)
         if _config:Get("AutoPrestige") then
             print("[Farm] Auto Prestige enabled – starting Prestige module.")
             if _webhook then
                 _webhook:Send("🔄 **Auto Prestige started**\nPlayer: `" .. Player.Name .. "`")
             end
-            -- Run prestige and wait for it to finish or be disabled
             local prestigeRunning = true
             local prestigeThread = task.spawn(function()
                 local ok, err = pcall(function()
