@@ -1,6 +1,7 @@
 -- =====================
 -- Prestige.lua
 -- Auto prestige / leveling module for WHITE HUB V2.
+-- Fixed: replaced goto/::label:: with repeat...until true (Lua 5.1 compatible)
 -- =====================
 
 local Players = game:GetService("Players")
@@ -65,10 +66,17 @@ local function showPopup(msg)
     end
 end
 
--- Simplified stabilization (no enum state change)
 local function deepStabilize()
     _movement:Teleport(SAFE_SPOT)
     task.wait(0.5)
+    local hum = Player.Character and Player.Character:FindFirstChildWhichIsA("Humanoid")
+    if hum then
+        local state = hum:GetState()
+        if state ~= Enum.HumanoidStateType.Running and state ~= Enum.HumanoidStateType.Landed then
+            hum:ChangeState(Enum.HumanoidStateType.Running)
+            task.wait(0.5)
+        end
+    end
     _movement:FixCamera()
     local re = _movement:GetCharacter("RemoteEvent")
     if re then
@@ -78,7 +86,9 @@ local function deepStabilize()
 end
 
 local function collectItem(itemName, targetCount)
-    if not _farm then return false end
+    if not _farm then
+        return false
+    end
     deepStabilize()
     return _farm:CollectItemFromGround(itemName, targetCount)
 end
@@ -91,7 +101,9 @@ local function useItem(itemName, learnWorthiness)
     end
     local char = Player.Character
     local hum = char and char:FindFirstChildWhichIsA("Humanoid")
-    if not hum then return false end
+    if not hum then
+        return false
+    end
     hum:EquipTool(item)
     task.wait(0.3)
     if learnWorthiness then
@@ -152,7 +164,9 @@ local function killNPC(npcName, distance)
         if not npcHum or not npcHRP or npcHum.Health <= 0 then break end
         hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y - distance, npcHRP.Position.Z)
         if remoteFunc then
-            pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
+            pcall(function()
+                remoteFunc:InvokeServer("Attack", "m1")
+            end)
         end
         chargeHamon()
         task.wait(0.5)
@@ -199,7 +213,9 @@ local function obtainHamonPhase()
     end
     print("[Prestige] Acquiring Hamon...")
     if _inventory:Count("Zeppeli's Hat") < 1 then
-        if not collectItem("Zeppeli's Hat", 1) then return false end
+        if not collectItem("Zeppeli's Hat", 1) then
+            return false
+        end
     end
     local hat = Player.Backpack:FindFirstChild("Zeppeli's Hat")
     if not hat then
@@ -349,13 +365,21 @@ function Prestige:Start()
     Prestige.isRunning = true
     print("[Prestige] Starting prestige automation...")
     deepStabilize()
+
+    -- _breakLoop signals that the inner block wants to exit the outer while loop.
+    -- Using a flag instead of goto/::label:: for Lua 5.1 compatibility.
+    local _breakLoop = false
+
     while not stopRequested do
+        _breakLoop = false
+
         if not _config:Get("FarmEnabled") then
             print("[Prestige] Farm disabled — waiting...")
             repeat task.wait(1) until _config:Get("FarmEnabled") or stopRequested
             if stopRequested then break end
             deepStabilize()
         end
+
         if isMaxPrestige() then
             if not _config:Get("PrestigeMaxNotified") then
                 if _webhook then _webhook:SendPrestigeComplete() end
@@ -365,46 +389,70 @@ function Prestige:Start()
             disableAutoPrestige()
             break
         end
-        -- Optional Hamon acquisition (uncomment to enable)
-        -- if not obtainHamonPhase() then
-        --     if stopRequested or not _config:Get("FarmEnabled") then break end
-        --     _serverHop:Hop()
-        --     deepStabilize()
-        --     task.wait(5)
-        --     continue
-        -- end
-        -- Story
-        if not runStoryPhase() then
-            if stopRequested or not _config:Get("FarmEnabled") then break end
-            _serverHop:Hop()
-            deepStabilize()
-            task.wait(5)
-            goto continue_loop
-        end
-        -- Stand
-        local standOk = false
-        while not standOk and not stopRequested and _config:Get("FarmEnabled") do
-            standOk = obtainStandPhase()
-            if not standOk then
-                _serverHop:Hop()
-                deepStabilize()
-                task.wait(5)
+
+        -- repeat...until true acts as a breakable scope, replacing goto continue_loop.
+        -- A plain `break` here skips to task.wait(2) (retry next cycle).
+        -- Setting _breakLoop = true before break exits the outer while loop instead.
+        repeat
+            -- Optional Hamon acquisition (uncomment block below to enable)
+            -- if not obtainHamonPhase() then
+            --     if stopRequested or not _config:Get("FarmEnabled") then
+            --         _breakLoop = true
+            --     else
+            --         _serverHop:Hop()
+            --         deepStabilize()
+            --         task.wait(5)
+            --     end
+            --     break
+            -- end
+
+            -- Story
+            if not runStoryPhase() then
+                if stopRequested or not _config:Get("FarmEnabled") then
+                    _breakLoop = true
+                else
+                    _serverHop:Hop()
+                    deepStabilize()
+                    task.wait(5)
+                end
+                break
             end
-        end
-        if stopRequested or not _config:Get("FarmEnabled") then break end
-        -- Level
-        if not levelUpPhase() then
-            if stopRequested or not _config:Get("FarmEnabled") then break end
-            _serverHop:Hop()
-            deepStabilize()
-            task.wait(5)
-            goto continue_loop
-        end
-        -- Prestige
-        prestigeCheckPhase()
-        ::continue_loop::
+
+            -- Stand
+            local standOk = false
+            while not standOk and not stopRequested and _config:Get("FarmEnabled") do
+                standOk = obtainStandPhase()
+                if not standOk then
+                    _serverHop:Hop()
+                    deepStabilize()
+                    task.wait(5)
+                end
+            end
+            if stopRequested or not _config:Get("FarmEnabled") then
+                _breakLoop = true
+                break
+            end
+
+            -- Level
+            if not levelUpPhase() then
+                if stopRequested or not _config:Get("FarmEnabled") then
+                    _breakLoop = true
+                else
+                    _serverHop:Hop()
+                    deepStabilize()
+                    task.wait(5)
+                end
+                break
+            end
+
+            -- Prestige
+            prestigeCheckPhase()
+        until true
+
+        if _breakLoop then break end
         task.wait(2)
     end
+
     Prestige.isRunning = false
     print("[Prestige] Stopped.")
 end
