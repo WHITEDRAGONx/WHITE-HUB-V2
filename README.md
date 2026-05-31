@@ -110,8 +110,8 @@ WHITE HUB V2 – Made by WHITE DRAGON
 Auto Prestige logic is based on the original standalone script, preserved and integrated with minimal changes.
 
 🔗 Links
-GitHub Repository
+GitHub Repository: https://github.com/WHITEDRAGONx/WHITE-HUB-V2
 
-Discord
+Discord: https://discord.gg/Qwd23ZRNxJ
 
 Happy farming! ⚡
