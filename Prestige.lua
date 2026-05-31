@@ -1,8 +1,7 @@
 -- =====================
 -- Prestige.lua
 -- Auto prestige / leveling module for YBA.
--- Uses Farm:CollectItemFromGround() for all item gathering.
--- Does NOT sell or buy anything.
+-- Uses Farm:CollectItemFromGround() with extra character stabilization.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -63,13 +62,23 @@ local function showPopup(msg)
     end
 end
 
-local function StabilizeCharacter()
+-- Full character stabilization (ensures not in ragdoll/freefall)
+local function DeepStabilize()
+    -- Teleport to safe spot under the map
+    _movement:Teleport(SAFE_SPOT)
+    task.wait(0.5)
+    -- Force humanoid to be in normal state
+    local hum = Player.Character and Player.Character:FindFirstChildWhichIsA("Humanoid")
+    if hum and hum:GetState() ~= Enum.HumanoidStateType.Running and hum:GetState() ~= Enum.HumanoidStateType.Standing then
+        hum:ChangeState(Enum.HumanoidStateType.Standing)
+        task.wait(0.5)
+    end
+    -- Fix camera
+    _movement:FixCamera()
+    -- Ensure remote event is fired (PressedPlay) to re-enable controls
     local re = _movement:GetCharacter("RemoteEvent")
     if re then re:FireServer("PressedPlay") end
-    _movement:Teleport(SAFE_SPOT)
     task.wait(1)
-    _movement:FixCamera()
-    task.wait(2)
 end
 
 local function CollectItem(itemName, targetCount)
@@ -77,6 +86,8 @@ local function CollectItem(itemName, targetCount)
         print("[Prestige] Cannot collect " .. itemName .. " - Farm collection not available")
         return false
     end
+    -- Stabilize before any collection attempt to prevent falling
+    DeepStabilize()
     return _farm:CollectItemFromGround(itemName, targetCount)
 end
 
@@ -143,7 +154,8 @@ local function killNPC(npcName, distance)
         end
         task.wait(0.5)
     end
-    StabilizeCharacter()
+    -- After killing, deep stabilize to avoid falling during next collection
+    DeepStabilize()
     print("[Prestige] Killed: " .. npcName)
     return true
 end
@@ -151,7 +163,7 @@ end
 local function runStoryPhase()
     print("[Prestige] Phase: STORY")
     _movement:Teleport(CFrame.new(500, 2010, 500))
-    StabilizeCharacter()
+    DeepStabilize()
     local quests = {
         { name = "Help Giorno by Defeating Security Guards", npc = "Security Guard" },
         { name = "Defeat Leaky Eye Luca",                   npc = "Leaky Eye Luca" },
@@ -168,7 +180,7 @@ local function runStoryPhase()
         if not killNPC(quest.npc, 15) then
             print("[Prestige] Failed " .. quest.npc .. " — hopping...")
             _serverHop:Hop()
-            StabilizeCharacter()
+            DeepStabilize()
             return false
         end
         task.wait(2)
@@ -181,7 +193,7 @@ end
 local function obtainStandPhase()
     print("[Prestige] Phase: STAND FARM")
     _movement:Teleport(CFrame.new(500, 2010, 500))
-    StabilizeCharacter()
+    DeepStabilize()
     local currentStand = Player.PlayerStats.Stand.Value
     if currentStand ~= "None" and KEEP_STANDS[currentStand] then
         print("[Prestige] Already have desired stand: " .. currentStand)
@@ -193,7 +205,7 @@ local function obtainStandPhase()
             if not CollectItem("Rokakaka", 1) then return false end
         end
         UseItem("Rokakaka", true)
-        StabilizeCharacter()
+        DeepStabilize()
         task.wait(3)
         return false
     end
@@ -208,7 +220,7 @@ local function obtainStandPhase()
         if waited > 30 then
             print("[Prestige] Timeout waiting for stand — hopping")
             _serverHop:Hop()
-            StabilizeCharacter()
+            DeepStabilize()
             return false
         end
     until Player.PlayerStats.Stand.Value ~= "None" or _stopRequested
@@ -240,7 +252,7 @@ local function prestigeCheckPhase()
             endDialogue("Prestige", "Dialogue2", "Option1")
             task.wait(2)
             _serverHop:Hop()
-            StabilizeCharacter()
+            DeepStabilize()
             return false
         end
         return true
@@ -266,13 +278,13 @@ function Prestige:Start()
     _stopRequested = false
     isPrestigeRunning = true
     print("[Prestige] Starting prestige automation...")
-    StabilizeCharacter()
+    DeepStabilize()
     while not _stopRequested do
         if not _config:Get("FarmEnabled") then
             print("[Prestige] Farm disabled — waiting...")
             repeat task.wait(1) until _config:Get("FarmEnabled") or _stopRequested
             if _stopRequested then break end
-            StabilizeCharacter()
+            DeepStabilize()
         end
         if isMaxPrestige() then
             if not _config:Get("PrestigeMaxNotified") then
@@ -286,7 +298,7 @@ function Prestige:Start()
         if not runStoryPhase() then
             if _stopRequested or not _config:Get("FarmEnabled") then break end
             _serverHop:Hop()
-            StabilizeCharacter()
+            DeepStabilize()
             task.wait(5)
             continue
         end
@@ -295,7 +307,7 @@ function Prestige:Start()
             standOk = obtainStandPhase()
             if not standOk then
                 _serverHop:Hop()
-                StabilizeCharacter()
+                DeepStabilize()
                 task.wait(5)
             end
         end
@@ -303,7 +315,7 @@ function Prestige:Start()
         if not levelUpPhase() then
             if _stopRequested or not _config:Get("FarmEnabled") then break end
             _serverHop:Hop()
-            StabilizeCharacter()
+            DeepStabilize()
             task.wait(5)
             continue
         end
