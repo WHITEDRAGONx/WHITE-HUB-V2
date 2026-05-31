@@ -2,6 +2,8 @@
 -- Prestige.lua
 -- Auto prestige / leveling module for WHITE HUB V2.
 -- Uses Farm:CollectItemFromGround() for stable item collection.
+-- Includes: skill allocation, Hamon acquisition, Auto Requiem, Worthiness.
+-- NOW with Hamon charging during NPC fights (like the original).
 -- =====================
 
 local Players = game:GetService("Players")
@@ -30,6 +32,9 @@ local isRunning = false
 local stopRequested = false
 local SAFE_SPOT = CFrame.new(978, -42, -49)
 
+-- Default Hamon charge threshold (can be overridden in config)
+local HAMON_CHARGE_THRESHOLD = 90
+
 function Prestige:Init(Modules)
     _config    = Modules.Config
     _inventory = Modules.Inventory
@@ -40,6 +45,10 @@ function Prestige:Init(Modules)
     _farm      = Modules.Farm
     if not _farm or not _farm.CollectItemFromGround then
         warn("[Prestige] Farm module missing CollectItemFromGround - will not work.")
+    end
+    -- Optionally load threshold from config
+    if _config and _config:Get("HamonCharge") then
+        HAMON_CHARGE_THRESHOLD = _config:Get("HamonCharge")
     end
 end
 
@@ -62,7 +71,7 @@ local function showPopup(msg)
     end
 end
 
--- Deep stabilization: ensures character is not falling, ragdoll, or in combat
+-- Deep stabilization
 local function deepStabilize()
     _movement:Teleport(SAFE_SPOT)
     task.wait(0.5)
@@ -80,15 +89,15 @@ local function deepStabilize()
     task.wait(1)
 end
 
--- Collect item using Farm's stable function
+-- Collect item using Farm
 local function collectItem(itemName, targetCount)
     if not _farm then return false end
     deepStabilize()
     return _farm:CollectItemFromGround(itemName, targetCount)
 end
 
--- Use item from backpack (equip + activate)
-local function useItem(itemName, withWorthiness)
+-- Use item with optional worthiness learning (required for Mysterious Arrow)
+local function useItem(itemName, learnWorthiness)
     local item = Player.Backpack:FindFirstChild(itemName)
     if not item then
         print("[Prestige] Item not found: " .. itemName)
@@ -99,7 +108,7 @@ local function useItem(itemName, withWorthiness)
     if not hum then return false end
     hum:EquipTool(item)
     task.wait(0.3)
-    if withWorthiness then
+    if learnWorthiness then
         local rf = char:FindFirstChild("RemoteFunction")
         if rf then
             rf:InvokeServer("LearnSkill", { Skill = "Worthiness", SkillTreeType = "Character" })
@@ -117,7 +126,26 @@ local function endDialogue(npc, dialogue, option)
     end
 end
 
--- Kill NPC (used for quest progression)
+-- Hamon charging (used during combat)
+local function chargeHamon()
+    local char = Player.Character
+    if not char then return end
+    local hamonVal = char:FindFirstChild("Hamon")
+    if not hamonVal then return end
+    if hamonVal.Value <= HAMON_CHARGE_THRESHOLD then
+        local remoteFunc = char:FindFirstChild("RemoteFunction")
+        if remoteFunc then
+            -- Assign Hamon Breathing to L key if not already
+            remoteFunc:InvokeServer("AssignSkillKey", { Type = "Spec", Key = "Enum.KeyCode.L", Skill = "Hamon Breathing" })
+        end
+        local remoteEvent = char:FindFirstChild("RemoteEvent")
+        if remoteEvent then
+            remoteEvent:FireServer("InputBegan", { Input = Enum.KeyCode.L })
+        end
+    end
+end
+
+-- Kill NPC (with optional Hamon charging loop)
 local function killNPC(npcName, distance)
     local npc = workspace.Living:FindFirstChild(npcName)
     if not npc then
@@ -144,6 +172,8 @@ local function killNPC(npcName, distance)
         if remoteFunc then
             pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
         end
+        -- Charge Hamon automatically during combat
+        chargeHamon()
         task.wait(0.5)
     end
     deepStabilize()
@@ -152,10 +182,77 @@ local function killNPC(npcName, distance)
 end
 
 -- =====================
+-- SKILL ALLOCATION
+-- =====================
+local function allocateSkills()
+    local rf = _movement:GetCharacter("RemoteFunction")
+    if not rf then return end
+    -- Stand destructive power
+    local skills = {
+        "Destructive Power V",
+        "Destructive Power IV",
+        "Destructive Power III",
+        "Destructive Power II",
+        "Destructive Power I"
+    }
+    for _, skill in ipairs(skills) do
+        pcall(function()
+            rf:InvokeServer("LearnSkill", { Skill = skill, SkillTreeType = "Stand" })
+        end)
+    end
+    -- Hamon skills if spec is Hamon
+    if Player.PlayerStats.Spec.Value == "Hamon (William Zeppeli)" then
+        local hamonSkills = {
+            "Hamon Punch III",
+            "Lung Capacity III",
+            "Breathing Technique III"
+        }
+        for _, skill in ipairs(hamonSkills) do
+            pcall(function()
+                rf:InvokeServer("LearnSkill", { Skill = skill, SkillTreeType = "Spec" })
+            end)
+        end
+    end
+end
+
+-- =====================
+-- HAMON ACQUISITION (optional)
+-- =====================
+local function obtainHamonPhase()
+    local autoHamon = _config and _config:Get("AutoHamon") or false
+    if not autoHamon then
+        print("[Prestige] AutoHamon disabled – skipping Hamon acquisition.")
+        return true
+    end
+    print("[Prestige] Acquiring Hamon...")
+    if _inventory:Count("Zeppeli's Hat") < 1 then
+        if not collectItem("Zeppeli's Hat", 1) then return false end
+    end
+    local hat = Player.Backpack:FindFirstChild("Zeppeli's Hat")
+    if not hat then
+        print("[Prestige] Zeppeli's Hat not found.")
+        return false
+    end
+    local char = Player.Character
+    local hum = char and char:FindFirstChildWhichIsA("Humanoid")
+    if hum then hum:EquipTool(hat) end
+    task.wait(0.5)
+    local lisa = game.ReplicatedStorage.NewDialogue:FindFirstChild("Lisa Lisa")
+    if lisa then
+        local remoteEvent = _movement:GetCharacter("RemoteEvent")
+        if remoteEvent then
+            remoteEvent:FireServer("PromptTriggered", lisa)
+        end
+    end
+    task.wait(5)
+    allocateSkills()
+    print("[Prestige] Hamon acquired.")
+    return true
+end
+
+-- =====================
 -- PHASES
 -- =====================
-
--- Story quests (main storyline)
 local function runStoryPhase()
     print("[Prestige] Phase: STORY")
     _movement:Teleport(CFrame.new(500, 2010, 500))
@@ -186,14 +283,23 @@ local function runStoryPhase()
     return true
 end
 
--- Obtain a desired stand (using Mysterious Arrow / Rokakaka)
 local function obtainStandPhase()
     print("[Prestige] Phase: STAND FARM")
     _movement:Teleport(CFrame.new(500, 2010, 500))
     deepStabilize()
     local currentStand = Player.PlayerStats.Stand.Value
+
+    -- Auto Requiem
+    if _inventory:Count("Requiem Arrow") >= 1 and (currentStand == "King Crimson" or currentStand == "Star Platinum") then
+        print("[Prestige] Auto Requiem triggered – using Requiem Arrow")
+        useItem("Requiem Arrow", false)
+        task.wait(3)
+        return false
+    end
+
     if currentStand ~= "None" and KEEP_STANDS[currentStand] then
         print("[Prestige] Already have desired stand: " .. currentStand)
+        allocateSkills()
         return true
     end
     if currentStand ~= "None" and not KEEP_STANDS[currentStand] then
@@ -201,7 +307,7 @@ local function obtainStandPhase()
         if _inventory:Count("Rokakaka") < 1 then
             if not collectItem("Rokakaka", 1) then return false end
         end
-        useItem("Rokakaka", true)
+        useItem("Rokakaka", false)
         deepStabilize()
         task.wait(3)
         return false
@@ -209,6 +315,7 @@ local function obtainStandPhase()
     if _inventory:Count("Mysterious Arrow") < 1 then
         if not collectItem("Mysterious Arrow", 1) then return false end
     end
+    -- Use Mysterious Arrow with worthiness learning
     useItem("Mysterious Arrow", true)
     local waited = 0
     repeat
@@ -228,10 +335,10 @@ local function obtainStandPhase()
         return false
     end
     print("[Prestige] Obtained desired stand: " .. newStand)
+    allocateSkills()
     return true
 end
 
--- Level up to 50 (passive, just wait)
 local function levelUpPhase()
     print("[Prestige] Phase: LEVELING (waiting for level 50)")
     while Player.PlayerStats.Level.Value < 50 do
@@ -242,7 +349,6 @@ local function levelUpPhase()
     return true
 end
 
--- Prestige when level 50 is reached
 local function prestigeCheckPhase()
     if Player.PlayerStats.Level.Value == 50 then
         local prestige = Player.PlayerStats.Prestige.Value
@@ -252,10 +358,10 @@ local function prestigeCheckPhase()
             task.wait(2)
             _serverHop:Hop()
             deepStabilize()
-            return false  -- restart from story
+            return false
         else
             print("[Prestige] Already max prestige.")
-            return true   -- done
+            return true
         end
     end
     return false
@@ -299,7 +405,9 @@ function Prestige:Start()
             disableAutoPrestige()
             break
         end
-        -- Story phase
+        -- Optional Hamon (uncomment if desired)
+        -- obtainHamonPhase()
+        -- Story
         local storyOk = runStoryPhase()
         if not storyOk then
             if stopRequested or not _config:Get("FarmEnabled") then break end
@@ -308,7 +416,7 @@ function Prestige:Start()
             task.wait(5)
             goto continue_loop
         end
-        -- Stand phase
+        -- Stand
         local standOk = false
         while not standOk and not stopRequested and _config:Get("FarmEnabled") do
             standOk = obtainStandPhase()
@@ -319,7 +427,7 @@ function Prestige:Start()
             end
         end
         if stopRequested or not _config:Get("FarmEnabled") then break end
-        -- Level phase
+        -- Level
         local levelOk = levelUpPhase()
         if not levelOk then
             if stopRequested or not _config:Get("FarmEnabled") then break end
@@ -328,7 +436,7 @@ function Prestige:Start()
             task.wait(5)
             goto continue_loop
         end
-        -- Prestige check
+        -- Prestige
         prestigeCheckPhase()
         ::continue_loop::
         task.wait(2)
