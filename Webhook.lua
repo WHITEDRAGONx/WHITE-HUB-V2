@@ -92,4 +92,15 @@ function Webhook:SendError(context)
     )
 end
 
+-- NEW: Notify when prestige reaches max (Prestige 3, Level 50)
+function Webhook:SendPrestigeComplete()
+    Send(
+        "🏆 **Prestige maxed out!**\n"
+        .. "Player: `" .. Player.Name .. "`\n"
+        .. "Reached **Prestige 3, Level 50**.\n"
+        .. "Auto Prestige has been disabled automatically.\n"
+        .. "The script will now return to normal item farming."
+    )
+end
+
 return Webhook
