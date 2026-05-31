@@ -151,10 +151,10 @@ local function killNPC(npcName, distance)
             return false
         end
         npc = workspace.Living:FindFirstChild(npcName)
-        if not npc then break end
+        if not npc then break
         local npcHum = npc:FindFirstChildWhichIsA("Humanoid")
         local npcHRP = npc:FindFirstChild("HumanoidRootPart")
-        if not npcHum or not npcHRP or npcHum.Health <= 0 then break end
+        if not npcHum or not npcHRP or npcHum.Health <= 0 then break
         hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y - distance, npcHRP.Position.Z)
         if remoteFunc then
             pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
@@ -370,14 +370,14 @@ function Prestige:Start()
             disableAutoPrestige()
             break
         end
-        -- Hamon (optional)
-        if not obtainHamonPhase() then
-            if stopRequested or not _config:Get("FarmEnabled") then break end
-            _serverHop:Hop()
-            deepStabilize()
-            task.wait(5)
-            continue
-        end
+        -- Optional Hamon acquisition (uncomment if you have AutoHamon config)
+        -- if not obtainHamonPhase() then
+        --     if stopRequested or not _config:Get("FarmEnabled") then break end
+        --     _serverHop:Hop()
+        --     deepStabilize()
+        --     task.wait(5)
+        --     continue
+        -- end
         -- Story
         if not runStoryPhase() then
             if stopRequested or not _config:Get("FarmEnabled") then break end
