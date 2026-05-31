@@ -2,6 +2,7 @@
 -- Prestige.lua
 -- Auto prestige / leveling module for YBA.
 -- Integrates with WHITE HUB V2 modules.
+-- Item collection logic is identical to Farm.lua.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -30,6 +31,7 @@ local _stopRequested = false
 local lastItemTime = tick()
 local NO_ITEM_TIMEOUT = 20
 
+-- Item detection (same as Farm)
 local SpawnedItems = {}
 local ItemSpawnFolder = nil
 
@@ -63,7 +65,9 @@ local function showPopup(msg)
     end
 end
 
--- Item detection (same as Farm)
+-- =====================
+-- ITEM DETECTION (exactly like Farm)
+-- =====================
 local function GetItemInfo(model)
     if not (model and model:IsA("Model") and model.Parent and model.Parent.Name == "Items") then return nil end
     local pp = model.PrimaryPart
@@ -76,7 +80,7 @@ local function GetItemInfo(model)
     return { Name = prompt.ObjectText, ProximityPrompt = prompt, Position = pp.Position }
 end
 
-local function initItemDetection()
+local function InitItemDetection()
     pcall(function()
         local spawns = workspace:WaitForChild("Item_Spawns", 15)
         if spawns then ItemSpawnFolder = spawns:WaitForChild("Items", 15) end
@@ -88,9 +92,10 @@ local function initItemDetection()
         end)
     end
     if not ItemSpawnFolder then
-        warn("[Prestige] Item_Spawns/Items folder not found.")
+        warn("[Prestige] ERROR: Item_Spawns/Items folder not found.")
         return
     end
+    print("[Prestige] Item_Spawns/Items folder found.")
     for _, model in pairs(ItemSpawnFolder:GetChildren()) do
         pcall(function()
             if model:IsA("Model") then
@@ -115,12 +120,15 @@ end
 
 local SAFE_SPOT = CFrame.new(978, -42, -49)
 
-local function collectItem(itemInfo, index)
-    if not _config:Get("FarmEnabled") then return false end
+-- =====================
+-- COLLECT ITEM (identical to Farm)
+-- =====================
+local function CollectItem(itemInfo, index)
+    if not _config:Get("FarmEnabled") then return end
     local hrp = _movement:GetCharacter("HumanoidRootPart")
-    if not hrp then return false end
+    if not hrp then return end
     SpawnedItems[index] = nil
-    if _inventory:HasMax(itemInfo.Name) then return false end
+    if _inventory:HasMax(itemInfo.Name) then return end
     local bv = _movement:Freeze()
     _movement:SetNoclip(true)
     _movement:Teleport(CFrame.new(itemInfo.Position.X, itemInfo.Position.Y - 25, itemInfo.Position.Z))
@@ -133,34 +141,42 @@ local function collectItem(itemInfo, index)
     _movement:SetNoclip(false)
     lastItemTime = tick()
     print("[Prestige] Collected: " .. itemInfo.Name)
-    return true
 end
 
-local function farmItemFromGround(itemName, targetCount)
+-- =====================
+-- FARM ITEM FROM GROUND (identical to Farm's phase loop)
+-- =====================
+local function FarmItemFromGround(itemName, targetCount)
     local startTime = tick()
     while _inventory:Count(itemName) < targetCount do
         if not _config:Get("FarmEnabled") then return false end
         if _stopRequested then return false end
+        
+        -- Timeout check
         local elapsed = tick() - lastItemTime
         if elapsed > NO_ITEM_TIMEOUT then
             print("[Prestige] No items for " .. elapsed .. "s, hopping...")
             _serverHop:Hop()
             startTime = tick()
             lastItemTime = tick()
+            task.wait(2)
         end
+        
+        -- Snapshot current items
         local snapshot = {}
         for idx, info in pairs(SpawnedItems) do
             if info.Name == itemName then
                 table.insert(snapshot, {Index=idx, ItemInfo=info})
             end
         end
+        
         if #snapshot == 0 then
             print("[Prestige] Waiting for " .. itemName .. " to spawn...")
             task.wait(2)
         else
             for _, entry in ipairs(snapshot) do
                 if _inventory:Count(itemName) >= targetCount then break end
-                collectItem(entry.ItemInfo, entry.Index)
+                CollectItem(entry.ItemInfo, entry.Index)
             end
         end
         task.wait(1)
@@ -168,7 +184,10 @@ local function farmItemFromGround(itemName, targetCount)
     return true
 end
 
-local function useItem(itemName, worthinessLevel)
+-- =====================
+-- USE ITEM FROM BACKPACK (equip + activate)
+-- =====================
+local function UseItem(itemName, worthinessLevel)
     local item = Player.Backpack:FindFirstChild(itemName)
     if not item then
         print("[Prestige] Item not found: " .. itemName)
@@ -191,6 +210,9 @@ local function useItem(itemName, worthinessLevel)
     return false
 end
 
+-- =====================
+-- DIALOGUE & NPC KILLING (unchanged, but ensure no m1 spam on items)
+-- =====================
 local function endDialogue(npc, dialogue, option)
     local remoteEvent = _movement:GetCharacter("RemoteEvent")
     if remoteEvent then
@@ -202,7 +224,7 @@ local function endDialogue(npc, dialogue, option)
     end
 end
 
-local function killNPC(npcName, distance, onTick)
+local function killNPC(npcName, distance)
     local npc = workspace.Living:FindFirstChild(npcName)
     if not npc then
         print("[Prestige] NPC not found: " .. npcName)
@@ -224,13 +246,14 @@ local function killNPC(npcName, distance, onTick)
         if remoteFunc then
             remoteFunc:InvokeServer("Attack", "m1")
         end
-        if onTick then onTick() end
         task.wait(0.5)
     end
     return true
 end
 
--- Phases
+-- =====================
+-- PRESTIGE PHASES (using updated collection)
+-- =====================
 local function runStoryPhase()
     print("[Prestige] Phase: STORY")
     _movement:Teleport(CFrame.new(500, 2010, 500))
@@ -268,18 +291,18 @@ local function obtainStandPhase()
         return true
     end
     if _inventory:Count("Mysterious Arrow") < 1 then
-        if not farmItemFromGround("Mysterious Arrow", 1) then return false end
+        if not FarmItemFromGround("Mysterious Arrow", 1) then return false end
     end
-    useItem("Mysterious Arrow", "II")
+    UseItem("Mysterious Arrow", "II")
     repeat task.wait(1) until Player.PlayerStats.Stand.Value ~= "None" or _stopRequested
     if _stopRequested then return false end
     local newStand = Player.PlayerStats.Stand.Value
     if not KEEP_STANDS[newStand] then
         print("[Prestige] Got undesired stand: " .. newStand .. ", using Rokakaka")
         if _inventory:Count("Rokakaka") < 1 then
-            if not farmItemFromGround("Rokakaka", 1) then return false end
+            if not FarmItemFromGround("Rokakaka", 1) then return false end
         end
-        useItem("Rokakaka", "II")
+        UseItem("Rokakaka", "II")
         task.wait(2)
         return false
     end
@@ -315,6 +338,9 @@ local function prestigeCheckPhase()
     return false
 end
 
+-- =====================
+-- MAIN LOOP
+-- =====================
 function Prestige:Start()
     if isPrestigeRunning then
         print("[Prestige] Already running.")
@@ -335,7 +361,7 @@ function Prestige:Start()
     _stopRequested = false
     isPrestigeRunning = true
     print("[Prestige] Starting prestige automation...")
-    initItemDetection()
+    InitItemDetection()
     
     while not _stopRequested do
         if not _config:Get("FarmEnabled") then
@@ -354,16 +380,15 @@ function Prestige:Start()
             break
         end
         
-        -- Story phase
+        -- Story
         local storySuccess = runStoryPhase()
         if not storySuccess then
             if not _config:Get("FarmEnabled") then break end
             if _stopRequested then break end
             _serverHop:Hop()
             task.wait(5)
-            -- retry story phase
         else
-            -- Stand phase (may loop internally)
+            -- Stand
             local standSuccess = false
             while not standSuccess and not _stopRequested and _config:Get("FarmEnabled") do
                 standSuccess = obtainStandPhase()
@@ -374,21 +399,19 @@ function Prestige:Start()
             end
             if _stopRequested or not _config:Get("FarmEnabled") then break end
             
-            -- Level phase
+            -- Level
             local levelSuccess = levelUpPhase()
             if not levelSuccess then
                 if not _config:Get("FarmEnabled") then break end
                 if _stopRequested then break end
                 _serverHop:Hop()
                 task.wait(5)
-                -- continue loop, story may need to restart? Actually level phase failing is rare, just hop and retry leveling.
             else
-                -- Prestige check (may hop)
+                -- Prestige
                 prestigeCheckPhase()
-                -- after prestige, loop restarts from story (continue loop)
+                -- after prestige, loop restarts from story
             end
         end
-        
         task.wait(2)
     end
     
