@@ -81,7 +81,7 @@ local moduleFiles = {
     { key = "ServerHop", file = "ServerHop.lua" },
     { key = "Inventory", file = "Inventory.lua" },
     { key = "UI",        file = "UI.lua"        },
-    { key = "Prestige",  file = "Prestige.lua"  },
+    { key = "Prestige",  file = "Prestige.lua"  },   -- ADICIONADO
     { key = "Farm",      file = "Farm.lua"      },
 }
 
@@ -115,7 +115,7 @@ else
     ERR("CONFIG", "Config.Load() is missing.")
 end
 
--- Initialize modules
+-- Initialize modules (including Prestige)
 local initOrder = { "Webhook", "Movement", "ServerHop", "Inventory", "UI", "Prestige", "Farm" }
 
 LOG("INIT", "Initializing modules...")
@@ -131,7 +131,7 @@ for _, moduleName in ipairs(initOrder) do
     end
 end
 
--- Expose modules globally
+-- Expose modules globally for the manual UI
 _G.WhiteHubModules = Modules
 LOG("UI", "Manual UI will use _G.WhiteHubModules")
 
