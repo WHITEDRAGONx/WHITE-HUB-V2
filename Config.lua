@@ -1,5 +1,6 @@
 -- =====================
 -- Config.lua
+-- Handles all config loading, saving, and access.
 -- =====================
 
 local HttpService = game:GetService("HttpService")
@@ -15,8 +16,8 @@ local Defaults = {
     Phase1Notified = false,
     Phase3Notified = false,
     FarmEnabled = true,
-    AutoPrestige = false,
-    PrestigeMaxNotified = false,
+    AutoPrestige = false,          -- master toggle for Auto Prestige mode
+    PrestigeMaxNotified = false,   -- prevents repeated "max prestige" webhook
     SellItems  = {
         ["Gold Coin"]                       = true,
         ["Rokakaka"]                        = true,
