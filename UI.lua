@@ -391,23 +391,19 @@ function UI:Create()
     -- FARM PAGE
     MakeSection(FarmPage, "FARM SETTINGS")
     
-    -- MASTER TOGGLE: Enable Farm (with async webhook to prevent freezing)
+    -- MASTER TOGGLE: Enable Farm
     MakeToggle(FarmPage, "Enable Farm", _config and _config:Get("FarmEnabled"), function(v)
         if _config then _config:Set("FarmEnabled", v) end
         if not v then
             print("[UI] Farm disabled by user.")
-            task.spawn(function()
-                if _webhook then _webhook:SendFarmDisabled() end
-            end)
+            task.spawn(function() if _webhook then _webhook:SendFarmDisabled() end end)
         else
             print("[UI] Farm enabled. Resuming...")
-            task.spawn(function()
-                if _webhook then _webhook:SendFarmResumed() end
-            end)
+            task.spawn(function() if _webhook then _webhook:SendFarmResumed() end end)
         end
     end)
     
-    -- Auto Prestige Mode toggle
+    -- AUTO PRESTIGE MODE TOGGLE
     MakeToggle(FarmPage, "Auto Prestige Mode", _config and _config:Get("AutoPrestige"), function(v)
         if _config then _config:Set("AutoPrestige", v) end
         print("[UI] Auto Prestige Mode set to " .. tostring(v))
