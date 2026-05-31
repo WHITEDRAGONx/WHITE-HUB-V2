@@ -359,7 +359,7 @@ function Prestige:Start()
             if _stopRequested then break end
             _serverHop:Hop()
             task.wait(5)
-            continue
+            goto continue_loop
         end
         
         while not obtainStandPhase() do
@@ -375,13 +375,15 @@ function Prestige:Start()
             if _stopRequested then break end
             _serverHop:Hop()
             task.wait(5)
-            continue
+            goto continue_loop
         end
         
         if prestigeCheckPhase() then
-            continue
+            -- after prestige, restart from story
+            goto continue_loop
         end
         
+        ::continue_loop::
         task.wait(2)
     end
     
