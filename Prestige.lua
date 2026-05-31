@@ -1,7 +1,7 @@
 -- =====================
 -- Prestige.lua
 -- Auto prestige / leveling module for YBA.
--- Uses Farm:CollectItemFromGround() for item gathering.
+-- Uses Farm:CollectItemFromGround() for all item gathering.
 -- Does NOT sell or buy anything.
 -- =====================
 
@@ -72,7 +72,6 @@ local function StabilizeCharacter()
     task.wait(2)
 end
 
--- Item collection: delegate to Farm
 local function CollectItem(itemName, targetCount)
     if not _farm or not _farm.CollectItemFromGround then
         print("[Prestige] Cannot collect " .. itemName .. " - Farm collection not available")
@@ -81,7 +80,6 @@ local function CollectItem(itemName, targetCount)
     return _farm:CollectItemFromGround(itemName, targetCount)
 end
 
--- Use item (equip + activate) - no selling involved
 local function UseItem(itemName, withWorthiness)
     local item = Player.Backpack:FindFirstChild(itemName)
     if not item then
@@ -106,7 +104,6 @@ local function UseItem(itemName, withWorthiness)
     return true
 end
 
--- Dialogue
 local function endDialogue(npc, dialogue, option)
     local re = _movement:GetCharacter("RemoteEvent")
     if re then
@@ -118,7 +115,6 @@ local function endDialogue(npc, dialogue, option)
     end
 end
 
--- Kill NPC (no selling)
 local function killNPC(npcName, distance)
     local npc = workspace.Living:FindFirstChild(npcName)
     if not npc then
@@ -152,7 +148,6 @@ local function killNPC(npcName, distance)
     return true
 end
 
--- Phases
 local function runStoryPhase()
     print("[Prestige] Phase: STORY")
     _movement:Teleport(CFrame.new(500, 2010, 500))
@@ -192,7 +187,6 @@ local function obtainStandPhase()
         print("[Prestige] Already have desired stand: " .. currentStand)
         return true
     end
-    -- If unwanted stand, use Rokakaka (collect via Farm)
     if currentStand ~= "None" and not KEEP_STANDS[currentStand] then
         print("[Prestige] Unwanted stand: " .. currentStand .. " — using Rokakaka")
         if _inventory:Count("Rokakaka") < 1 then
@@ -203,7 +197,6 @@ local function obtainStandPhase()
         task.wait(3)
         return false
     end
-    -- Need Mysterious Arrow
     if _inventory:Count("Mysterious Arrow") < 1 then
         if not CollectItem("Mysterious Arrow", 1) then return false end
     end
