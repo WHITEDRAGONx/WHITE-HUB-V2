@@ -370,7 +370,7 @@ function Prestige:Start()
             disableAutoPrestige()
             break
         end
-        -- Hamon (optional, remove or keep)
+        -- Hamon (optional)
         if not obtainHamonPhase() then
             if stopRequested or not _config:Get("FarmEnabled") then break end
             _serverHop:Hop()
