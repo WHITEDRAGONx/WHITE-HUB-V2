@@ -354,36 +354,41 @@ function Prestige:Start()
             break
         end
         
-        if not runStoryPhase() then
+        -- Story phase
+        local storySuccess = runStoryPhase()
+        if not storySuccess then
             if not _config:Get("FarmEnabled") then break end
             if _stopRequested then break end
             _serverHop:Hop()
             task.wait(5)
-            goto continue_loop
+            -- retry story phase
+        else
+            -- Stand phase (may loop internally)
+            local standSuccess = false
+            while not standSuccess and not _stopRequested and _config:Get("FarmEnabled") do
+                standSuccess = obtainStandPhase()
+                if not standSuccess then
+                    _serverHop:Hop()
+                    task.wait(5)
+                end
+            end
+            if _stopRequested or not _config:Get("FarmEnabled") then break end
+            
+            -- Level phase
+            local levelSuccess = levelUpPhase()
+            if not levelSuccess then
+                if not _config:Get("FarmEnabled") then break end
+                if _stopRequested then break end
+                _serverHop:Hop()
+                task.wait(5)
+                -- continue loop, story may need to restart? Actually level phase failing is rare, just hop and retry leveling.
+            else
+                -- Prestige check (may hop)
+                prestigeCheckPhase()
+                -- after prestige, loop restarts from story (continue loop)
+            end
         end
         
-        while not obtainStandPhase() do
-            if not _config:Get("FarmEnabled") then break end
-            if _stopRequested then break end
-            _serverHop:Hop()
-            task.wait(5)
-        end
-        if _stopRequested then break
-        
-        if not levelUpPhase() then
-            if not _config:Get("FarmEnabled") then break end
-            if _stopRequested then break end
-            _serverHop:Hop()
-            task.wait(5)
-            goto continue_loop
-        end
-        
-        if prestigeCheckPhase() then
-            -- after prestige, restart from story
-            goto continue_loop
-        end
-        
-        ::continue_loop::
         task.wait(2)
     end
     
