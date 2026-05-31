@@ -318,7 +318,7 @@ function Prestige:Start()
     -- Check if already maxed (notify once)
     if isMaxPrestige() then
         if not _config:Get("PrestigeMaxNotified") then
-            if _webhook then _webhook:SendPrestigeComplete() end
+            if _webhook then task.spawn(function() _webhook:SendPrestigeComplete() end) end
             _config:Set("PrestigeMaxNotified", true)
         end
         showPopup("You are already Prestige 3, Level 50.\nAuto Prestige cannot be enabled.")
@@ -332,15 +332,17 @@ function Prestige:Start()
     initItemDetection()
     
     while true do
-        if not _config:Get("FarmEnabled") then
+        -- ===== WAIT IF FARM IS DISABLED =====
+        while not _config:Get("FarmEnabled") do
+            task.wait(1)
             print("[Prestige] Farm disabled, waiting...")
-            repeat task.wait(1) until _config:Get("FarmEnabled") or not isPrestigeRunning
             if not isPrestigeRunning then break end
         end
+        if not isPrestigeRunning then break end
         
         if isMaxPrestige() then
             if not _config:Get("PrestigeMaxNotified") then
-                if _webhook then _webhook:SendPrestigeComplete() end
+                if _webhook then task.spawn(function() _webhook:SendPrestigeComplete() end) end
                 _config:Set("PrestigeMaxNotified", true)
             end
             showPopup("Congratulations! You reached Prestige 3, Level 50.\nAuto Prestige will now disable.")
