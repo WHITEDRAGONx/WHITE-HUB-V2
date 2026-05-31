@@ -1,6 +1,8 @@
 -- =====================
 -- Farm.lua
 -- Main farm controller.
+-- Item collection uses no Freeze (only noclip + fast teleport)
+-- Batch collection: collect all items in snapshot before returning to safe spot
 -- =====================
 
 local Players           = game:GetService("Players")
@@ -171,25 +173,37 @@ end
 
 local SAFE_SPOT = CFrame.new(978, -42, -49)
 
+-- Batch collection (no Freeze, only noclip)
 local function CollectItem(itemInfo, index)
     if not _config:Get("FarmEnabled") then return end
     
     local hrp = _movement:GetCharacter("HumanoidRootPart")
     if not hrp then return end
+    
     SpawnedItems[index] = nil
     if _inventory:HasMax(itemInfo.Name) then return end
-    local bv = _movement:Freeze()
+    
+    local prompt = itemInfo.ProximityPrompt
+    if not prompt or not prompt.Parent or not prompt.Parent.Parent or prompt.Parent.Parent.Name ~= "Items" then
+        print("[Farm] Item already gone: " .. itemInfo.Name)
+        return
+    end
+    
     _movement:SetNoclip(true)
     _movement:Teleport(CFrame.new(itemInfo.Position.X, itemInfo.Position.Y - 25, itemInfo.Position.Z))
-    task.wait(.5)
-    pcall(function() fireproximityprompt(itemInfo.ProximityPrompt) end)
-    task.wait(.5)
-    _movement:Unfreeze(bv)
-    _movement:Teleport(SAFE_SPOT)
-    task.wait(.3)
-    _movement:SetNoclip(false)
+    task.wait(0.3)
+    pcall(function() fireproximityprompt(prompt) end)
+    task.wait(0.3)
+    
     lastItemTime = tick()
     print("[Farm] Collected: " .. itemInfo.Name)
+end
+
+local function CollectAllItemsInSnapshot(snapshot)
+    for _, entry in ipairs(snapshot) do
+        if not _config:Get("FarmEnabled") then break end
+        CollectItem(entry.ItemInfo, entry.Index)
+    end
 end
 
 local function DoHop()
@@ -245,12 +259,9 @@ local function Startup()
     task.wait(5)
 end
 
--- =====================
--- PUBLIC FUNCTION FOR PRESTIGE TO COLLECT ITEMS
--- =====================
+-- Public function for Prestige (uses same batch collection)
 function Farm:CollectItemFromGround(itemName, targetCount)
     print("[Farm] Collecting " .. targetCount .. "x " .. itemName .. " for Prestige")
-    local startTime = tick()
     while _inventory:Count(itemName) < targetCount do
         if not _config:Get("FarmEnabled") then return false end
         
@@ -258,7 +269,6 @@ function Farm:CollectItemFromGround(itemName, targetCount)
         if elapsed > NO_ITEM_TIMEOUT then
             print("[Farm] No " .. itemName .. " for " .. math.floor(elapsed) .. "s — hopping...")
             DoHop()
-            startTime = tick()
             lastItemTime = tick()
             task.wait(2)
         end
@@ -275,10 +285,10 @@ function Farm:CollectItemFromGround(itemName, targetCount)
             print("[Farm] Waiting for " .. itemName .. "... (" .. waiting .. "s until hop)")
             task.wait(2)
         else
-            for _, entry in ipairs(snapshot) do
-                if _inventory:Count(itemName) >= targetCount then break end
-                CollectItem(entry.ItemInfo, entry.Index)
-            end
+            CollectAllItemsInSnapshot(snapshot)
+            _movement:Teleport(SAFE_SPOT)
+            _movement:SetNoclip(false)
+            task.wait(0.5)
         end
         task.wait(1)
     end
@@ -348,10 +358,13 @@ function Farm:Start()
                 for idx, info in pairs(SpawnedItems) do
                     table.insert(snapshot, {Index=idx, ItemInfo=info})
                 end
-                for _, entry in ipairs(snapshot) do
-                    if _inventory:ShouldStopPhase1() or _config:Get("AutoPrestige") then break end
-                    CollectItem(entry.ItemInfo, entry.Index)
+                if #snapshot > 0 then
+                    CollectAllItemsInSnapshot(snapshot)
+                    _movement:Teleport(SAFE_SPOT)
+                    _movement:SetNoclip(false)
+                    task.wait(0.5)
                 end
+                
                 local elapsed = tick() - lastItemTime
                 if elapsed > NO_ITEM_TIMEOUT then
                     if _inventory:ShouldStopPhase1() or _config:Get("AutoPrestige") then break end
@@ -389,10 +402,13 @@ function Farm:Start()
                             if not isKeep then SpawnedItems[idx] = nil end
                         end
                     end
-                    for _, entry in ipairs(snapshot) do
-                        if _inventory:AllKeepItemsFull() or _config:Get("AutoPrestige") then break end
-                        CollectItem(entry.ItemInfo, entry.Index)
+                    if #snapshot > 0 then
+                        CollectAllItemsInSnapshot(snapshot)
+                        _movement:Teleport(SAFE_SPOT)
+                        _movement:SetNoclip(false)
+                        task.wait(0.5)
                     end
+                    
                     local elapsed = tick() - lastItemTime
                     if elapsed > NO_ITEM_TIMEOUT then
                         if _inventory:AllKeepItemsFull() or _config:Get("AutoPrestige") then break end
@@ -448,8 +464,11 @@ function Farm:Start()
                         SpawnedItems[idx] = nil
                     end
                 end
-                for _, entry in ipairs(snapshot) do
-                    CollectItem(entry.ItemInfo, entry.Index)
+                if #snapshot > 0 then
+                    CollectAllItemsInSnapshot(snapshot)
+                    _movement:Teleport(SAFE_SPOT)
+                    _movement:SetNoclip(false)
+                    task.wait(0.5)
                 end
                 task.wait(1)
             end
