@@ -13,11 +13,12 @@ local Defaults = {
     BuyLucky        = true,
     AutoSell        = true,
     WebhookURL      = "",
-    Phase1Notified  = false,  -- Prevents repeated "Phase 1 complete" webhook
-    Phase3Notified  = false,  -- Prevents repeated "All farming complete" webhook
-    FarmEnabled     = true,   -- Master toggle to pause/resume all farming actions
-    AutoPrestige    = false,  -- Toggle to enable/disable Auto Prestige module
-    PrestigeMaxNotified = false, -- Prevents repeated "Max prestige" webhook
+    Phase1Notified  = false,
+    Phase3Notified  = false,
+    FarmEnabled     = true,
+    AutoPrestige    = false,
+    PrestigeMaxNotified = false,
+    StayInPrivateServer = false,   -- NEW: prevents server hop in private servers
     SellItems = {
         ["Gold Coin"]                       = true,
         ["Rokakaka"]                        = true,
@@ -47,6 +48,7 @@ local function ApplyDefaults(data)
     if data.FarmEnabled    == nil then data.FarmEnabled    = Defaults.FarmEnabled    end
     if data.AutoPrestige   == nil then data.AutoPrestige   = Defaults.AutoPrestige   end
     if data.PrestigeMaxNotified == nil then data.PrestigeMaxNotified = Defaults.PrestigeMaxNotified end
+    if data.StayInPrivateServer == nil then data.StayInPrivateServer = Defaults.StayInPrivateServer end
     if type(data.SellItems) ~= "table" then data.SellItems = {} end
     for k, v in pairs(Defaults.SellItems) do
         if data.SellItems[k] == nil then data.SellItems[k] = v end
