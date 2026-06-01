@@ -403,7 +403,15 @@ function UI:Create()
         end
     end)
     
-    -- PRESTIGE SECTION
+    -- Auto Sell and Auto Buy Lucky inside FARM SETTINGS
+    MakeToggle(FarmPage, "Auto Sell", _config and _config:Get("AutoSell"), function(v)
+        if _config then _config:Set("AutoSell", v) end
+    end)
+    MakeToggle(FarmPage, "Auto Buy Lucky", _config and _config:Get("BuyLucky"), function(v)
+        if _config then _config:Set("BuyLucky", v) end
+    end)
+
+    -- PRESTIGE SECTION (only the Auto Prestige toggle)
     MakeSection(FarmPage, "PRESTIGE")
     MakeToggle(FarmPage, "Auto Prestige", _config and _config:Get("AutoPrestige"), function(v)
         if _config then _config:Set("AutoPrestige", v) end
@@ -415,12 +423,6 @@ function UI:Create()
         end
     end)
 
-    MakeToggle(FarmPage, "Auto Sell", _config and _config:Get("AutoSell"), function(v)
-        if _config then _config:Set("AutoSell", v) end
-    end)
-    MakeToggle(FarmPage, "Auto Buy Lucky", _config and _config:Get("BuyLucky"), function(v)
-        if _config then _config:Set("BuyLucky", v) end
-    end)
     AutoCanvas(FarmPage)
 
     -- ITEMS PAGE
