@@ -158,7 +158,6 @@ local function MakeToggle(parent, labelText, default, onChanged)
         onChanged(enabled)
     end)
 
-    -- Store toggle for external access
     toggleObjects[labelText] = {
         holder = holder,
         track = track,
@@ -403,7 +402,13 @@ function UI:Create()
         end
     end)
     
-    -- Auto Sell and Auto Buy Lucky inside FARM SETTINGS
+    -- Stay In Private Server toggle
+    MakeToggle(FarmPage, "Stay In Private Server", _config and _config:Get("StayInPrivateServer"), function(v)
+        if _config then _config:Set("StayInPrivateServer", v) end
+        print("[UI] StayInPrivateServer set to " .. tostring(v))
+    end)
+    
+    -- Auto Sell and Auto Buy Lucky
     MakeToggle(FarmPage, "Auto Sell", _config and _config:Get("AutoSell"), function(v)
         if _config then _config:Set("AutoSell", v) end
     end)
@@ -411,7 +416,7 @@ function UI:Create()
         if _config then _config:Set("BuyLucky", v) end
     end)
 
-    -- PRESTIGE SECTION (only the Auto Prestige toggle)
+    -- PRESTIGE SECTION
     MakeSection(FarmPage, "PRESTIGE")
     MakeToggle(FarmPage, "Auto Prestige", _config and _config:Get("AutoPrestige"), function(v)
         if _config then _config:Set("AutoPrestige", v) end
@@ -425,7 +430,7 @@ function UI:Create()
 
     AutoCanvas(FarmPage)
 
-    -- ITEMS PAGE
+    -- ITEMS PAGE (unchanged)
     MakeSection(ItemsPage, "SELL ITEMS")
     local itemOrder = { "Gold Coin","Diamond","Rokakaka","Pure Rokakaka","Mysterious Arrow","Lucky Arrow","Lucky Stone Mask","Ancient Scroll","Caesar's Headband","Stone Mask","Rib Cage of The Saint's Corpse","Quinton's Glove","Zeppeli's Hat","Clackers","Steel Ball","Dio's Diary", }
     for _, name in ipairs(itemOrder) do
@@ -437,7 +442,7 @@ function UI:Create()
     end
     AutoCanvas(ItemsPage)
 
-    -- WEBHOOK PAGE
+    -- WEBHOOK PAGE (unchanged)
     MakeSection(WebhookPage, "DISCORD WEBHOOK")
     local whHolder = Instance.new("Frame")
     whHolder.Size             = UDim2.new(1,-4,0,42)
@@ -471,7 +476,6 @@ function UI:Create()
         whBox.BackgroundColor3 = Color3.fromRGB(40,40,55)
     end)
 
-    -- Reset Webhook Flags Button
     local resetBtn = Instance.new("TextButton")
     resetBtn.Size = UDim2.new(1,-4,0,36)
     resetBtn.Position = UDim2.new(0,0,0,50)
@@ -488,7 +492,7 @@ function UI:Create()
         if _config then
             _config:Set("Phase1Notified", false)
             _config:Set("Phase3Notified", false)
-            print("[UI] Webhook flags reset. Phase1 and Phase3 will be re‑sent on next completion.")
+            print("[UI] Webhook flags reset.")
             if _webhook then
                 _webhook:Send("🔄 **Webhook flags reset**\nPlayer: `" .. Player.Name .. "`\nPhase1 and Phase3 notifications will be re‑sent on next completion.")
             end
@@ -503,7 +507,7 @@ function UI:Create()
 
     AutoCanvas(WebhookPage)
 
-    -- CREDITS PAGE
+    -- CREDITS PAGE (unchanged)
     MakeSection(CreditsPage, "WHITE HUB")
     local creditLabel = Instance.new("TextLabel")
     creditLabel.Size             = UDim2.new(1,-4,0,44)
