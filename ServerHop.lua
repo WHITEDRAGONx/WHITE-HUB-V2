@@ -14,6 +14,7 @@ local PlaceID = game.PlaceId
 
 local ServerHop = {}
 local _movement = nil
+local _config   = nil
 
 local AllIDs        = {}
 local foundAnything = ""
@@ -84,9 +85,19 @@ end
 
 function ServerHop:Init(Modules)
     _movement = Modules.Movement
+    _config   = Modules.Config
 end
 
 function ServerHop:Hop()
+    -- Check if we are in a private server and StayInPrivateServer is true
+    if _config and _config:Get("StayInPrivateServer") then
+        local privateId = game.PrivateServerId
+        if privateId and privateId ~= "" then
+            print("[ServerHop] In a private server and StayInPrivateServer is ON – skipping hop.")
+            return
+        end
+    end
+
     print("[ServerHop] Hopping to a new server...")
     pcall(function()
         TPReturner()
