@@ -1,31 +1,24 @@
 -- =====================
 -- AutoPrestige.lua
--- Original standalone script by WHITE DRAGON.
--- Integrated into WHITE HUB via getgenv().AutoPrestigeEnabled flag.
--- Webhook integration added for max prestige notification.
+-- Standalone prestige script integrated into WHITE HUB.
 -- =====================
 
--- =====================
--- ENABLE / DISABLE GUARD
--- Set by UI toggle via getgenv().AutoPrestigeEnabled
--- =====================
 if getgenv().AutoPrestigeEnabled == nil then
     getgenv().AutoPrestigeEnabled = false
 end
 
--- Wait until the toggle is turned on before doing anything
 repeat task.wait(1) until getgenv().AutoPrestigeEnabled == true
 
 print("[AutoPrestige] Enabled — starting up...")
 task.wait(8.0)
 
 getgenv().standList = {
-    ["The World"]              = true,
-    ["Star Platinum"]          = true,
+    ["The World"] = true,
+    ["Star Platinum"] = true,
     ["Star Platinum: The World"] = true,
-    ["Crazy Diamond"]          = true,
-    ["King Crimson"]           = true,
-    ["King Crimson Requiem"]   = true,
+    ["Crazy Diamond"] = true,
+    ["King Crimson"] = true,
+    ["King Crimson Requiem"] = true,
 }
 getgenv().waitUntilCollect = 0.6
 getgenv().sortOrder        = "Asc"
@@ -34,7 +27,7 @@ getgenv().autoRequiem      = true
 getgenv().NPCTimeOut       = 15
 getgenv().HamonCharge      = 90
 
--- Webhook linha removida (não utilizada)
+-- No hardcoded webhook – uses WHITE HUB's webhook module.
 
 game:GetService("CoreGui").DescendantAdded:Connect(function(child)
     if child.Name == "ErrorPrompt" then
@@ -59,7 +52,6 @@ local dontTPOnDeath = true
 
 if LocalPlayer.PlayerStats.Level.Value == 50 then
     while true do
-        -- Check if max prestige has already been notified
         local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
         if config and not config:Get("PrestigeMaxNotified") then
             local webhook = _G.WhiteHubModules and _G.WhiteHubModules.Webhook
@@ -491,7 +483,6 @@ local function allocateSkills()
 end
 
 local function autoStory()
-    -- Guard: stop if disabled
     if not getgenv().AutoPrestigeEnabled then
         print("[AutoPrestige] Disabled — autoStory() returning.")
         return
@@ -708,7 +699,6 @@ local function autoStory()
             Character.FocusCam:Destroy()
             pcall(function() delfile("AutoPres3_" .. LocalPlayer.Name .. ".txt") end)
         end
-        -- Check if we reached max prestige (Prestige 3, Level 50)
         if LocalPlayer.PlayerStats.Prestige.Value >= 3 then
             local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
             if config and not config:Get("PrestigeMaxNotified") then
@@ -741,7 +731,6 @@ local function autoStory()
             Character.FocusCam:Destroy()
             pcall(function() delfile("AutoPres3_" .. LocalPlayer.Name .. ".txt") end)
         end
-        -- Same max prestige check here (redundant but safe)
         if LocalPlayer.PlayerStats.Prestige.Value >= 3 then
             local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
             if config and not config:Get("PrestigeMaxNotified") then
@@ -755,9 +744,7 @@ local function autoStory()
     end
 end
 
--- =====================
--- PRESTIGE CHECKER LOOP
--- =====================
+-- Prestige checker loop
 task.spawn(function()
     while task.wait(3) do
         if not getgenv().AutoPrestigeEnabled then
@@ -778,9 +765,7 @@ task.spawn(function()
     end
 end)
 
--- =====================
--- DEATH / RESPAWN HANDLER
--- =====================
+-- Death / respawn handler
 game.Workspace.Living.ChildAdded:Connect(function(character)
     if character.Name == LocalPlayer.Name then
         if not getgenv().AutoPrestigeEnabled then return end
@@ -796,9 +781,7 @@ game.Workspace.Living.ChildAdded:Connect(function(character)
     end
 end)
 
--- =====================
--- NOCLIP ON RESPAWN
--- =====================
+-- Noclip on respawn
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(1)
     for _, child in pairs(LocalPlayer.Character:GetDescendants()) do
@@ -811,8 +794,6 @@ end)
 -- Raycast noclip bypass
 hookfunction(workspace.Raycast, function() return end)
 
--- =====================
--- ENTRY POINT
--- =====================
+-- Entry point
 print("[AutoPrestige] Starting autoStory()...")
 autoStory()
