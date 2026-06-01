@@ -1,7 +1,7 @@
 -- =====================
 -- AutoPrestige.lua
 -- Standalone prestige script integrated into WHITE HUB.
--- Automatically disables itself when Prestige 3, Level 50 is reached.
+-- Now respects StayInPrivateServer flag.
 -- =====================
 
 if getgenv().AutoPrestigeEnabled == nil then
@@ -28,8 +28,6 @@ getgenv().autoRequiem      = true
 getgenv().NPCTimeOut       = 15
 getgenv().HamonCharge      = 90
 
--- No hardcoded webhook – uses WHITE HUB's webhook module.
-
 game:GetService("CoreGui").DescendantAdded:Connect(function(child)
     if child.Name == "ErrorPrompt" then
         local GrabError = child:FindFirstChild("ErrorMessage", true)
@@ -51,7 +49,6 @@ local HRP   = Character.PrimaryPart
 local part
 local dontTPOnDeath = true
 
--- Helper to disable Auto Prestige
 local function disableAutoPrestige()
     local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
     if config then
@@ -64,12 +61,10 @@ local function disableAutoPrestige()
     end
 end
 
--- Check if already max prestige
 local function isMaxPrestige()
     return LocalPlayer.PlayerStats.Prestige.Value >= 3 and LocalPlayer.PlayerStats.Level.Value >= 50
 end
 
--- If already max at start, disable and exit
 if isMaxPrestige() then
     local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
     if config and not config:Get("PrestigeMaxNotified") then
@@ -148,7 +143,7 @@ Hook = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
 end))
 
 -- =====================
--- SERVER HOP
+-- SERVER HOP (with private server detection)
 -- =====================
 local PlaceID       = game.PlaceId
 local AllIDs        = {}
@@ -205,12 +200,25 @@ local function TPReturner()
     end
 end
 
+-- Teleport loop with private server detection
 local function Teleport()
     while task.wait() do
         if not getgenv().AutoPrestigeEnabled then
             print("[AutoPrestige] Disabled — stopping server hop loop.")
             return
         end
+
+        -- Check private server flag from WHITE HUB config
+        local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
+        if config and config:Get("StayInPrivateServer") then
+            local privateId = game.PrivateServerId
+            if privateId and privateId ~= "" then
+                print("[AutoPrestige] In a private server and StayInPrivateServer is ON – skipping hop.")
+                task.wait(5)
+                goto continue_loop
+            end
+        end
+
         pcall(function()
             if getgenv().lessPing then
                 game:GetService("TeleportService"):Teleport(2809202155, game:GetService("Players").LocalPlayer)
@@ -224,6 +232,8 @@ local function Teleport()
                 TPReturner()
             end
         end)
+
+        ::continue_loop::
     end
 end
 
@@ -719,7 +729,6 @@ local function autoStory()
             pcall(function() delfile("AutoPres3_" .. LocalPlayer.Name .. ".txt") end)
         end
         if LocalPlayer.PlayerStats.Prestige.Value >= 3 then
-            -- Auto disable when max prestige reached
             local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
             if config then
                 if not config:Get("PrestigeMaxNotified") then
@@ -729,10 +738,8 @@ local function autoStory()
                     end
                     config:Set("PrestigeMaxNotified", true)
                 end
-                -- Disable the Auto Prestige toggle
                 disableAutoPrestige()
             end
-            -- Exit the autoStory recursion and let the main loop finish
             return
         end
 
@@ -758,7 +765,6 @@ local function autoStory()
             pcall(function() delfile("AutoPres3_" .. LocalPlayer.Name .. ".txt") end)
         end
         if LocalPlayer.PlayerStats.Prestige.Value >= 3 then
-            -- Same auto disable (redundant but safe)
             local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
             if config then
                 if not config:Get("PrestigeMaxNotified") then
@@ -775,7 +781,7 @@ local function autoStory()
     end
 end
 
--- Prestige checker loop (also will exit when disabled)
+-- Prestige checker loop
 task.spawn(function()
     while task.wait(3) do
         if not getgenv().AutoPrestigeEnabled then
