@@ -192,9 +192,21 @@ local function CollectItem(itemInfo, index)
     print("[Farm] Collected: " .. itemInfo.Name)
 end
 
+-- =====================
+-- DoHop with private server detection
+-- =====================
 local function DoHop()
     if not _config:Get("FarmEnabled") then return end
-    
+
+    -- Skip hopping if StayInPrivateServer is ON and we are in a private server
+    if _config:Get("StayInPrivateServer") then
+        local privateId = game.PrivateServerId
+        if privateId and privateId ~= "" then
+            print("[Farm] In a private server and StayInPrivateServer is ON – skipping hop.")
+            return
+        end
+    end
+
     print("[Farm] Server dry — selling, buying, then hopping...")
     _inventory:SellAll()
     _inventory:BuyLucky()
@@ -256,19 +268,18 @@ function Farm:Start()
     print("[Farm] Farm loop started.")
 
     while true do
-        -- Wait if farm is globally disabled (Enable Farm toggle)
         while not _config:Get("FarmEnabled") do
             task.wait(1)
             print("[Farm] Farm disabled by user. Waiting...")
         end
 
-        -- If Auto Prestige is enabled, idle here (do nothing)
+        -- If Auto Prestige is enabled, idle here
         while _config:Get("AutoPrestige") do
             task.wait(1)
             if not _config:Get("FarmEnabled") then break end
         end
 
-        -- Reset timer to avoid immediate hop after waking up
+        -- Reset timer
         lastItemTime = tick()
         _config:Set("Phase1Notified", false)
         _config:Set("Phase3Notified", false)
