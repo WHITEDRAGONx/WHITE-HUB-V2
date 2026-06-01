@@ -82,7 +82,7 @@ local moduleFiles = {
     { key = "Inventory", file = "Inventory.lua" },
     { key = "UI",        file = "UI.lua"        },
     { key = "Farm",      file = "Farm.lua"      },
-    -- AutoPrestige is loaded separately below (standalone script, not a module)
+    -- AutoPrestige is loaded separately as a standalone script (not a module)
 }
 
 local allLoaded = true
@@ -115,7 +115,7 @@ else
     ERR("CONFIG", "Config.Load() is missing.")
 end
 
--- Initialize modules (including UI)
+-- Initialize modules
 local initOrder = { "Webhook", "Movement", "ServerHop", "Inventory", "UI", "Farm" }
 
 LOG("INIT", "Initializing modules...")
@@ -131,7 +131,7 @@ for _, moduleName in ipairs(initOrder) do
     end
 end
 
--- Expose modules globally for the manual UI
+-- Expose modules globally for manual UI
 _G.WhiteHubModules = Modules
 LOG("UI", "Manual UI will use _G.WhiteHubModules")
 
@@ -167,14 +167,10 @@ LOG("BOOT", "✅ WHITE HUB — all systems running (manual UI active).")
 
 -- =====================
 -- AUTO PRESTIGE LOADER
--- AutoPrestige.lua is a standalone script, not a module.
--- It is loaded once in a task.spawn and polls getgenv().AutoPrestigeEnabled.
--- It will wait indefinitely until the toggle is turned on via the UI.
--- Disabling the toggle sets the flag to false, causing internal loops to exit.
 -- =====================
 LOG("AUTOPRESTIGE", "Launching AutoPrestige loader...")
 
--- Sync the initial flag from config before AutoPrestige.lua starts polling
+-- Set initial flag from config
 getgenv().AutoPrestigeEnabled = Modules.Config:Get("AutoPrestige") == true
 
 task.spawn(function()
