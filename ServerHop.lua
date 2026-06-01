@@ -89,13 +89,10 @@ function ServerHop:Init(Modules)
 end
 
 function ServerHop:Hop()
-    -- Check if we are in a private server and StayInPrivateServer is true
+    -- If StayInPrivateServer is ON, skip hopping completely
     if _config and _config:Get("StayInPrivateServer") then
-        local privateId = game.PrivateServerId
-        if privateId and privateId ~= "" then
-            print("[ServerHop] In a private server and StayInPrivateServer is ON – skipping hop.")
-            return
-        end
+        print("[ServerHop] StayInPrivateServer is ON – skipping hop.")
+        return
     end
 
     print("[ServerHop] Hopping to a new server...")
