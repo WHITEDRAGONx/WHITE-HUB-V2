@@ -143,7 +143,7 @@ Hook = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
 end))
 
 -- =====================
--- SERVER HOP (with private server detection)
+-- SERVER HOP (with StayInPrivateServer flag)
 -- =====================
 local PlaceID       = game.PlaceId
 local AllIDs        = {}
@@ -200,7 +200,7 @@ local function TPReturner()
     end
 end
 
--- Teleport loop with private server detection
+-- Modified Teleport function: only uses StayInPrivateServer flag (no PrivateServerId)
 local function Teleport()
     while task.wait() do
         if not getgenv().AutoPrestigeEnabled then
@@ -211,12 +211,9 @@ local function Teleport()
         -- Check private server flag from WHITE HUB config
         local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
         if config and config:Get("StayInPrivateServer") then
-            local privateId = game.PrivateServerId
-            if privateId and privateId ~= "" then
-                print("[AutoPrestige] In a private server and StayInPrivateServer is ON – skipping hop.")
-                task.wait(5)
-                goto continue_loop
-            end
+            print("[AutoPrestige] StayInPrivateServer is ON – skipping hop.")
+            task.wait(5)
+            goto continue_loop
         end
 
         pcall(function()
@@ -244,7 +241,7 @@ part.Size     = Vector3.new(25, 1, 25)
 part.Position = Vector3.new(500, 2000, 500)
 
 -- =====================
--- ITEM FINDING
+-- ITEM FINDING (unchanged)
 -- =====================
 local function findItem(itemName)
     local ItemsDict = {
