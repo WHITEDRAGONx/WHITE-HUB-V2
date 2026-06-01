@@ -192,14 +192,11 @@ local function CollectItem(itemInfo, index)
     print("[Farm] Collected: " .. itemInfo.Name)
 end
 
--- Helper to check if we should skip hopping (with debug logs)
+-- Helper to check if we should skip hopping (based solely on UI toggle)
 local function shouldSkipHop()
     local stay = _config:Get("StayInPrivateServer")
-    local privateId = game.PrivateServerId
-    local isPrivate = (privateId and privateId ~= "")
-    print("[Farm] shouldSkipHop: stay=" .. tostring(stay) .. ", privateId='" .. tostring(privateId) .. "', isPrivate=" .. tostring(isPrivate))
-    if stay and isPrivate then
-        print("[Farm] Skipping hop because StayInPrivateServer is ON and this is a private server.")
+    if stay then
+        print("[Farm] StayInPrivateServer is ON – skipping all hops.")
         return true
     end
     return false
