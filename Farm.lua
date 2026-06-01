@@ -255,7 +255,6 @@ function Farm:Start()
 
     print("[Farm] Farm loop started.")
 
-    -- Main loop: runs until script is stopped
     while true do
         -- Wait if farm is globally disabled (Enable Farm toggle)
         while not _config:Get("FarmEnabled") do
@@ -263,11 +262,9 @@ function Farm:Start()
             print("[Farm] Farm disabled by user. Waiting...")
         end
 
-        -- If Auto Prestige is enabled, stay in this idle loop and do nothing
-        -- This prevents farm and prestige from running simultaneously
+        -- If Auto Prestige is enabled, idle here (do nothing)
         while _config:Get("AutoPrestige") do
             task.wait(1)
-            -- If farm gets disabled while waiting, break out so we can check again
             if not _config:Get("FarmEnabled") then break end
         end
 
@@ -359,9 +356,7 @@ function Farm:Start()
         print("[Farm] >>> Phase 3 — fully stopped. Idling, only collecting Lucky Arrows.")
         updateConfigSnapshot()
 
-        while not _config:Get("AutoPrestige") do
-            if not _config:Get("FarmEnabled") then break end
-            
+        while not _config:Get("AutoPrestige") and _config:Get("FarmEnabled") do
             if not _inventory:ShouldStopPhase1() then
                 print("[Farm] >>> Lucky count or money dropped below minimum — resetting flags and returning to Phase 1.")
                 _config:Set("Phase1Notified", false)
