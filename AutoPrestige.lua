@@ -2,14 +2,12 @@
 -- AutoPrestige.lua
 -- Original standalone script by WHITE DRAGON.
 -- Integrated into WHITE HUB via getgenv().AutoPrestigeEnabled flag.
--- Minimum modifications: only the enable/disable guard was added.
--- Internal logic is fully preserved.
+-- Webhook integration added for max prestige notification.
 -- =====================
 
 -- =====================
 -- ENABLE / DISABLE GUARD
 -- Set by UI toggle via getgenv().AutoPrestigeEnabled
--- If false when the script starts, wait until enabled.
 -- =====================
 if getgenv().AutoPrestigeEnabled == nil then
     getgenv().AutoPrestigeEnabled = false
@@ -29,13 +27,14 @@ getgenv().standList = {
     ["King Crimson"]           = true,
     ["King Crimson Requiem"]   = true,
 }
-getgenv().waitUntilCollect = 0.6  -- Increase if getting kicked a lot
-getgenv().sortOrder        = "Asc" -- "Desc" for fewer players, "Asc" for more
-getgenv().lessPing         = false -- Enable for lower ping servers
-getgenv().autoRequiem      = true  -- Enable for auto requiem
-getgenv().NPCTimeOut       = 15    -- Timeout for NPC not spawning (seconds)
-getgenv().HamonCharge      = 90    -- Charge Hamon after every kill
-getgenv().webhook          = "https://discord.com/api/webhooks/1381173563612074085/mSPyu9_6PXn2TwNIzairPJqHnRgORN-YUGQNaj2h-f3ZMWLRxck9TCKdxbDIx6oejUOq"
+getgenv().waitUntilCollect = 0.6
+getgenv().sortOrder        = "Asc"
+getgenv().lessPing         = false
+getgenv().autoRequiem      = true
+getgenv().NPCTimeOut       = 15
+getgenv().HamonCharge      = 90
+
+-- Webhook linha removida (não utilizada)
 
 game:GetService("CoreGui").DescendantAdded:Connect(function(child)
     if child.Name == "ErrorPrompt" then
@@ -60,6 +59,15 @@ local dontTPOnDeath = true
 
 if LocalPlayer.PlayerStats.Level.Value == 50 then
     while true do
+        -- Check if max prestige has already been notified
+        local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
+        if config and not config:Get("PrestigeMaxNotified") then
+            local webhook = _G.WhiteHubModules and _G.WhiteHubModules.Webhook
+            if webhook and webhook.SendPrestigeComplete then
+                webhook:SendPrestigeComplete()
+            end
+            config:Set("PrestigeMaxNotified", true)
+        end
         print("[AutoPrestige] Level 50 — Auto Prestige disabled.")
         task.wait(9999999)
     end
@@ -188,7 +196,6 @@ end
 
 local function Teleport()
     while task.wait() do
-        -- Stop hopping if toggle was disabled
         if not getgenv().AutoPrestigeEnabled then
             print("[AutoPrestige] Disabled — stopping server hop loop.")
             return
@@ -209,7 +216,6 @@ local function Teleport()
     end
 end
 
--- Anchor part for stand farming
 part = Instance.new("Part")
 part.Parent   = workspace
 part.Anchored = true
@@ -702,6 +708,17 @@ local function autoStory()
             Character.FocusCam:Destroy()
             pcall(function() delfile("AutoPres3_" .. LocalPlayer.Name .. ".txt") end)
         end
+        -- Check if we reached max prestige (Prestige 3, Level 50)
+        if LocalPlayer.PlayerStats.Prestige.Value >= 3 then
+            local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
+            if config and not config:Get("PrestigeMaxNotified") then
+                local webhook = _G.WhiteHubModules and _G.WhiteHubModules.Webhook
+                if webhook and webhook.SendPrestigeComplete then
+                    webhook:SendPrestigeComplete()
+                end
+                config:Set("PrestigeMaxNotified", true)
+            end
+        end
 
     elseif questPanel:FindFirstChild("Take down 3 vampires")
     and LocalPlayer.PlayerStats.Spec.Value ~= "None"
@@ -724,6 +741,17 @@ local function autoStory()
             Character.FocusCam:Destroy()
             pcall(function() delfile("AutoPres3_" .. LocalPlayer.Name .. ".txt") end)
         end
+        -- Same max prestige check here (redundant but safe)
+        if LocalPlayer.PlayerStats.Prestige.Value >= 3 then
+            local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
+            if config and not config:Get("PrestigeMaxNotified") then
+                local webhook = _G.WhiteHubModules and _G.WhiteHubModules.Webhook
+                if webhook and webhook.SendPrestigeComplete then
+                    webhook:SendPrestigeComplete()
+                end
+                config:Set("PrestigeMaxNotified", true)
+            end
+        end
     end
 end
 
@@ -732,7 +760,6 @@ end
 -- =====================
 task.spawn(function()
     while task.wait(3) do
-        -- Guard: stop loop if disabled
         if not getgenv().AutoPrestigeEnabled then
             print("[AutoPrestige] Disabled — stopping prestige checker loop.")
             break
