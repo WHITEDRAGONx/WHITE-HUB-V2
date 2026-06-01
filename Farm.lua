@@ -192,19 +192,24 @@ local function CollectItem(itemInfo, index)
     print("[Farm] Collected: " .. itemInfo.Name)
 end
 
--- =====================
--- DoHop with private server detection
--- =====================
-local function DoHop()
-    if not _config:Get("FarmEnabled") then return end
-
-    -- Skip hopping if StayInPrivateServer is ON and we are in a private server
+-- Helper to check if we should skip hopping (private server with flag on)
+local function shouldSkipHop()
     if _config:Get("StayInPrivateServer") then
         local privateId = game.PrivateServerId
         if privateId and privateId ~= "" then
-            print("[Farm] In a private server and StayInPrivateServer is ON – skipping hop.")
-            return
+            return true
         end
+    end
+    return false
+end
+
+local function DoHop()
+    if not _config:Get("FarmEnabled") then return end
+
+    -- Skip hopping if in a private server with StayInPrivateServer ON
+    if shouldSkipHop() then
+        print("[Farm] Skipping hop: private server + StayInPrivateServer is ON.")
+        return
     end
 
     print("[Farm] Server dry — selling, buying, then hopping...")
@@ -342,8 +347,7 @@ function Farm:Start()
                 if elapsed > NO_ITEM_TIMEOUT then
                     if _inventory:AllKeepItemsFull() or _config:Get("AutoPrestige") then break end
                     print("[Farm] Phase 2 — server dry, hopping...")
-                    _serverHop:Hop()
-                    lastItemTime = tick()
+                    DoHop()
                 else
                     if #snapshot == 0 then
                         print("[Farm] Waiting for keep-items... (" .. math.floor(NO_ITEM_TIMEOUT - elapsed) .. "s until hop)")
