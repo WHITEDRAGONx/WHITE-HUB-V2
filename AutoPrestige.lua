@@ -1,6 +1,7 @@
 -- =====================
 -- AutoPrestige.lua
 -- Standalone prestige script integrated into WHITE HUB.
+-- Automatically disables itself when Prestige 3, Level 50 is reached.
 -- =====================
 
 if getgenv().AutoPrestigeEnabled == nil then
@@ -50,19 +51,37 @@ local HRP   = Character.PrimaryPart
 local part
 local dontTPOnDeath = true
 
-if LocalPlayer.PlayerStats.Level.Value == 50 then
-    while true do
-        local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
-        if config and not config:Get("PrestigeMaxNotified") then
-            local webhook = _G.WhiteHubModules and _G.WhiteHubModules.Webhook
-            if webhook and webhook.SendPrestigeComplete then
-                webhook:SendPrestigeComplete()
-            end
-            config:Set("PrestigeMaxNotified", true)
-        end
-        print("[AutoPrestige] Level 50 — Auto Prestige disabled.")
-        task.wait(9999999)
+-- Helper to disable Auto Prestige
+local function disableAutoPrestige()
+    local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
+    if config then
+        config:Set("AutoPrestige", false)
     end
+    getgenv().AutoPrestigeEnabled = false
+    local ui = _G.WhiteHubModules and _G.WhiteHubModules.UI
+    if ui and ui.SetToggleValue then
+        ui:SetToggleValue("Auto Prestige", false)
+    end
+end
+
+-- Check if already max prestige
+local function isMaxPrestige()
+    return LocalPlayer.PlayerStats.Prestige.Value >= 3 and LocalPlayer.PlayerStats.Level.Value >= 50
+end
+
+-- If already max at start, disable and exit
+if isMaxPrestige() then
+    local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
+    if config and not config:Get("PrestigeMaxNotified") then
+        local webhook = _G.WhiteHubModules and _G.WhiteHubModules.Webhook
+        if webhook and webhook.SendPrestigeComplete then
+            webhook:SendPrestigeComplete()
+        end
+        config:Set("PrestigeMaxNotified", true)
+    end
+    print("[AutoPrestige] Already max prestige. Disabling.")
+    disableAutoPrestige()
+    while true do task.wait(9999999) end
 end
 
 if not LocalPlayer.PlayerGui:FindFirstChild("HUD") then
@@ -700,14 +719,21 @@ local function autoStory()
             pcall(function() delfile("AutoPres3_" .. LocalPlayer.Name .. ".txt") end)
         end
         if LocalPlayer.PlayerStats.Prestige.Value >= 3 then
+            -- Auto disable when max prestige reached
             local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
-            if config and not config:Get("PrestigeMaxNotified") then
-                local webhook = _G.WhiteHubModules and _G.WhiteHubModules.Webhook
-                if webhook and webhook.SendPrestigeComplete then
-                    webhook:SendPrestigeComplete()
+            if config then
+                if not config:Get("PrestigeMaxNotified") then
+                    local webhook = _G.WhiteHubModules and _G.WhiteHubModules.Webhook
+                    if webhook and webhook.SendPrestigeComplete then
+                        webhook:SendPrestigeComplete()
+                    end
+                    config:Set("PrestigeMaxNotified", true)
                 end
-                config:Set("PrestigeMaxNotified", true)
+                -- Disable the Auto Prestige toggle
+                disableAutoPrestige()
             end
+            -- Exit the autoStory recursion and let the main loop finish
+            return
         end
 
     elseif questPanel:FindFirstChild("Take down 3 vampires")
@@ -732,19 +758,24 @@ local function autoStory()
             pcall(function() delfile("AutoPres3_" .. LocalPlayer.Name .. ".txt") end)
         end
         if LocalPlayer.PlayerStats.Prestige.Value >= 3 then
+            -- Same auto disable (redundant but safe)
             local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
-            if config and not config:Get("PrestigeMaxNotified") then
-                local webhook = _G.WhiteHubModules and _G.WhiteHubModules.Webhook
-                if webhook and webhook.SendPrestigeComplete then
-                    webhook:SendPrestigeComplete()
+            if config then
+                if not config:Get("PrestigeMaxNotified") then
+                    local webhook = _G.WhiteHubModules and _G.WhiteHubModules.Webhook
+                    if webhook and webhook.SendPrestigeComplete then
+                        webhook:SendPrestigeComplete()
+                    end
+                    config:Set("PrestigeMaxNotified", true)
                 end
-                config:Set("PrestigeMaxNotified", true)
+                disableAutoPrestige()
             end
+            return
         end
     end
 end
 
--- Prestige checker loop
+-- Prestige checker loop (also will exit when disabled)
 task.spawn(function()
     while task.wait(3) do
         if not getgenv().AutoPrestigeEnabled then
