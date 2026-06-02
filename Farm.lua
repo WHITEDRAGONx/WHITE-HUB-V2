@@ -305,7 +305,7 @@ function Farm:Start()
             _config:Set("Phase1Notified", false)
             _config:Set("Phase3Notified", false)
             print("[Farm] Returning to normal farm.")
-            goto loop_end
+            -- Continue to next iteration (skip normal farm this cycle)
         end
 
         -- ===== NPC FARM =====
@@ -343,10 +343,10 @@ function Farm:Start()
             _config:Set("Phase1Notified", false)
             _config:Set("Phase3Notified", false)
             print("[Farm] Returning to normal farm.")
-            goto loop_end
         end
 
         -- ===== NORMAL FARM (respects Enable Farm toggle) =====
+        -- Wait until normal farm is allowed
         while not _config:Get("FarmEnabled") do
             task.wait(1)
             print("[Farm] Normal farm disabled by user. Waiting...")
@@ -470,7 +470,6 @@ function Farm:Start()
             task.wait(1)
         end
 
-        ::loop_end::
         task.wait(1)
     end
 end
