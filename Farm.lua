@@ -192,21 +192,11 @@ local function CollectItem(itemInfo, index)
     print("[Farm] Collected: " .. itemInfo.Name)
 end
 
--- Helper to check if we should skip hopping (based on UI toggle)
-local function shouldSkipHop()
-    local stay = _config:Get("StayInPrivateServer")
-    if stay then
-        print("[Farm] StayInPrivateServer is ON – skipping all hops.")
-        return true
-    end
-    return false
-end
-
 local function DoHop()
     if not _config:Get("FarmEnabled") then return end
 
     if shouldSkipHop() then
-        print("[Farm] DoHop aborted – skipping hop.")
+        print("[Farm] StayInPrivateServer is ON – skipping hop.")
         return
     end
 
@@ -260,6 +250,15 @@ local function Startup()
     task.wait(5)
 end
 
+local function shouldSkipHop()
+    local stay = _config:Get("StayInPrivateServer")
+    if stay then
+        print("[Farm] StayInPrivateServer is ON – skipping hop.")
+        return true
+    end
+    return false
+end
+
 function Farm:Start()
     ApplyHooks()
     ApplyCrashBypass()
@@ -271,11 +270,6 @@ function Farm:Start()
     print("[Farm] Farm loop started.")
 
     while true do
-        while not _config:Get("FarmEnabled") do
-            task.wait(1)
-            print("[Farm] Farm disabled by user. Waiting...")
-        end
-
         -- ===== QUEST FARM =====
         if _config:Get("QuestFarmEnabled") then
             print("[Farm] Quest Farm enabled – delegating to QuestFarm module.")
@@ -352,8 +346,12 @@ function Farm:Start()
             goto loop_end
         end
 
-        -- ===== NORMAL FARM (original) =====
-        -- Reset timer
+        -- ===== NORMAL FARM (respects Enable Farm toggle) =====
+        while not _config:Get("FarmEnabled") do
+            task.wait(1)
+            print("[Farm] Normal farm disabled by user. Waiting...")
+        end
+
         lastItemTime = tick()
         _config:Set("Phase1Notified", false)
         _config:Set("Phase3Notified", false)
