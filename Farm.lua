@@ -1,7 +1,6 @@
 -- =====================
 -- Farm.lua
 -- Main farm controller.
--- Original stable version with phases 1/2/3.
 -- =====================
 
 local Players           = game:GetService("Players")
@@ -143,7 +142,7 @@ local function InitItemDetection()
             if spawns then ItemSpawnFolder = spawns:FindFirstChild("Items") end
         end)
     end
-    if not ItemSpawnFolder else
+    if not ItemSpawnFolder then
         warn("[Farm] ERROR: Item_Spawns/Items folder not found.")
         return
     end
@@ -193,9 +192,24 @@ local function CollectItem(itemInfo, index)
     print("[Farm] Collected: " .. itemInfo.Name)
 end
 
+-- Helper to check if we should skip hopping (based solely on UI toggle)
+local function shouldSkipHop()
+    local stay = _config:Get("StayInPrivateServer")
+    if stay then
+        print("[Farm] StayInPrivateServer is ON – skipping all hops.")
+        return true
+    end
+    return false
+end
+
 local function DoHop()
     if not _config:Get("FarmEnabled") then return end
-    
+
+    if shouldSkipHop() then
+        print("[Farm] DoHop aborted – skipping hop.")
+        return
+    end
+
     print("[Farm] Server dry — selling, buying, then hopping...")
     _inventory:SellAll()
     _inventory:BuyLucky()
@@ -257,33 +271,38 @@ function Farm:Start()
     print("[Farm] Farm loop started.")
 
     while true do
-
-        -- ===== WAIT IF FARM IS DISABLED =====
         while not _config:Get("FarmEnabled") do
             task.wait(1)
             print("[Farm] Farm disabled by user. Waiting...")
         end
+
+        -- If Auto Prestige is enabled, idle here
+        while _config:Get("AutoPrestige") do
+            task.wait(1)
+            if not _config:Get("FarmEnabled") then break end
+        end
+
+        -- Reset timer
         lastItemTime = tick()
+        _config:Set("Phase1Notified", false)
+        _config:Set("Phase3Notified", false)
 
         -- ===== PHASE 1 =====
         print("[Farm] >>> Phase 1 started — farming normally.")
-        while not _inventory:ShouldStopPhase1() do
-            if not _config:Get("FarmEnabled") then
-                print("[Farm] Farm disabled mid-phase 1. Breaking out.")
-                break
-            end
+        while not _inventory:ShouldStopPhase1() and not _config:Get("AutoPrestige") do
+            if not _config:Get("FarmEnabled") then break end
             
             local snapshot = {}
             for idx, info in pairs(SpawnedItems) do
                 table.insert(snapshot, {Index=idx, ItemInfo=info})
             end
             for _, entry in ipairs(snapshot) do
-                if _inventory:ShouldStopPhase1() then break end
+                if _inventory:ShouldStopPhase1() or _config:Get("AutoPrestige") then break end
                 CollectItem(entry.ItemInfo, entry.Index)
             end
             local elapsed = tick() - lastItemTime
             if elapsed > NO_ITEM_TIMEOUT then
-                if _inventory:ShouldStopPhase1() then break end
+                if _inventory:ShouldStopPhase1() or _config:Get("AutoPrestige") then break end
                 DoHop()
             else
                 if #snapshot == 0 then
@@ -306,11 +325,8 @@ function Farm:Start()
             end
 
             print("[Farm] >>> Phase 2 started — farming keep-items: " .. table.concat(keepItems, ", "))
-            while not _inventory:AllKeepItemsFull() do
-                if not _config:Get("FarmEnabled") then
-                    print("[Farm] Farm disabled mid-phase 2. Breaking out.")
-                    break
-                end
+            while not _inventory:AllKeepItemsFull() and not _config:Get("AutoPrestige") do
+                if not _config:Get("FarmEnabled") then break end
                 
                 local snapshot = {}
                 for idx, info in pairs(SpawnedItems) do
@@ -322,15 +338,14 @@ function Farm:Start()
                     end
                 end
                 for _, entry in ipairs(snapshot) do
-                    if _inventory:AllKeepItemsFull() then break end
+                    if _inventory:AllKeepItemsFull() or _config:Get("AutoPrestige") then break end
                     CollectItem(entry.ItemInfo, entry.Index)
                 end
                 local elapsed = tick() - lastItemTime
                 if elapsed > NO_ITEM_TIMEOUT then
-                    if _inventory:AllKeepItemsFull() then break end
+                    if _inventory:AllKeepItemsFull() or _config:Get("AutoPrestige") then break end
                     print("[Farm] Phase 2 — server dry, hopping...")
-                    _serverHop:Hop()
-                    lastItemTime = tick()
+                    DoHop()
                 else
                     if #snapshot == 0 then
                         print("[Farm] Waiting for keep-items... (" .. math.floor(NO_ITEM_TIMEOUT - elapsed) .. "s until hop)")
@@ -354,12 +369,7 @@ function Farm:Start()
         print("[Farm] >>> Phase 3 — fully stopped. Idling, only collecting Lucky Arrows.")
         updateConfigSnapshot()
 
-        while true do
-            if not _config:Get("FarmEnabled") then
-                print("[Farm] Farm disabled while idle. Breaking out to wait loop.")
-                break
-            end
-            
+        while not _config:Get("AutoPrestige") and _config:Get("FarmEnabled") do
             if not _inventory:ShouldStopPhase1() then
                 print("[Farm] >>> Lucky count or money dropped below minimum — resetting flags and returning to Phase 1.")
                 _config:Set("Phase1Notified", false)
@@ -388,10 +398,8 @@ function Farm:Start()
             for _, entry in ipairs(snapshot) do
                 CollectItem(entry.ItemInfo, entry.Index)
             end
-
             task.wait(1)
         end
-
     end
 end
 
