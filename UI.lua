@@ -14,7 +14,6 @@ local UI = {}
 local _config  = nil
 local _webhook = nil
 
--- Store toggle objects for external updates
 local toggleObjects = {}
 
 function UI:Init(Modules)
@@ -166,7 +165,6 @@ local function MakeToggle(parent, labelText, default, onChanged)
     }
 end
 
--- Helper to create a simple label
 function UI:AddLabel(parent, text)
     local lbl = Instance.new("TextLabel")
     lbl.Size = UDim2.new(1,-4,0,24)
@@ -181,7 +179,6 @@ function UI:AddLabel(parent, text)
     return lbl
 end
 
--- Helper to create a dropdown menu
 local function MakeDropdown(parent, labelText, options, callback)
     local holder = Instance.new("Frame")
     holder.Size = UDim2.new(1,-4,0,36)
@@ -250,9 +247,6 @@ local function MakeDropdown(parent, labelText, options, callback)
     return dropdown
 end
 
--- =====================
--- POPUP MESSAGE
--- =====================
 function UI:ShowPopup(message, duration)
     duration = duration or 3
     local screenGui = PlayerGui:FindFirstChild("WhiteHubPopup")
@@ -294,9 +288,6 @@ function UI:ShowPopup(message, duration)
     end)
 end
 
--- =====================
--- SET TOGGLE VALUE EXTERNALLY
--- =====================
 function UI:SetToggleValue(toggleName, value)
     local toggle = toggleObjects[toggleName]
     if toggle then
@@ -309,9 +300,6 @@ function UI:SetToggleValue(toggleName, value)
     end
 end
 
--- =====================
--- CREATE MAIN UI
--- =====================
 function UI:Create()
     CreateCreditsPopup()
 
@@ -408,6 +396,7 @@ function UI:Create()
 
     local FarmPage    = MakePage("FarmPage")
     local ItemsPage   = MakePage("ItemsPage")
+    local QuestPage   = MakePage("QuestPage")      -- NEW
     local WebhookPage = MakePage("WebhookPage")
     local CreditsPage = MakePage("CreditsPage")
     FarmPage.Visible = true
@@ -415,6 +404,7 @@ function UI:Create()
     local tabDefs = {
         { name="Farm",    page=FarmPage    },
         { name="Items",   page=ItemsPage   },
+        { name="Quests/NPCs", page=QuestPage },   -- NEW tab after Items
         { name="Webhook", page=WebhookPage },
         { name="Credits", page=CreditsPage },
     }
@@ -521,6 +511,96 @@ function UI:Create()
         end)
     end
     AutoCanvas(ItemsPage)
+
+    -- =====================
+    -- QUESTS & NPCS TAB (NEW)
+    -- =====================
+    MakeSection(QuestPage, "QUEST FARM")
+    
+    MakeToggle(QuestPage, "Auto Choose Quest", _config and _config:Get("AutoChooseQuest"), function(v)
+        if _config then _config:Set("AutoChooseQuest", v) end
+        print("[UI] Auto Choose Quest set to " .. tostring(v))
+    end)
+    
+    local questList = {
+        "Officer Sam [Lvl. 1+]",
+        "Deputy Bertrude [Lvl. 10+]",
+        "Homeless Man Jill [Lvl. 15+]",
+        "Dracula [Lvl. 20+]",
+        "William Zeppeli [Lvl. 25+]",
+        "Doppio [Lvl. 30+]",
+        "Dio [Lvl. 35+]"
+    }
+    local questDropdown = MakeDropdown(QuestPage, "Select Quest", questList, function(selected)
+        if _config then _config:Set("SelectedQuest", selected) end
+    end)
+    
+    MakeToggle(QuestPage, "Quest Farm", _config and _config:Get("QuestFarmEnabled"), function(v)
+        if _config then _config:Set("QuestFarmEnabled", v) end
+        print("[UI] Quest Farm set to " .. tostring(v))
+    end)
+    
+    MakeSection(QuestPage, "NPC FARM")
+    
+    local npcList = { "Security Guard", "Leaky Eye Luca", "Bucciarati", "Fugo", "Pesci", "Ghiaccio", "Diavolo" }
+    local npcDropdown = MakeDropdown(QuestPage, "Select NPC", npcList, function(selected)
+        if _config then _config:Set("SelectedNPC", selected) end
+    end)
+    
+    MakeToggle(QuestPage, "NPC Farm", _config and _config:Get("NPCFarmEnabled"), function(v)
+        if _config then _config:Set("NPCFarmEnabled", v) end
+        print("[UI] NPC Farm set to " .. tostring(v))
+    end)
+    
+    MakeSection(QuestPage, "AUTO SKILLS")
+    local skillsLabel = UI:AddLabel(QuestPage, "Skills: None")
+    
+    local function updateSkillsLabel()
+        local skills = _config:Get("AutoSkills") or {}
+        local text = #skills > 0 and "Skills: " .. table.concat(skills, ", ") or "Skills: None"
+        skillsLabel.Text = text
+    end
+    updateSkillsLabel()
+    
+    MakeToggle(QuestPage, "Add Skill (press a key)", false, function(v)
+        if v then
+            local connection
+            connection = UserInputService.InputBegan:Connect(function(input, gp)
+                if gp then return end
+                local key = input.KeyCode.Name
+                if key and key ~= "Unknown" then
+                    local current = _config:Get("AutoSkills") or {}
+                    if not table.find(current, key) then
+                        table.insert(current, key)
+                        _config:Set("AutoSkills", current)
+                        updateSkillsLabel()
+                    end
+                    connection:Disconnect()
+                    local toggleObj = toggleObjects["Add Skill (press a key)"]
+                    if toggleObj then
+                        toggleObj.enabled = false
+                        toggleObj.track.BackgroundColor3 = Color3.fromRGB(30,30,42)
+                        toggleObj.circle.Position = UDim2.new(0,3,0.5,-7.5)
+                    end
+                end
+            end)
+        end
+    end)
+    
+    MakeToggle(QuestPage, "Clear Skills", false, function(v)
+        if v then
+            _config:Set("AutoSkills", {})
+            updateSkillsLabel()
+            local toggleObj = toggleObjects["Clear Skills"]
+            if toggleObj then
+                toggleObj.enabled = false
+                toggleObj.track.BackgroundColor3 = Color3.fromRGB(30,30,42)
+                toggleObj.circle.Position = UDim2.new(0,3,0.5,-7.5)
+            end
+        end
+    end)
+    
+    AutoCanvas(QuestPage)
 
     -- WEBHOOK PAGE
     MakeSection(WebhookPage, "DISCORD WEBHOOK")
@@ -630,100 +710,6 @@ function UI:Create()
     end)
     AutoCanvas(CreditsPage)
 
-    -- =====================
-    -- QUESTS & NPCS TAB (NEW)
-    -- =====================
-    local QuestPage = MakePage("QuestPage")
-    
-    MakeSection(QuestPage, "QUEST FARM")
-    
-    MakeToggle(QuestPage, "Auto Choose Quest", _config and _config:Get("AutoChooseQuest"), function(v)
-        if _config then _config:Set("AutoChooseQuest", v) end
-        print("[UI] Auto Choose Quest set to " .. tostring(v))
-    end)
-    
-    local questList = {
-        "Officer Sam [Lvl. 1+]",
-        "Deputy Bertrude [Lvl. 10+]",
-        "Homeless Man Jill [Lvl. 15+]",
-        "Dracula [Lvl. 20+]",
-        "William Zeppeli [Lvl. 25+]",
-        "Doppio [Lvl. 30+]",
-        "Dio [Lvl. 35+]"
-    }
-    local questDropdown = MakeDropdown(QuestPage, "Select Quest", questList, function(selected)
-        if _config then _config:Set("SelectedQuest", selected) end
-    end)
-    
-    MakeToggle(QuestPage, "Quest Farm", _config and _config:Get("QuestFarmEnabled"), function(v)
-        if _config then _config:Set("QuestFarmEnabled", v) end
-        print("[UI] Quest Farm set to " .. tostring(v))
-    end)
-    
-    MakeSection(QuestPage, "NPC FARM")
-    
-    local npcList = { "Security Guard", "Leaky Eye Luca", "Bucciarati", "Fugo", "Pesci", "Ghiaccio", "Diavolo" }
-    local npcDropdown = MakeDropdown(QuestPage, "Select NPC", npcList, function(selected)
-        if _config then _config:Set("SelectedNPC", selected) end
-    end)
-    
-    MakeToggle(QuestPage, "NPC Farm", _config and _config:Get("NPCFarmEnabled"), function(v)
-        if _config then _config:Set("NPCFarmEnabled", v) end
-        print("[UI] NPC Farm set to " .. tostring(v))
-    end)
-    
-    MakeSection(QuestPage, "AUTO SKILLS")
-    local skillsLabel = UI:AddLabel(QuestPage, "Skills: None")
-    
-    local function updateSkillsLabel()
-        local skills = _config:Get("AutoSkills") or {}
-        local text = #skills > 0 and "Skills: " .. table.concat(skills, ", ") or "Skills: None"
-        skillsLabel.Text = text
-    end
-    updateSkillsLabel()
-    
-    MakeToggle(QuestPage, "Add Skill (press a key)", false, function(v)
-        if v then
-            local connection
-            connection = UserInputService.InputBegan:Connect(function(input, gp)
-                if gp then return end
-                local key = input.KeyCode.Name
-                if key and key ~= "Unknown" then
-                    local current = _config:Get("AutoSkills") or {}
-                    if not table.find(current, key) then
-                        table.insert(current, key)
-                        _config:Set("AutoSkills", current)
-                        updateSkillsLabel()
-                    end
-                    connection:Disconnect()
-                    local toggleObj = toggleObjects["Add Skill (press a key)"]
-                    if toggleObj then
-                        toggleObj.enabled = false
-                        toggleObj.track.BackgroundColor3 = Color3.fromRGB(30,30,42)
-                        toggleObj.circle.Position = UDim2.new(0,3,0.5,-7.5)
-                    end
-                end
-            end)
-        end
-    end)
-    
-    MakeToggle(QuestPage, "Clear Skills", false, function(v)
-        if v then
-            _config:Set("AutoSkills", {})
-            updateSkillsLabel()
-            local toggleObj = toggleObjects["Clear Skills"]
-            if toggleObj then
-                toggleObj.enabled = false
-                toggleObj.track.BackgroundColor3 = Color3.fromRGB(30,30,42)
-                toggleObj.circle.Position = UDim2.new(0,3,0.5,-7.5)
-            end
-        end
-    end)
-    
-    AutoCanvas(QuestPage)
-    
-    table.insert(tabDefs, { name="Quests/NPCs", page=QuestPage })
-    
     -- =====================
     -- TOGGLE BUTTON (open/close)
     -- =====================
