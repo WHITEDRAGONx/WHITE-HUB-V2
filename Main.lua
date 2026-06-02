@@ -35,7 +35,7 @@ local function Load(file)
     local t = 0
     while not done and t < 15 do
         task.wait(0.5)
-        t += 0.5
+        t = t + 0.5
     end
 
     if not response then
@@ -167,7 +167,7 @@ end
 LOG("BOOT", "✅ WHITE HUB — all systems running (manual UI active).")
 
 -- =====================
--- AUTO PRESTIGE LOADER (unchanged)
+-- AUTO PRESTIGE LOADER
 -- =====================
 LOG("AUTOPRESTIGE", "Launching AutoPrestige loader...")
 getgenv().AutoPrestigeEnabled = Modules.Config:Get("AutoPrestige") == true
@@ -187,7 +187,7 @@ task.spawn(function()
     local t = 0
     while not done and t < 15 do
         task.wait(0.5)
-        t += 0.5
+        t = t + 0.5
     end
 
     if not response then
