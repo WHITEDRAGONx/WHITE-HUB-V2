@@ -192,7 +192,7 @@ local function CollectItem(itemInfo, index)
     print("[Farm] Collected: " .. itemInfo.Name)
 end
 
--- Helper to check if we should skip hopping (based solely on UI toggle)
+-- Helper to check if we should skip hopping (based on UI toggle)
 local function shouldSkipHop()
     local stay = _config:Get("StayInPrivateServer")
     if stay then
@@ -276,18 +276,89 @@ function Farm:Start()
             print("[Farm] Farm disabled by user. Waiting...")
         end
 
-        -- If Auto Prestige is enabled, idle here
-        while _config:Get("AutoPrestige") do
-            task.wait(1)
-            if not _config:Get("FarmEnabled") then break end
+        -- ===== QUEST FARM =====
+        if _config:Get("QuestFarmEnabled") then
+            print("[Farm] Quest Farm enabled – delegating to QuestFarm module.")
+            if _webhook then
+                _webhook:Send("📋 **Quest Farm started**\nPlayer: `" .. Player.Name .. "`")
+            end
+            local questRunning = true
+            local questThread = task.spawn(function()
+                local ok, err = pcall(function()
+                    if _G.WhiteHubModules.QuestFarm and _G.WhiteHubModules.QuestFarm.Start then
+                        _G.WhiteHubModules.QuestFarm:Start()
+                    else
+                        warn("[Farm] QuestFarm module not available.")
+                    end
+                end)
+                if not ok then
+                    warn("[Farm] QuestFarm crashed: " .. tostring(err))
+                    if _webhook then _webhook:SendError("QuestFarm crashed: " .. tostring(err)) end
+                end
+                questRunning = false
+            end)
+            while questRunning and _config:Get("QuestFarmEnabled") do
+                task.wait(1)
+            end
+            if not _config:Get("QuestFarmEnabled") then
+                print("[Farm] Quest Farm turned off – stopping QuestFarm module.")
+                if _G.WhiteHubModules.QuestFarm and _G.WhiteHubModules.QuestFarm.Stop then
+                    _G.WhiteHubModules.QuestFarm:Stop()
+                end
+                task.cancel(questThread)
+            end
+            lastItemTime = tick()
+            _config:Set("Phase1Notified", false)
+            _config:Set("Phase3Notified", false)
+            print("[Farm] Returning to normal farm.")
+            goto loop_end
         end
 
+        -- ===== NPC FARM =====
+        if _config:Get("NPCFarmEnabled") then
+            print("[Farm] NPC Farm enabled – delegating to NPCFarm module.")
+            if _webhook then
+                _webhook:Send("⚔️ **NPC Farm started**\nPlayer: `" .. Player.Name .. "`")
+            end
+            local npcRunning = true
+            local npcThread = task.spawn(function()
+                local ok, err = pcall(function()
+                    if _G.WhiteHubModules.NPCFarm and _G.WhiteHubModules.NPCFarm.Start then
+                        _G.WhiteHubModules.NPCFarm:Start()
+                    else
+                        warn("[Farm] NPCFarm module not available.")
+                    end
+                end)
+                if not ok then
+                    warn("[Farm] NPCFarm crashed: " .. tostring(err))
+                    if _webhook then _webhook:SendError("NPCFarm crashed: " .. tostring(err)) end
+                end
+                npcRunning = false
+            end)
+            while npcRunning and _config:Get("NPCFarmEnabled") do
+                task.wait(1)
+            end
+            if not _config:Get("NPCFarmEnabled") then
+                print("[Farm] NPC Farm turned off – stopping NPCFarm module.")
+                if _G.WhiteHubModules.NPCFarm and _G.WhiteHubModules.NPCFarm.Stop then
+                    _G.WhiteHubModules.NPCFarm:Stop()
+                end
+                task.cancel(npcThread)
+            end
+            lastItemTime = tick()
+            _config:Set("Phase1Notified", false)
+            _config:Set("Phase3Notified", false)
+            print("[Farm] Returning to normal farm.")
+            goto loop_end
+        end
+
+        -- ===== NORMAL FARM (original) =====
         -- Reset timer
         lastItemTime = tick()
         _config:Set("Phase1Notified", false)
         _config:Set("Phase3Notified", false)
 
-        -- ===== PHASE 1 =====
+        -- Phase 1
         print("[Farm] >>> Phase 1 started — farming normally.")
         while not _inventory:ShouldStopPhase1() and not _config:Get("AutoPrestige") do
             if not _config:Get("FarmEnabled") then break end
@@ -316,7 +387,7 @@ function Farm:Start()
         _inventory:BuyLucky()
         print("[Farm] >>> Phase 1 complete.")
 
-        -- ===== PHASE 2 =====
+        -- Phase 2
         local keepItems = _inventory:GetKeepItems()
         if #keepItems > 0 then
             if not _config:Get("Phase1Notified") then
@@ -358,7 +429,7 @@ function Farm:Start()
             print("[Farm] >>> No keep-items configured — skipping Phase 2.")
         end
 
-        -- ===== PHASE 3 (IDLE) =====
+        -- Phase 3 (idle)
         if not _config:Get("Phase3Notified") then
             print("[Farm] Sending 'All farming complete' webhook...")
             _webhook:SendAllComplete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
@@ -400,6 +471,9 @@ function Farm:Start()
             end
             task.wait(1)
         end
+
+        ::loop_end::
+        task.wait(1)
     end
 end
 
