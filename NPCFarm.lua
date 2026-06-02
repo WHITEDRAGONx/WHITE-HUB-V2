@@ -1,7 +1,7 @@
 -- =====================
 -- NPCFarm.lua
 -- Handles farming a specific NPC repeatedly.
--- Does NOT server hop – stays in current server.
+-- Does NOT depend on Enable Farm toggle.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -24,7 +24,6 @@ function NPCFarm:Init(Modules)
     _webhook   = Modules.Webhook
 end
 
--- Send a skill key press
 local function useSkill(skillKey)
     local re = _movement:GetCharacter("RemoteEvent")
     if re then
@@ -32,7 +31,6 @@ local function useSkill(skillKey)
     end
 end
 
--- Kill a specific NPC by name
 local function killNPC(npcName)
     local npc = workspace.Living:FindFirstChild(npcName)
     if not npc then
@@ -45,7 +43,6 @@ local function killNPC(npcName)
     local startTime = tick()
     while npc and npc.Parent and npc:FindFirstChildWhichIsA("Humanoid") and npc:FindFirstChildWhichIsA("Humanoid").Health > 0 do
         if stopRequested then return false end
-        if not _config:Get("FarmEnabled") then return false end
         if tick() - startTime > 60 then
             print("[NPCFarm] Timeout killing " .. npcName .. " – retrying next cycle.")
             return false
@@ -57,7 +54,6 @@ local function killNPC(npcName)
         if remoteFunc then
             pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
         end
-        -- Auto skills
         local skills = _config:Get("AutoSkills") or {}
         for _, sk in ipairs(skills) do
             useSkill(sk)
@@ -74,14 +70,9 @@ function NPCFarm:Start()
     end
     stopRequested = false
     isRunning = true
-    print("[NPCFarm] Starting NPC farming (no server hop)...")
+    print("[NPCFarm] Starting NPC farming (no server hop, ignores Enable Farm toggle)...")
     
     while not stopRequested do
-        if not _config:Get("FarmEnabled") then
-            repeat task.wait(1) until _config:Get("FarmEnabled") or stopRequested
-            if stopRequested then break end
-        end
-        
         local npcName = _config:Get("SelectedNPC")
         if not npcName or npcName == "" then
             print("[NPCFarm] No NPC selected. Waiting...")
