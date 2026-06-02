@@ -18,7 +18,16 @@ local Defaults = {
     FarmEnabled     = true,
     AutoPrestige    = false,
     PrestigeMaxNotified = false,
-    StayInPrivateServer = false,   -- NEW: prevents server hop in private servers
+    StayInPrivateServer = false,
+    
+    -- NEW: Quest & NPC Farm
+    QuestFarmEnabled = false,
+    NPCFarmEnabled   = false,
+    AutoChooseQuest  = false,
+    SelectedQuest    = "",
+    SelectedNPC      = "",
+    AutoSkills       = {},   -- table of strings like {"Y", "Z", "L"}
+    
     SellItems = {
         ["Gold Coin"]                       = true,
         ["Rokakaka"]                        = true,
@@ -49,6 +58,15 @@ local function ApplyDefaults(data)
     if data.AutoPrestige   == nil then data.AutoPrestige   = Defaults.AutoPrestige   end
     if data.PrestigeMaxNotified == nil then data.PrestigeMaxNotified = Defaults.PrestigeMaxNotified end
     if data.StayInPrivateServer == nil then data.StayInPrivateServer = Defaults.StayInPrivateServer end
+    
+    -- New flags
+    if data.QuestFarmEnabled == nil then data.QuestFarmEnabled = Defaults.QuestFarmEnabled end
+    if data.NPCFarmEnabled   == nil then data.NPCFarmEnabled   = Defaults.NPCFarmEnabled end
+    if data.AutoChooseQuest  == nil then data.AutoChooseQuest  = Defaults.AutoChooseQuest end
+    if data.SelectedQuest    == nil then data.SelectedQuest    = Defaults.SelectedQuest end
+    if data.SelectedNPC      == nil then data.SelectedNPC      = Defaults.SelectedNPC end
+    if type(data.AutoSkills) ~= "table" then data.AutoSkills = {} end
+    
     if type(data.SellItems) ~= "table" then data.SellItems = {} end
     for k, v in pairs(Defaults.SellItems) do
         if data.SellItems[k] == nil then data.SellItems[k] = v end
