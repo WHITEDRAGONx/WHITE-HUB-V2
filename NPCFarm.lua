@@ -77,19 +77,17 @@ function NPCFarm:Start()
         if not npcName or npcName == "" then
             print("[NPCFarm] No NPC selected. Waiting...")
             task.wait(5)
-            goto continue_loop
-        end
-        
-        print("[NPCFarm] Farming NPC: " .. npcName)
-        if killNPC(npcName) then
-            print("[NPCFarm] Killed " .. npcName .. ". Waiting for respawn...")
-            task.wait(5)
         else
-            print("[NPCFarm] Failed to kill NPC or NPC not found. Waiting before retry...")
-            task.wait(5)
+            print("[NPCFarm] Farming NPC: " .. npcName)
+            if killNPC(npcName) then
+                print("[NPCFarm] Killed " .. npcName .. ". Waiting for respawn...")
+                task.wait(5)
+            else
+                print("[NPCFarm] Failed to kill NPC or NPC not found. Waiting before retry...")
+                task.wait(5)
+            end
         end
-        
-        ::continue_loop::
+        task.wait(1)
     end
     isRunning = false
     print("[NPCFarm] Stopped.")
