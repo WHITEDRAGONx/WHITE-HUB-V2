@@ -1,7 +1,6 @@
 -- =====================
 -- QuestFarm.lua
 -- Handles automatic quest farming for YBA.
--- Does NOT depend on Enable Farm toggle.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -107,11 +106,42 @@ local function killNPC(npcName)
     return true
 end
 
-local function collectItem(itemName, amount)
-    if not _farm then
-        return false
+-- Fixed item collection (no dependency on Farm.CollectItemFromGround)
+local function collectItem(itemName, requiredAmount)
+    local inventory = _inventory
+    local movement  = _movement
+    local startTime = tick()
+    while inventory:Count(itemName) < requiredAmount and (tick() - startTime) < 120 do
+        local itemModel = nil
+        local itemsFolder = workspace.Item_Spawns and workspace.Item_Spawns.Items
+        if itemsFolder then
+            for _, model in pairs(itemsFolder:GetChildren()) do
+                if model:IsA("Model") then
+                    local prompt = model:FindFirstChildWhichIsA("ProximityPrompt")
+                    if prompt and prompt.ObjectText == itemName and prompt.MaxActivationDistance == 8 then
+                        itemModel = model
+                        break
+                    end
+                end
+            end
+        end
+        if itemModel and itemModel.PrimaryPart then
+            local hrp = movement:GetCharacter("HumanoidRootPart")
+            if hrp then
+                local oldCF = hrp.CFrame
+                hrp.CFrame = itemModel.PrimaryPart.CFrame - Vector3.new(0, 10, 0)
+                task.wait(0.3)
+                local prompt = itemModel:FindFirstChildWhichIsA("ProximityPrompt")
+                if prompt then
+                    fireproximityprompt(prompt)
+                end
+                task.wait(0.6)
+                hrp.CFrame = oldCF
+            end
+        end
+        task.wait(1)
     end
-    return _farm:CollectItemFromGround(itemName, amount)
+    return inventory:Count(itemName) >= requiredAmount
 end
 
 local function completeQuest(questName)
