@@ -11,18 +11,19 @@ local PlayerGui = Player:WaitForChild("PlayerGui")
 
 local UI = {}
 
-local _config  = nil
-local _webhook = nil
+local _config     = nil
+local _webhook    = nil
+local _questFarm  = nil
+local _npcFarm    = nil
 
--- Store toggle objects for external updates
 local toggleObjects = {}
-
--- Global container for dropdown menus (to ensure they appear on top)
 local dropdownContainer = nil
 
 function UI:Init(Modules)
-    _config  = Modules.Config
-    _webhook = Modules.Webhook
+    _config     = Modules.Config
+    _webhook    = Modules.Webhook
+    _questFarm  = Modules.QuestFarm
+    _npcFarm    = Modules.NPCFarm
 end
 
 -- =====================
@@ -183,7 +184,6 @@ function UI:AddLabel(parent, text)
     return lbl
 end
 
--- Global dropdown container (ensures menu appears above everything)
 local function ensureDropdownContainer()
     if not dropdownContainer or not dropdownContainer.Parent then
         dropdownContainer = Instance.new("ScreenGui")
@@ -195,7 +195,6 @@ local function ensureDropdownContainer()
     return dropdownContainer
 end
 
--- Styled dropdown with global popup menu
 local function MakeStyledDropdown(parent, labelText, options, callback)
     local holder = Instance.new("Frame")
     holder.Size = UDim2.new(1,-4,0,36)
@@ -233,7 +232,6 @@ local function MakeStyledDropdown(parent, labelText, options, callback)
     btnStroke.Color = Color3.fromRGB(80,70,140)
     btnStroke.Thickness = 1.2
 
-    -- Create a hidden menu that will be shown globally
     local menu = nil
     local active = false
 
@@ -245,7 +243,7 @@ local function MakeStyledDropdown(parent, labelText, options, callback)
     end
 
     local function showMenu()
-        hideMenu() -- remove any existing menu first
+        hideMenu()
         local container = ensureDropdownContainer()
         menu = Instance.new("ScrollingFrame")
         menu.Size = UDim2.new(0, 200, 0, 150)
@@ -262,7 +260,6 @@ local function MakeStyledDropdown(parent, labelText, options, callback)
         local menuLayout = Instance.new("UIListLayout", menu)
         menuLayout.Padding = UDim.new(0,2)
 
-        -- Populate menu
         for _, opt in ipairs(options) do
             local btn = Instance.new("TextButton")
             btn.Size = UDim2.new(1,0,0,30)
@@ -283,18 +280,15 @@ local function MakeStyledDropdown(parent, labelText, options, callback)
             end)
         end
 
-        -- Adjust height based on number of options (max 150)
         local count = #options
         local height = math.min(count * 32, 150)
         menu.Size = UDim2.new(0, 200, 0, height)
 
-        -- Position menu below the button
         local btnAbsPos = dropdownBtn.AbsolutePosition
         local btnSize = dropdownBtn.AbsoluteSize
         menu.Position = UDim2.new(0, btnAbsPos.X, 0, btnAbsPos.Y + btnSize.Y)
         active = true
 
-        -- Close menu when clicking outside
         local function onInputBegan(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 then
                 task.wait(0.05)
@@ -311,7 +305,6 @@ local function MakeStyledDropdown(parent, labelText, options, callback)
         end
         local connection
         connection = UserInputService.InputBegan:Connect(onInputBegan)
-        -- Disconnect connection when menu is hidden
         local function onMenuRemoved()
             if connection then connection:Disconnect() end
         end
@@ -453,9 +446,6 @@ function UI:Create()
     PagesFrame.Position               = UDim2.new(0,104,0,42)
     PagesFrame.Size                   = UDim2.new(1,-116,1,-50)
 
-    -- =====================
-    -- BUILD PAGES
-    -- =====================
     local function MakePage(name)
         local scroll = Instance.new("ScrollingFrame", PagesFrame)
         scroll.Name                    = name
@@ -540,10 +530,8 @@ function UI:Create()
     end
 
     -- =====================
-    -- PAGE CONTENTS
-    -- =====================
-    
     -- FARM PAGE
+    -- =====================
     MakeSection(FarmPage, "FARM SETTINGS")
     
     MakeToggle(FarmPage, "Enable Farm", _config and _config:Get("FarmEnabled"), function(v)
@@ -564,6 +552,12 @@ function UI:Create()
         if _config then _config:Set("BuyLucky", v) end
     end)
 
+    -- Stay in Private Server toggle (NEW)
+    MakeToggle(FarmPage, "Stay in Private Server", _config and _config:Get("StayInPrivateServer"), function(v)
+        if _config then _config:Set("StayInPrivateServer", v) end
+        print("[UI] Stay in Private Server set to " .. tostring(v))
+    end)
+
     MakeSection(FarmPage, "PRESTIGE")
     MakeToggle(FarmPage, "Auto Prestige", _config and _config:Get("AutoPrestige"), function(v)
         if _config then _config:Set("AutoPrestige", v) end
@@ -577,7 +571,9 @@ function UI:Create()
 
     AutoCanvas(FarmPage)
 
+    -- =====================
     -- ITEMS PAGE
+    -- =====================
     MakeSection(ItemsPage, "SELL ITEMS")
     local itemOrder = { "Gold Coin","Diamond","Rokakaka","Pure Rokakaka","Mysterious Arrow","Lucky Arrow","Lucky Stone Mask","Ancient Scroll","Caesar's Headband","Stone Mask","Rib Cage of The Saint's Corpse","Quinton's Glove","Zeppeli's Hat","Clackers","Steel Ball","Dio's Diary", }
     for _, name in ipairs(itemOrder) do
@@ -614,7 +610,11 @@ function UI:Create()
     
     MakeToggle(QuestPage, "Quest Farm", _config and _config:Get("QuestFarmEnabled"), function(v)
         if _config then _config:Set("QuestFarmEnabled", v) end
-        print("[UI] Quest Farm set to " .. tostring(v))
+        if v then
+            if _questFarm then _questFarm:Start() end
+        else
+            if _questFarm then _questFarm:Stop() end
+        end
     end)
     
     MakeSection(QuestPage, "NPC FARM")
@@ -626,7 +626,11 @@ function UI:Create()
     
     MakeToggle(QuestPage, "NPC Farm", _config and _config:Get("NPCFarmEnabled"), function(v)
         if _config then _config:Set("NPCFarmEnabled", v) end
-        print("[UI] NPC Farm set to " .. tostring(v))
+        if v then
+            if _npcFarm then _npcFarm:Start() end
+        else
+            if _npcFarm then _npcFarm:Stop() end
+        end
     end)
     
     MakeSection(QuestPage, "AUTO SKILLS")
@@ -679,7 +683,9 @@ function UI:Create()
     
     AutoCanvas(QuestPage)
 
+    -- =====================
     -- WEBHOOK PAGE
+    -- =====================
     MakeSection(WebhookPage, "DISCORD WEBHOOK")
     local whHolder = Instance.new("Frame")
     whHolder.Size             = UDim2.new(1,-4,0,42)
@@ -744,7 +750,9 @@ function UI:Create()
 
     AutoCanvas(WebhookPage)
 
+    -- =====================
     -- CREDITS PAGE
+    -- =====================
     MakeSection(CreditsPage, "WHITE HUB")
     local creditLabel = Instance.new("TextLabel")
     creditLabel.Size             = UDim2.new(1,-4,0,44)
@@ -788,7 +796,7 @@ function UI:Create()
     AutoCanvas(CreditsPage)
 
     -- =====================
-    -- TOGGLE BUTTON (open/close)
+    -- TOGGLE BUTTON
     -- =====================
     local ToggleBtn = Instance.new("TextButton", ScreenGui)
     ToggleBtn.BackgroundColor3 = Color3.fromRGB(22,22,30)
