@@ -81,8 +81,9 @@ local moduleFiles = {
     { key = "ServerHop", file = "ServerHop.lua" },
     { key = "Inventory", file = "Inventory.lua" },
     { key = "UI",        file = "UI.lua"        },
+    { key = "QuestFarm", file = "QuestFarm.lua" },
+    { key = "NPCFarm",   file = "NPCFarm.lua"   },
     { key = "Farm",      file = "Farm.lua"      },
-    -- AutoPrestige is loaded separately as a standalone script (not a module)
 }
 
 local allLoaded = true
@@ -116,7 +117,7 @@ else
 end
 
 -- Initialize modules
-local initOrder = { "Webhook", "Movement", "ServerHop", "Inventory", "UI", "Farm" }
+local initOrder = { "Webhook", "Movement", "ServerHop", "Inventory", "UI", "QuestFarm", "NPCFarm", "Farm" }
 
 LOG("INIT", "Initializing modules...")
 for _, moduleName in ipairs(initOrder) do
@@ -131,7 +132,7 @@ for _, moduleName in ipairs(initOrder) do
     end
 end
 
--- Expose modules globally for manual UI
+-- Expose modules globally for the manual UI
 _G.WhiteHubModules = Modules
 LOG("UI", "Manual UI will use _G.WhiteHubModules")
 
@@ -166,11 +167,9 @@ end
 LOG("BOOT", "✅ WHITE HUB — all systems running (manual UI active).")
 
 -- =====================
--- AUTO PRESTIGE LOADER
+-- AUTO PRESTIGE LOADER (unchanged)
 -- =====================
 LOG("AUTOPRESTIGE", "Launching AutoPrestige loader...")
-
--- Set initial flag from config
 getgenv().AutoPrestigeEnabled = Modules.Config:Get("AutoPrestige") == true
 
 task.spawn(function()
