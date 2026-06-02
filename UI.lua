@@ -14,6 +14,7 @@ local UI = {}
 local _config  = nil
 local _webhook = nil
 
+-- Store toggle objects for external updates
 local toggleObjects = {}
 
 function UI:Init(Modules)
@@ -22,7 +23,7 @@ function UI:Init(Modules)
 end
 
 -- =====================
--- CREDITS POPUP (unchanged)
+-- CREDITS POPUP
 -- =====================
 local function CreateCreditsPopup()
     local gui = Instance.new("ScreenGui")
@@ -179,9 +180,8 @@ function UI:AddLabel(parent, text)
     return lbl
 end
 
--- Improved dropdown: menu is parented to ScreenGui to avoid clipping
-local activeDropdownMenu = nil
-local function MakeDropdown(parent, labelText, options, callback)
+-- Helper to create a styled dropdown (button + popup menu)
+local function MakeStyledDropdown(parent, labelText, options, callback)
     local holder = Instance.new("Frame")
     holder.Size = UDim2.new(1,-4,0,36)
     holder.BackgroundColor3 = Color3.fromRGB(22,22,30)
@@ -190,7 +190,8 @@ local function MakeDropdown(parent, labelText, options, callback)
     Instance.new("UICorner", holder).CornerRadius = UDim.new(0,7)
     local stroke = Instance.new("UIStroke", holder)
     stroke.Color = Color3.fromRGB(60,55,85)
-    
+    stroke.Thickness = 1.2
+
     local lbl = Instance.new("TextLabel")
     lbl.Size = UDim2.new(0.5,0,1,0)
     lbl.Position = UDim2.new(0,8,0,0)
@@ -201,40 +202,40 @@ local function MakeDropdown(parent, labelText, options, callback)
     lbl.Font = Enum.Font.Gotham
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.Parent = holder
-    
-    local dropdown = Instance.new("TextButton")
-    dropdown.Size = UDim2.new(0.45,0,1,0)
-    dropdown.Position = UDim2.new(0.5,0,0,0)
-    dropdown.BackgroundColor3 = Color3.fromRGB(40,40,55)
-    dropdown.BorderSizePixel = 0
-    dropdown.Text = options[1] or "None"
-    dropdown.TextColor3 = Color3.fromRGB(255,255,255)
-    dropdown.TextSize = 14
-    dropdown.Font = Enum.Font.Gotham
-    dropdown.Parent = holder
-    Instance.new("UICorner", dropdown).CornerRadius = UDim.new(0,7)
-    
-    -- Create menu as a child of ScreenGui (to float above everything)
-    local screenGui = PlayerGui:FindFirstChild("WhiteHubDropdowns")
-    if not screenGui then
-        screenGui = Instance.new("ScreenGui")
-        screenGui.Name = "WhiteHubDropdowns"
-        screenGui.ResetOnSpawn = false
-        screenGui.Parent = PlayerGui
-    end
-    
+
+    local dropdownBtn = Instance.new("TextButton")
+    dropdownBtn.Size = UDim2.new(0.45,0,1,0)
+    dropdownBtn.Position = UDim2.new(0.5,0,0,0)
+    dropdownBtn.BackgroundColor3 = Color3.fromRGB(40,40,55)
+    dropdownBtn.BorderSizePixel = 0
+    dropdownBtn.Text = options[1] or "None"
+    dropdownBtn.TextColor3 = Color3.fromRGB(255,255,255)
+    dropdownBtn.TextSize = 14
+    dropdownBtn.Font = Enum.Font.Gotham
+    dropdownBtn.Parent = holder
+    Instance.new("UICorner", dropdownBtn).CornerRadius = UDim.new(0,7)
+    local btnStroke = Instance.new("UIStroke", dropdownBtn)
+    btnStroke.Color = Color3.fromRGB(80,70,140)
+    btnStroke.Thickness = 1.2
+
     local menu = Instance.new("ScrollingFrame")
-    menu.Size = UDim2.new(0, 180, 0, 150)
+    menu.Size = UDim2.new(0.45,0,0,150)
+    menu.Position = UDim2.new(0.5,0,1,2)
     menu.BackgroundColor3 = Color3.fromRGB(30,30,42)
     menu.BorderSizePixel = 0
     menu.Visible = false
-    menu.ZIndex = 20
-    menu.Parent = screenGui
+    menu.ZIndex = 10
+    menu.Parent = holder
     Instance.new("UICorner", menu).CornerRadius = UDim.new(0,7)
+    local menuStroke = Instance.new("UIStroke", menu)
+    menuStroke.Color = Color3.fromRGB(145,95,255)
+    menuStroke.Thickness = 1.2
+
     local menuLayout = Instance.new("UIListLayout", menu)
     menuLayout.Padding = UDim.new(0,2)
-    
-    -- Populate menu
+
+    -- Populate menu with options
+    local buttons = {}
     for _, opt in ipairs(options) do
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1,0,0,30)
@@ -245,56 +246,46 @@ local function MakeDropdown(parent, labelText, options, callback)
         btn.Font = Enum.Font.Gotham
         btn.Parent = menu
         Instance.new("UICorner", btn).CornerRadius = UDim.new(0,4)
+        local optStroke = Instance.new("UIStroke", btn)
+        optStroke.Color = Color3.fromRGB(60,55,85)
+        optStroke.Thickness = 1
         btn.MouseButton1Click:Connect(function()
-            dropdown.Text = opt
+            dropdownBtn.Text = opt
             callback(opt)
             menu.Visible = false
-            if activeDropdownMenu == menu then activeDropdownMenu = nil end
         end)
+        table.insert(buttons, btn)
     end
-    
-    -- Adjust menu height based on content
+
+    -- Adjust menu height based on number of options (max 150)
     local count = #options
     local height = math.min(count * 32, 150)
-    menu.Size = UDim2.new(0, 180, 0, height)
-    
-    -- Position menu relative to dropdown button
-    local function updateMenuPosition()
-        local absPos = dropdown.AbsolutePosition
-        local size = dropdown.AbsoluteSize
-        menu.Position = UDim2.new(0, absPos.X + size.X - 180, 0, absPos.Y + size.Y)
-    end
-    
-    dropdown.MouseButton1Click:Connect(function()
-        if activeDropdownMenu and activeDropdownMenu ~= menu then
-            activeDropdownMenu.Visible = false
-        end
+    menu.Size = UDim2.new(0.45,0,0,height)
+
+    dropdownBtn.MouseButton1Click:Connect(function()
         menu.Visible = not menu.Visible
+    end)
+
+    -- Close menu when clicking outside (simple version)
+    local function closeMenuOnClick(input)
         if menu.Visible then
-            updateMenuPosition()
-            activeDropdownMenu = menu
-        else
-            activeDropdownMenu = nil
+            local mousePos = UserInputService:GetMouseLocation()
+            local menuAbsPos = menu.AbsolutePosition
+            local menuSize = menu.AbsoluteSize
+            if mousePos.X < menuAbsPos.X or mousePos.X > menuAbsPos.X + menuSize.X or
+               mousePos.Y < menuAbsPos.Y or mousePos.Y > menuAbsPos.Y + menuSize.Y then
+                menu.Visible = false
+            end
+        end
+    end
+    UserInputService.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            task.wait(0.05)
+            closeMenuOnClick(input)
         end
     end)
-    
-    -- Update position when scrolling or resizing (optional)
-    local connection
-    connection = game:GetService("RunService").RenderStepped:Connect(function()
-        if menu.Visible then
-            updateMenuPosition()
-        end
-    end)
-    
-    -- Clean up when holder is destroyed
-    holder.AncestryChanged:Connect(function()
-        if not holder.Parent then
-            connection:Disconnect()
-            menu:Destroy()
-        end
-    end)
-    
-    return dropdown
+
+    return dropdownBtn
 end
 
 function UI:ShowPopup(message, duration)
@@ -525,11 +516,6 @@ function UI:Create()
         end
     end)
     
-    MakeToggle(FarmPage, "Stay In Private Server", _config and _config:Get("StayInPrivateServer"), function(v)
-        if _config then _config:Set("StayInPrivateServer", v) end
-        print("[UI] StayInPrivateServer set to " .. tostring(v))
-    end)
-    
     MakeToggle(FarmPage, "Auto Sell", _config and _config:Get("AutoSell"), function(v)
         if _config then _config:Set("AutoSell", v) end
     end)
@@ -581,7 +567,7 @@ function UI:Create()
         "Doppio [Lvl. 30+]",
         "Dio [Lvl. 35+]"
     }
-    local questDropdown = MakeDropdown(QuestPage, "Select Quest", questList, function(selected)
+    local questDropdown = MakeStyledDropdown(QuestPage, "Select Quest", questList, function(selected)
         if _config then _config:Set("SelectedQuest", selected) end
     end)
     
@@ -593,7 +579,7 @@ function UI:Create()
     MakeSection(QuestPage, "NPC FARM")
     
     local npcList = { "Security Guard", "Leaky Eye Luca", "Bucciarati", "Fugo", "Pesci", "Ghiaccio", "Diavolo" }
-    local npcDropdown = MakeDropdown(QuestPage, "Select NPC", npcList, function(selected)
+    local npcDropdown = MakeStyledDropdown(QuestPage, "Select NPC", npcList, function(selected)
         if _config then _config:Set("SelectedNPC", selected) end
     end)
     
@@ -652,7 +638,7 @@ function UI:Create()
     
     AutoCanvas(QuestPage)
 
-    -- WEBHOOK PAGE (unchanged)
+    -- WEBHOOK PAGE (unchanged, but ensure it's there)
     MakeSection(WebhookPage, "DISCORD WEBHOOK")
     local whHolder = Instance.new("Frame")
     whHolder.Size             = UDim2.new(1,-4,0,42)
