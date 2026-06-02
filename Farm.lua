@@ -225,7 +225,7 @@ local function Startup()
     local waitTime = 0
     repeat
         task.wait(0.5)
-        waitTime += 0.5
+        waitTime = waitTime + 0.5
         if waitTime > 30 then
             warn("[Farm] Timeout waiting for RemoteEvent — continuing anyway.")
             break
@@ -305,7 +305,6 @@ function Farm:Start()
             _config:Set("Phase1Notified", false)
             _config:Set("Phase3Notified", false)
             print("[Farm] Returning to normal farm.")
-            -- Continue to next iteration (skip normal farm this cycle)
         end
 
         -- ===== NPC FARM =====
@@ -345,8 +344,7 @@ function Farm:Start()
             print("[Farm] Returning to normal farm.")
         end
 
-        -- ===== NORMAL FARM (respects Enable Farm toggle) =====
-        -- Wait until normal farm is allowed
+        -- ===== NORMAL FARM =====
         while not _config:Get("FarmEnabled") do
             task.wait(1)
             print("[Farm] Normal farm disabled by user. Waiting...")
@@ -359,23 +357,30 @@ function Farm:Start()
         -- Phase 1
         print("[Farm] >>> Phase 1 started — farming normally.")
         while not _inventory:ShouldStopPhase1() and not _config:Get("AutoPrestige") do
-            if not _config:Get("FarmEnabled") then break end
+            if not _config:Get("FarmEnabled") then
+                break
+            end
             
             local snapshot = {}
             for idx, info in pairs(SpawnedItems) do
                 table.insert(snapshot, {Index=idx, ItemInfo=info})
             end
             for _, entry in ipairs(snapshot) do
-                if _inventory:ShouldStopPhase1() or _config:Get("AutoPrestige") then break end
+                if _inventory:ShouldStopPhase1() or _config:Get("AutoPrestige") then
+                    break
+                end
                 CollectItem(entry.ItemInfo, entry.Index)
             end
             local elapsed = tick() - lastItemTime
             if elapsed > NO_ITEM_TIMEOUT then
-                if _inventory:ShouldStopPhase1() or _config:Get("AutoPrestige") then break end
+                if _inventory:ShouldStopPhase1() or _config:Get("AutoPrestige") then
+                    break
+                end
                 DoHop()
             else
                 if #snapshot == 0 then
-                    print("[Farm] Waiting for items... (" .. math.floor(NO_ITEM_TIMEOUT - elapsed) .. "s until hop)")
+                    local seconds = math.floor(NO_ITEM_TIMEOUT - elapsed)
+                    print("[Farm] Waiting for items... (" .. seconds .. "s until hop)")
                 end
             end
             task.wait(1)
@@ -395,29 +400,38 @@ function Farm:Start()
 
             print("[Farm] >>> Phase 2 started — farming keep-items: " .. table.concat(keepItems, ", "))
             while not _inventory:AllKeepItemsFull() and not _config:Get("AutoPrestige") do
-                if not _config:Get("FarmEnabled") then break end
+                if not _config:Get("FarmEnabled") then
+                    break
+                end
                 
                 local snapshot = {}
                 for idx, info in pairs(SpawnedItems) do
-                    local isKeep = _config:GetSellItem(info.Name) == false
+                    local isKeep = (_config:GetSellItem(info.Name) == false)
                     if isKeep and not _inventory:HasMax(info.Name) then
                         table.insert(snapshot, {Index=idx, ItemInfo=info})
                     else
-                        if not isKeep then SpawnedItems[idx] = nil end
+                        if not isKeep then
+                            SpawnedItems[idx] = nil
+                        end
                     end
                 end
                 for _, entry in ipairs(snapshot) do
-                    if _inventory:AllKeepItemsFull() or _config:Get("AutoPrestige") then break end
+                    if _inventory:AllKeepItemsFull() or _config:Get("AutoPrestige") then
+                        break
+                    end
                     CollectItem(entry.ItemInfo, entry.Index)
                 end
                 local elapsed = tick() - lastItemTime
                 if elapsed > NO_ITEM_TIMEOUT then
-                    if _inventory:AllKeepItemsFull() or _config:Get("AutoPrestige") then break end
+                    if _inventory:AllKeepItemsFull() or _config:Get("AutoPrestige") then
+                        break
+                    end
                     print("[Farm] Phase 2 — server dry, hopping...")
                     DoHop()
                 else
                     if #snapshot == 0 then
-                        print("[Farm] Waiting for keep-items... (" .. math.floor(NO_ITEM_TIMEOUT - elapsed) .. "s until hop)")
+                        local seconds = math.floor(NO_ITEM_TIMEOUT - elapsed)
+                        print("[Farm] Waiting for keep-items... (" .. seconds .. "s until hop)")
                     end
                 end
                 task.wait(1)
@@ -427,20 +441,20 @@ function Farm:Start()
             print("[Farm] >>> No keep-items configured — skipping Phase 2.")
         end
 
-        -- Phase 3 (idle)
+        -- Phase 3
         if not _config:Get("Phase3Notified") then
             print("[Farm] Sending 'All farming complete' webhook...")
             _webhook:SendAllComplete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
             _config:Set("Phase3Notified", true)
         else
-            print("[Farm] 'All farming complete' already sent (persistent flag). Use UI reset button if needed.")
+            print("[Farm] 'All farming complete' already sent. Use UI reset if needed.")
         end
         print("[Farm] >>> Phase 3 — fully stopped. Idling, only collecting Lucky Arrows.")
         updateConfigSnapshot()
 
         while not _config:Get("AutoPrestige") and _config:Get("FarmEnabled") do
             if not _inventory:ShouldStopPhase1() then
-                print("[Farm] >>> Lucky count or money dropped below minimum — resetting flags and returning to Phase 1.")
+                print("[Farm] >>> Lucky count or money dropped — returning to Phase 1.")
                 _config:Set("Phase1Notified", false)
                 _config:Set("Phase3Notified", false)
                 lastItemTime = tick()
@@ -448,7 +462,7 @@ function Farm:Start()
             end
 
             if hasConfigChanged() then
-                print("[Farm] >>> Configuration changed (item toggle) — resetting flags and returning to Phase 1.")
+                print("[Farm] >>> Config changed — returning to Phase 1.")
                 updateConfigSnapshot()
                 _config:Set("Phase1Notified", false)
                 _config:Set("Phase3Notified", false)
