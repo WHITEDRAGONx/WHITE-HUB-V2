@@ -1,7 +1,6 @@
 -- =====================
 -- NPCFarm.lua
 -- Handles farming a specific NPC repeatedly.
--- Does NOT depend on Enable Farm toggle.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -82,7 +81,7 @@ function NPCFarm:Start()
     end
     stopRequested = false
     isRunning = true
-    print("[NPCFarm] Starting NPC farming (no server hop, ignores Enable Farm toggle)...")
+    print("[NPCFarm] Starting NPC farming...")
     
     while not stopRequested do
         local npcName = _config:Get("SelectedNPC")
