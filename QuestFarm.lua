@@ -44,7 +44,7 @@ local function getBestQuest()
     local best = nil
     local bestReq = 0
     for questName, _ in pairs(questInfo) do
-        local lvlStr = questName:match("Lvl%. (%d+)%+")
+        local lvlStr = string.match(questName, "Lvl%. (%d+)%+")
         if lvlStr then
             local req = tonumber(lvlStr)
             if req and req <= level and req > bestReq then
@@ -71,24 +71,36 @@ local function killNPC(npcName)
     end
     local hrp = _movement:GetCharacter("HumanoidRootPart")
     local remoteFunc = _movement:GetCharacter("RemoteFunction")
-    if not hrp then return false end
+    if not hrp then
+        return false
+    end
     local startTime = tick()
-    while npc and npc.Parent and npc:FindFirstChildWhichIsA("Humanoid") and npc:FindFirstChildWhichIsA("Humanoid").Health > 0 do
-        if stopRequested then return false end
+    while true do
+        if stopRequested then
+            return false
+        end
         if tick() - startTime > 60 then
             print("[QuestFarm] Timeout killing " .. npcName)
             return false
         end
-        local npcHRP = npc:FindFirstChild("HumanoidRootPart")
-        if npcHRP then
-            hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y - 15, npcHRP.Position.Z)
+        npc = workspace.Living:FindFirstChild(npcName)
+        if not npc then
+            break
         end
+        local npcHum = npc:FindFirstChildWhichIsA("Humanoid")
+        local npcHRP = npc:FindFirstChild("HumanoidRootPart")
+        if not npcHum or not npcHRP or npcHum.Health <= 0 then
+            break
+        end
+        hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y - 15, npcHRP.Position.Z)
         if remoteFunc then
             pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
         end
-        local skills = _config:Get("AutoSkills") or {}
-        for _, sk in ipairs(skills) do
-            useSkill(sk)
+        local skills = _config:Get("AutoSkills")
+        if type(skills) == "table" then
+            for _, sk in ipairs(skills) do
+                useSkill(sk)
+            end
         end
         task.wait(0.3)
     end
@@ -96,7 +108,9 @@ local function killNPC(npcName)
 end
 
 local function collectItem(itemName, amount)
-    if not _farm then return false end
+    if not _farm then
+        return false
+    end
     return _farm:CollectItemFromGround(itemName, amount)
 end
 
@@ -135,7 +149,8 @@ function QuestFarm:Start()
             task.wait(5)
         else
             print("[QuestFarm] Working on quest: " .. currentQuest)
-            if completeQuest(currentQuest) then
+            local ok = completeQuest(currentQuest)
+            if ok then
                 print("[QuestFarm] Quest completed! Moving to next.")
                 task.wait(2)
             else
