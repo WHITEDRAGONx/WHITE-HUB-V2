@@ -17,6 +17,9 @@ local _webhook = nil
 -- Store toggle objects for external updates
 local toggleObjects = {}
 
+-- Global container for dropdown menus (to ensure they appear on top)
+local dropdownContainer = nil
+
 function UI:Init(Modules)
     _config  = Modules.Config
     _webhook = Modules.Webhook
@@ -180,7 +183,19 @@ function UI:AddLabel(parent, text)
     return lbl
 end
 
--- Helper to create a styled dropdown (button + popup menu)
+-- Global dropdown container (ensures menu appears above everything)
+local function ensureDropdownContainer()
+    if not dropdownContainer or not dropdownContainer.Parent then
+        dropdownContainer = Instance.new("ScreenGui")
+        dropdownContainer.Name = "DropdownContainer"
+        dropdownContainer.ResetOnSpawn = false
+        dropdownContainer.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        dropdownContainer.Parent = PlayerGui
+    end
+    return dropdownContainer
+end
+
+-- Styled dropdown with global popup menu
 local function MakeStyledDropdown(parent, labelText, options, callback)
     local holder = Instance.new("Frame")
     holder.Size = UDim2.new(1,-4,0,36)
@@ -218,70 +233,96 @@ local function MakeStyledDropdown(parent, labelText, options, callback)
     btnStroke.Color = Color3.fromRGB(80,70,140)
     btnStroke.Thickness = 1.2
 
-    local menu = Instance.new("ScrollingFrame")
-    menu.Size = UDim2.new(0.45,0,0,150)
-    menu.Position = UDim2.new(0.5,0,1,2)
-    menu.BackgroundColor3 = Color3.fromRGB(30,30,42)
-    menu.BorderSizePixel = 0
-    menu.Visible = false
-    menu.ZIndex = 10
-    menu.Parent = holder
-    Instance.new("UICorner", menu).CornerRadius = UDim.new(0,7)
-    local menuStroke = Instance.new("UIStroke", menu)
-    menuStroke.Color = Color3.fromRGB(145,95,255)
-    menuStroke.Thickness = 1.2
+    -- Create a hidden menu that will be shown globally
+    local menu = nil
+    local active = false
 
-    local menuLayout = Instance.new("UIListLayout", menu)
-    menuLayout.Padding = UDim.new(0,2)
-
-    -- Populate menu with options
-    local buttons = {}
-    for _, opt in ipairs(options) do
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1,0,0,30)
-        btn.BackgroundColor3 = Color3.fromRGB(40,40,55)
-        btn.Text = opt
-        btn.TextColor3 = Color3.fromRGB(255,255,255)
-        btn.TextSize = 14
-        btn.Font = Enum.Font.Gotham
-        btn.Parent = menu
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0,4)
-        local optStroke = Instance.new("UIStroke", btn)
-        optStroke.Color = Color3.fromRGB(60,55,85)
-        optStroke.Thickness = 1
-        btn.MouseButton1Click:Connect(function()
-            dropdownBtn.Text = opt
-            callback(opt)
+    local function hideMenu()
+        if menu then
             menu.Visible = false
-        end)
-        table.insert(buttons, btn)
-    end
-
-    -- Adjust menu height based on number of options (max 150)
-    local count = #options
-    local height = math.min(count * 32, 150)
-    menu.Size = UDim2.new(0.45,0,0,height)
-
-    dropdownBtn.MouseButton1Click:Connect(function()
-        menu.Visible = not menu.Visible
-    end)
-
-    -- Close menu when clicking outside (simple version)
-    local function closeMenuOnClick(input)
-        if menu.Visible then
-            local mousePos = UserInputService:GetMouseLocation()
-            local menuAbsPos = menu.AbsolutePosition
-            local menuSize = menu.AbsoluteSize
-            if mousePos.X < menuAbsPos.X or mousePos.X > menuAbsPos.X + menuSize.X or
-               mousePos.Y < menuAbsPos.Y or mousePos.Y > menuAbsPos.Y + menuSize.Y then
-                menu.Visible = false
-            end
+            active = false
         end
     end
-    UserInputService.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            task.wait(0.05)
-            closeMenuOnClick(input)
+
+    local function showMenu()
+        hideMenu() -- remove any existing menu first
+        local container = ensureDropdownContainer()
+        menu = Instance.new("ScrollingFrame")
+        menu.Size = UDim2.new(0, 200, 0, 150)
+        menu.BackgroundColor3 = Color3.fromRGB(30,30,42)
+        menu.BorderSizePixel = 0
+        menu.Visible = true
+        menu.ZIndex = 20
+        menu.Parent = container
+        Instance.new("UICorner", menu).CornerRadius = UDim.new(0,7)
+        local menuStroke = Instance.new("UIStroke", menu)
+        menuStroke.Color = Color3.fromRGB(145,95,255)
+        menuStroke.Thickness = 1.2
+
+        local menuLayout = Instance.new("UIListLayout", menu)
+        menuLayout.Padding = UDim.new(0,2)
+
+        -- Populate menu
+        for _, opt in ipairs(options) do
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(1,0,0,30)
+            btn.BackgroundColor3 = Color3.fromRGB(40,40,55)
+            btn.Text = opt
+            btn.TextColor3 = Color3.fromRGB(255,255,255)
+            btn.TextSize = 14
+            btn.Font = Enum.Font.Gotham
+            btn.Parent = menu
+            Instance.new("UICorner", btn).CornerRadius = UDim.new(0,4)
+            local optStroke = Instance.new("UIStroke", btn)
+            optStroke.Color = Color3.fromRGB(60,55,85)
+            optStroke.Thickness = 1
+            btn.MouseButton1Click:Connect(function()
+                dropdownBtn.Text = opt
+                callback(opt)
+                hideMenu()
+            end)
+        end
+
+        -- Adjust height based on number of options (max 150)
+        local count = #options
+        local height = math.min(count * 32, 150)
+        menu.Size = UDim2.new(0, 200, 0, height)
+
+        -- Position menu below the button
+        local btnAbsPos = dropdownBtn.AbsolutePosition
+        local btnSize = dropdownBtn.AbsoluteSize
+        menu.Position = UDim2.new(0, btnAbsPos.X, 0, btnAbsPos.Y + btnSize.Y)
+        active = true
+
+        -- Close menu when clicking outside
+        local function onInputBegan(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                task.wait(0.05)
+                if menu and menu.Visible then
+                    local mousePos = UserInputService:GetMouseLocation()
+                    local menuAbsPos = menu.AbsolutePosition
+                    local menuSize = menu.AbsoluteSize
+                    if mousePos.X < menuAbsPos.X or mousePos.X > menuAbsPos.X + menuSize.X or
+                       mousePos.Y < menuAbsPos.Y or mousePos.Y > menuAbsPos.Y + menuSize.Y then
+                        hideMenu()
+                    end
+                end
+            end
+        end
+        local connection
+        connection = UserInputService.InputBegan:Connect(onInputBegan)
+        -- Disconnect connection when menu is hidden
+        local function onMenuRemoved()
+            if connection then connection:Disconnect() end
+        end
+        menu.AncestryChanged:Connect(onMenuRemoved)
+    end
+
+    dropdownBtn.MouseButton1Click:Connect(function()
+        if active then
+            hideMenu()
+        else
+            showMenu()
         end
     end)
 
@@ -638,7 +679,7 @@ function UI:Create()
     
     AutoCanvas(QuestPage)
 
-    -- WEBHOOK PAGE (unchanged, but ensure it's there)
+    -- WEBHOOK PAGE
     MakeSection(WebhookPage, "DISCORD WEBHOOK")
     local whHolder = Instance.new("Frame")
     whHolder.Size             = UDim2.new(1,-4,0,42)
@@ -703,7 +744,7 @@ function UI:Create()
 
     AutoCanvas(WebhookPage)
 
-    -- CREDITS PAGE (unchanged)
+    -- CREDITS PAGE
     MakeSection(CreditsPage, "WHITE HUB")
     local creditLabel = Instance.new("TextLabel")
     creditLabel.Size             = UDim2.new(1,-4,0,44)
