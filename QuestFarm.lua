@@ -133,19 +133,17 @@ function QuestFarm:Start()
         if not currentQuest or currentQuest == "" then
             print("[QuestFarm] No quest selected or found. Waiting...")
             task.wait(5)
-            goto continue_loop
-        end
-        
-        print("[QuestFarm] Working on quest: " .. currentQuest)
-        if completeQuest(currentQuest) then
-            print("[QuestFarm] Quest completed! Moving to next.")
-            task.wait(2)
         else
-            print("[QuestFarm] Failed to complete quest, waiting before retry...")
-            task.wait(5)
+            print("[QuestFarm] Working on quest: " .. currentQuest)
+            if completeQuest(currentQuest) then
+                print("[QuestFarm] Quest completed! Moving to next.")
+                task.wait(2)
+            else
+                print("[QuestFarm] Failed to complete quest, waiting before retry...")
+                task.wait(5)
+            end
         end
-        
-        ::continue_loop::
+        task.wait(1)
     end
     isRunning = false
     print("[QuestFarm] Stopped.")
