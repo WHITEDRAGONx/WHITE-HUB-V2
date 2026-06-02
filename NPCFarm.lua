@@ -39,24 +39,36 @@ local function killNPC(npcName)
     end
     local hrp = _movement:GetCharacter("HumanoidRootPart")
     local remoteFunc = _movement:GetCharacter("RemoteFunction")
-    if not hrp then return false end
+    if not hrp then
+        return false
+    end
     local startTime = tick()
-    while npc and npc.Parent and npc:FindFirstChildWhichIsA("Humanoid") and npc:FindFirstChildWhichIsA("Humanoid").Health > 0 do
-        if stopRequested then return false end
+    while true do
+        if stopRequested then
+            return false
+        end
         if tick() - startTime > 60 then
             print("[NPCFarm] Timeout killing " .. npcName .. " – retrying next cycle.")
             return false
         end
-        local npcHRP = npc:FindFirstChild("HumanoidRootPart")
-        if npcHRP then
-            hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y - 15, npcHRP.Position.Z)
+        npc = workspace.Living:FindFirstChild(npcName)
+        if not npc then
+            break
         end
+        local npcHum = npc:FindFirstChildWhichIsA("Humanoid")
+        local npcHRP = npc:FindFirstChild("HumanoidRootPart")
+        if not npcHum or not npcHRP or npcHum.Health <= 0 then
+            break
+        end
+        hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y - 15, npcHRP.Position.Z)
         if remoteFunc then
             pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
         end
-        local skills = _config:Get("AutoSkills") or {}
-        for _, sk in ipairs(skills) do
-            useSkill(sk)
+        local skills = _config:Get("AutoSkills")
+        if type(skills) == "table" then
+            for _, sk in ipairs(skills) do
+                useSkill(sk)
+            end
         end
         task.wait(0.3)
     end
@@ -79,7 +91,8 @@ function NPCFarm:Start()
             task.wait(5)
         else
             print("[NPCFarm] Farming NPC: " .. npcName)
-            if killNPC(npcName) then
+            local ok = killNPC(npcName)
+            if ok then
                 print("[NPCFarm] Killed " .. npcName .. ". Waiting for respawn...")
                 task.wait(5)
             else
