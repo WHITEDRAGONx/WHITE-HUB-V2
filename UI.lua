@@ -22,7 +22,7 @@ function UI:Init(Modules)
 end
 
 -- =====================
--- CREDITS POPUP
+-- CREDITS POPUP (unchanged)
 -- =====================
 local function CreateCreditsPopup()
     local gui = Instance.new("ScreenGui")
@@ -179,6 +179,8 @@ function UI:AddLabel(parent, text)
     return lbl
 end
 
+-- Improved dropdown: menu is parented to ScreenGui to avoid clipping
+local activeDropdownMenu = nil
 local function MakeDropdown(parent, labelText, options, callback)
     local holder = Instance.new("Frame")
     holder.Size = UDim2.new(1,-4,0,36)
@@ -212,17 +214,27 @@ local function MakeDropdown(parent, labelText, options, callback)
     dropdown.Parent = holder
     Instance.new("UICorner", dropdown).CornerRadius = UDim.new(0,7)
     
+    -- Create menu as a child of ScreenGui (to float above everything)
+    local screenGui = PlayerGui:FindFirstChild("WhiteHubDropdowns")
+    if not screenGui then
+        screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "WhiteHubDropdowns"
+        screenGui.ResetOnSpawn = false
+        screenGui.Parent = PlayerGui
+    end
+    
     local menu = Instance.new("ScrollingFrame")
-    menu.Size = UDim2.new(0.45,0,0,200)
-    menu.Position = UDim2.new(0.5,0,1,2)
+    menu.Size = UDim2.new(0, 180, 0, 150)
     menu.BackgroundColor3 = Color3.fromRGB(30,30,42)
     menu.BorderSizePixel = 0
     menu.Visible = false
-    menu.Parent = holder
+    menu.ZIndex = 20
+    menu.Parent = screenGui
     Instance.new("UICorner", menu).CornerRadius = UDim.new(0,7)
     local menuLayout = Instance.new("UIListLayout", menu)
     menuLayout.Padding = UDim.new(0,2)
     
+    -- Populate menu
     for _, opt in ipairs(options) do
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1,0,0,30)
@@ -237,11 +249,49 @@ local function MakeDropdown(parent, labelText, options, callback)
             dropdown.Text = opt
             callback(opt)
             menu.Visible = false
+            if activeDropdownMenu == menu then activeDropdownMenu = nil end
         end)
     end
     
+    -- Adjust menu height based on content
+    local count = #options
+    local height = math.min(count * 32, 150)
+    menu.Size = UDim2.new(0, 180, 0, height)
+    
+    -- Position menu relative to dropdown button
+    local function updateMenuPosition()
+        local absPos = dropdown.AbsolutePosition
+        local size = dropdown.AbsoluteSize
+        menu.Position = UDim2.new(0, absPos.X + size.X - 180, 0, absPos.Y + size.Y)
+    end
+    
     dropdown.MouseButton1Click:Connect(function()
+        if activeDropdownMenu and activeDropdownMenu ~= menu then
+            activeDropdownMenu.Visible = false
+        end
         menu.Visible = not menu.Visible
+        if menu.Visible then
+            updateMenuPosition()
+            activeDropdownMenu = menu
+        else
+            activeDropdownMenu = nil
+        end
+    end)
+    
+    -- Update position when scrolling or resizing (optional)
+    local connection
+    connection = game:GetService("RunService").RenderStepped:Connect(function()
+        if menu.Visible then
+            updateMenuPosition()
+        end
+    end)
+    
+    -- Clean up when holder is destroyed
+    holder.AncestryChanged:Connect(function()
+        if not holder.Parent then
+            connection:Disconnect()
+            menu:Destroy()
+        end
     end)
     
     return dropdown
@@ -396,7 +446,7 @@ function UI:Create()
 
     local FarmPage    = MakePage("FarmPage")
     local ItemsPage   = MakePage("ItemsPage")
-    local QuestPage   = MakePage("QuestPage")      -- NEW
+    local QuestPage   = MakePage("QuestPage")
     local WebhookPage = MakePage("WebhookPage")
     local CreditsPage = MakePage("CreditsPage")
     FarmPage.Visible = true
@@ -404,7 +454,7 @@ function UI:Create()
     local tabDefs = {
         { name="Farm",    page=FarmPage    },
         { name="Items",   page=ItemsPage   },
-        { name="Quests/NPCs", page=QuestPage },   -- NEW tab after Items
+        { name="Quests/NPCs", page=QuestPage },
         { name="Webhook", page=WebhookPage },
         { name="Credits", page=CreditsPage },
     }
@@ -513,7 +563,7 @@ function UI:Create()
     AutoCanvas(ItemsPage)
 
     -- =====================
-    -- QUESTS & NPCS TAB (NEW)
+    -- QUESTS & NPCS TAB
     -- =====================
     MakeSection(QuestPage, "QUEST FARM")
     
@@ -602,7 +652,7 @@ function UI:Create()
     
     AutoCanvas(QuestPage)
 
-    -- WEBHOOK PAGE
+    -- WEBHOOK PAGE (unchanged)
     MakeSection(WebhookPage, "DISCORD WEBHOOK")
     local whHolder = Instance.new("Frame")
     whHolder.Size             = UDim2.new(1,-4,0,42)
@@ -667,7 +717,7 @@ function UI:Create()
 
     AutoCanvas(WebhookPage)
 
-    -- CREDITS PAGE
+    -- CREDITS PAGE (unchanged)
     MakeSection(CreditsPage, "WHITE HUB")
     local creditLabel = Instance.new("TextLabel")
     creditLabel.Size             = UDim2.new(1,-4,0,44)
