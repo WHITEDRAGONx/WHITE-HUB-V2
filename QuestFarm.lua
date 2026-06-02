@@ -1,6 +1,7 @@
 -- =====================
 -- QuestFarm.lua
 -- Handles automatic quest farming for YBA.
+-- Does NOT depend on Enable Farm toggle.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -19,7 +20,6 @@ local isRunning = false
 local stopRequested = false
 local currentQuest = nil
 
--- Quest information: enemy to kill or item to collect
 local questInfo = {
     ["Officer Sam [Lvl. 1+]"] = { enemy = "Thug" },
     ["Deputy Bertrude [Lvl. 10+]"] = { enemy = "Corrupt Police" },
@@ -39,7 +39,6 @@ function QuestFarm:Init(Modules)
     _farm      = Modules.Farm
 end
 
--- Determine the best available quest based on player level
 local function getBestQuest()
     local level = Player.PlayerStats.Level.Value
     local best = nil
@@ -57,7 +56,6 @@ local function getBestQuest()
     return best
 end
 
--- Send a skill key press
 local function useSkill(skillKey)
     local re = _movement:GetCharacter("RemoteEvent")
     if re then
@@ -65,7 +63,6 @@ local function useSkill(skillKey)
     end
 end
 
--- Kill a specific NPC by name
 local function killNPC(npcName)
     local npc = workspace.Living:FindFirstChild(npcName)
     if not npc then
@@ -78,7 +75,6 @@ local function killNPC(npcName)
     local startTime = tick()
     while npc and npc.Parent and npc:FindFirstChildWhichIsA("Humanoid") and npc:FindFirstChildWhichIsA("Humanoid").Health > 0 do
         if stopRequested then return false end
-        if not _config:Get("FarmEnabled") then return false end
         if tick() - startTime > 60 then
             print("[QuestFarm] Timeout killing " .. npcName)
             return false
@@ -90,7 +86,6 @@ local function killNPC(npcName)
         if remoteFunc then
             pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
         end
-        -- Auto skills
         local skills = _config:Get("AutoSkills") or {}
         for _, sk in ipairs(skills) do
             useSkill(sk)
@@ -100,13 +95,11 @@ local function killNPC(npcName)
     return true
 end
 
--- Collect a certain amount of an item using Farm module
 local function collectItem(itemName, amount)
     if not _farm then return false end
     return _farm:CollectItemFromGround(itemName, amount)
 end
 
--- Complete the selected quest (kill enemy or collect items)
 local function completeQuest(questName)
     local data = questInfo[questName]
     if not data then
@@ -131,12 +124,6 @@ function QuestFarm:Start()
     print("[QuestFarm] Starting quest farming...")
     
     while not stopRequested do
-        if not _config:Get("FarmEnabled") then
-            repeat task.wait(1) until _config:Get("FarmEnabled") or stopRequested
-            if stopRequested then break end
-        end
-        
-        -- Determine which quest to do
         local autoChoose = _config:Get("AutoChooseQuest")
         if autoChoose then
             currentQuest = getBestQuest()
@@ -154,8 +141,7 @@ function QuestFarm:Start()
             print("[QuestFarm] Quest completed! Moving to next.")
             task.wait(2)
         else
-            print("[QuestFarm] Failed to complete quest, hopping...")
-            _serverHop:Hop()
+            print("[QuestFarm] Failed to complete quest, waiting before retry...")
             task.wait(5)
         end
         
