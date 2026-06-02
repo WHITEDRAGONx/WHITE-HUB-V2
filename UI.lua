@@ -166,6 +166,90 @@ local function MakeToggle(parent, labelText, default, onChanged)
     }
 end
 
+-- Helper to create a simple label
+function UI:AddLabel(parent, text)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1,-4,0,24)
+    lbl.Position = UDim2.new(0,2,0,0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text
+    lbl.TextColor3 = Color3.fromRGB(235,235,240)
+    lbl.TextSize = 14
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = parent
+    return lbl
+end
+
+-- Helper to create a dropdown menu
+local function MakeDropdown(parent, labelText, options, callback)
+    local holder = Instance.new("Frame")
+    holder.Size = UDim2.new(1,-4,0,36)
+    holder.BackgroundColor3 = Color3.fromRGB(22,22,30)
+    holder.BorderSizePixel = 0
+    holder.Parent = parent
+    Instance.new("UICorner", holder).CornerRadius = UDim.new(0,7)
+    local stroke = Instance.new("UIStroke", holder)
+    stroke.Color = Color3.fromRGB(60,55,85)
+    
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.5,0,1,0)
+    lbl.Position = UDim2.new(0,8,0,0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = labelText
+    lbl.TextColor3 = Color3.fromRGB(235,235,240)
+    lbl.TextScaled = true
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = holder
+    
+    local dropdown = Instance.new("TextButton")
+    dropdown.Size = UDim2.new(0.45,0,1,0)
+    dropdown.Position = UDim2.new(0.5,0,0,0)
+    dropdown.BackgroundColor3 = Color3.fromRGB(40,40,55)
+    dropdown.BorderSizePixel = 0
+    dropdown.Text = options[1] or "None"
+    dropdown.TextColor3 = Color3.fromRGB(255,255,255)
+    dropdown.TextSize = 14
+    dropdown.Font = Enum.Font.Gotham
+    dropdown.Parent = holder
+    Instance.new("UICorner", dropdown).CornerRadius = UDim.new(0,7)
+    
+    local menu = Instance.new("ScrollingFrame")
+    menu.Size = UDim2.new(0.45,0,0,200)
+    menu.Position = UDim2.new(0.5,0,1,2)
+    menu.BackgroundColor3 = Color3.fromRGB(30,30,42)
+    menu.BorderSizePixel = 0
+    menu.Visible = false
+    menu.Parent = holder
+    Instance.new("UICorner", menu).CornerRadius = UDim.new(0,7)
+    local menuLayout = Instance.new("UIListLayout", menu)
+    menuLayout.Padding = UDim.new(0,2)
+    
+    for _, opt in ipairs(options) do
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1,0,0,30)
+        btn.BackgroundColor3 = Color3.fromRGB(40,40,55)
+        btn.Text = opt
+        btn.TextColor3 = Color3.fromRGB(255,255,255)
+        btn.TextSize = 14
+        btn.Font = Enum.Font.Gotham
+        btn.Parent = menu
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0,4)
+        btn.MouseButton1Click:Connect(function()
+            dropdown.Text = opt
+            callback(opt)
+            menu.Visible = false
+        end)
+    end
+    
+    dropdown.MouseButton1Click:Connect(function()
+        menu.Visible = not menu.Visible
+    end)
+    
+    return dropdown
+end
+
 -- =====================
 -- POPUP MESSAGE
 -- =====================
@@ -390,7 +474,6 @@ function UI:Create()
     -- FARM PAGE
     MakeSection(FarmPage, "FARM SETTINGS")
     
-    -- MASTER TOGGLE: Enable Farm
     MakeToggle(FarmPage, "Enable Farm", _config and _config:Get("FarmEnabled"), function(v)
         if _config then _config:Set("FarmEnabled", v) end
         if not v then
@@ -402,13 +485,11 @@ function UI:Create()
         end
     end)
     
-    -- Stay In Private Server toggle
     MakeToggle(FarmPage, "Stay In Private Server", _config and _config:Get("StayInPrivateServer"), function(v)
         if _config then _config:Set("StayInPrivateServer", v) end
         print("[UI] StayInPrivateServer set to " .. tostring(v))
     end)
     
-    -- Auto Sell and Auto Buy Lucky
     MakeToggle(FarmPage, "Auto Sell", _config and _config:Get("AutoSell"), function(v)
         if _config then _config:Set("AutoSell", v) end
     end)
@@ -416,7 +497,6 @@ function UI:Create()
         if _config then _config:Set("BuyLucky", v) end
     end)
 
-    -- PRESTIGE SECTION
     MakeSection(FarmPage, "PRESTIGE")
     MakeToggle(FarmPage, "Auto Prestige", _config and _config:Get("AutoPrestige"), function(v)
         if _config then _config:Set("AutoPrestige", v) end
@@ -430,7 +510,7 @@ function UI:Create()
 
     AutoCanvas(FarmPage)
 
-    -- ITEMS PAGE (unchanged)
+    -- ITEMS PAGE
     MakeSection(ItemsPage, "SELL ITEMS")
     local itemOrder = { "Gold Coin","Diamond","Rokakaka","Pure Rokakaka","Mysterious Arrow","Lucky Arrow","Lucky Stone Mask","Ancient Scroll","Caesar's Headband","Stone Mask","Rib Cage of The Saint's Corpse","Quinton's Glove","Zeppeli's Hat","Clackers","Steel Ball","Dio's Diary", }
     for _, name in ipairs(itemOrder) do
@@ -442,7 +522,7 @@ function UI:Create()
     end
     AutoCanvas(ItemsPage)
 
-    -- WEBHOOK PAGE (unchanged)
+    -- WEBHOOK PAGE
     MakeSection(WebhookPage, "DISCORD WEBHOOK")
     local whHolder = Instance.new("Frame")
     whHolder.Size             = UDim2.new(1,-4,0,42)
@@ -507,7 +587,7 @@ function UI:Create()
 
     AutoCanvas(WebhookPage)
 
-    -- CREDITS PAGE (unchanged)
+    -- CREDITS PAGE
     MakeSection(CreditsPage, "WHITE HUB")
     local creditLabel = Instance.new("TextLabel")
     creditLabel.Size             = UDim2.new(1,-4,0,44)
@@ -550,6 +630,100 @@ function UI:Create()
     end)
     AutoCanvas(CreditsPage)
 
+    -- =====================
+    -- QUESTS & NPCS TAB (NEW)
+    -- =====================
+    local QuestPage = MakePage("QuestPage")
+    
+    MakeSection(QuestPage, "QUEST FARM")
+    
+    MakeToggle(QuestPage, "Auto Choose Quest", _config and _config:Get("AutoChooseQuest"), function(v)
+        if _config then _config:Set("AutoChooseQuest", v) end
+        print("[UI] Auto Choose Quest set to " .. tostring(v))
+    end)
+    
+    local questList = {
+        "Officer Sam [Lvl. 1+]",
+        "Deputy Bertrude [Lvl. 10+]",
+        "Homeless Man Jill [Lvl. 15+]",
+        "Dracula [Lvl. 20+]",
+        "William Zeppeli [Lvl. 25+]",
+        "Doppio [Lvl. 30+]",
+        "Dio [Lvl. 35+]"
+    }
+    local questDropdown = MakeDropdown(QuestPage, "Select Quest", questList, function(selected)
+        if _config then _config:Set("SelectedQuest", selected) end
+    end)
+    
+    MakeToggle(QuestPage, "Quest Farm", _config and _config:Get("QuestFarmEnabled"), function(v)
+        if _config then _config:Set("QuestFarmEnabled", v) end
+        print("[UI] Quest Farm set to " .. tostring(v))
+    end)
+    
+    MakeSection(QuestPage, "NPC FARM")
+    
+    local npcList = { "Security Guard", "Leaky Eye Luca", "Bucciarati", "Fugo", "Pesci", "Ghiaccio", "Diavolo" }
+    local npcDropdown = MakeDropdown(QuestPage, "Select NPC", npcList, function(selected)
+        if _config then _config:Set("SelectedNPC", selected) end
+    end)
+    
+    MakeToggle(QuestPage, "NPC Farm", _config and _config:Get("NPCFarmEnabled"), function(v)
+        if _config then _config:Set("NPCFarmEnabled", v) end
+        print("[UI] NPC Farm set to " .. tostring(v))
+    end)
+    
+    MakeSection(QuestPage, "AUTO SKILLS")
+    local skillsLabel = UI:AddLabel(QuestPage, "Skills: None")
+    
+    local function updateSkillsLabel()
+        local skills = _config:Get("AutoSkills") or {}
+        local text = #skills > 0 and "Skills: " .. table.concat(skills, ", ") or "Skills: None"
+        skillsLabel.Text = text
+    end
+    updateSkillsLabel()
+    
+    MakeToggle(QuestPage, "Add Skill (press a key)", false, function(v)
+        if v then
+            local connection
+            connection = UserInputService.InputBegan:Connect(function(input, gp)
+                if gp then return end
+                local key = input.KeyCode.Name
+                if key and key ~= "Unknown" then
+                    local current = _config:Get("AutoSkills") or {}
+                    if not table.find(current, key) then
+                        table.insert(current, key)
+                        _config:Set("AutoSkills", current)
+                        updateSkillsLabel()
+                    end
+                    connection:Disconnect()
+                    local toggleObj = toggleObjects["Add Skill (press a key)"]
+                    if toggleObj then
+                        toggleObj.enabled = false
+                        toggleObj.track.BackgroundColor3 = Color3.fromRGB(30,30,42)
+                        toggleObj.circle.Position = UDim2.new(0,3,0.5,-7.5)
+                    end
+                end
+            end)
+        end
+    end)
+    
+    MakeToggle(QuestPage, "Clear Skills", false, function(v)
+        if v then
+            _config:Set("AutoSkills", {})
+            updateSkillsLabel()
+            local toggleObj = toggleObjects["Clear Skills"]
+            if toggleObj then
+                toggleObj.enabled = false
+                toggleObj.track.BackgroundColor3 = Color3.fromRGB(30,30,42)
+                toggleObj.circle.Position = UDim2.new(0,3,0.5,-7.5)
+            end
+        end
+    end)
+    
+    AutoCanvas(QuestPage)
+    
+    table.insert(tabDefs, { name="Quests/NPCs", page=QuestPage })
+    
     -- =====================
     -- TOGGLE BUTTON (open/close)
     -- =====================
