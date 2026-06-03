@@ -1,5 +1,6 @@
 -- =====================
--- NPCFarm.lua 
+-- NPCFarm.lua
+-- Xenon V5 style NPC farming: stand behind NPC, player underground, camera on stand.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -31,6 +32,7 @@ local function useSkill(skillKey)
     end
 end
 
+-- Xenon V5 kill logic
 local function killNPC(npcName)
     local npc = workspace.Living:FindFirstChild(npcName)
     if not npc then
@@ -44,14 +46,17 @@ local function killNPC(npcName)
         return false
     end
 
+    -- Save original position and camera subject
     local oldPos = hrp.CFrame
+    local oldCameraSubject = workspace.CurrentCamera and workspace.CurrentCamera.CameraSubject
+
+    -- Summon stand if available
     local hasStand = _inventory:HasStand()
     if hasStand then
         _inventory:SummonStand()
         task.wait(0.3)
     end
 
-    -- Foco manual na câmera (sem precisar de SetFocusOnPart)
     local standPart = nil
     if hasStand then
         local standMorph = _movement:GetCharacter("StandMorph")
@@ -60,11 +65,25 @@ local function killNPC(npcName)
         end
     end
 
+    -- Focus camera on stand (or on NPC if no stand)
+    if standPart then
+        _movement:SetFocusOnPart(standPart)
+    else
+        _movement:SetFocusOnPart(npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart)
+    end
+
+    -- Enable noclip to avoid physics issues
     _movement:SetNoclip(true)
+
     local startTime = tick()
     local killed = false
+    local yOffset = -35  -- Standard underground offset (Xenon V5 uses -35 for most NPCs)
+    if npcName == "The Idol" then
+        yOffset = 35
+    end
 
     while not stopRequested and tick() - startTime < 60 do
+        -- Refresh NPC reference (might respawn)
         npc = workspace.Living:FindFirstChild(npcName)
         if not npc then
             killed = true
@@ -77,29 +96,40 @@ local function killNPC(npcName)
             break
         end
 
-        if hasStand and standPart then
-            -- Stand atrás do NPC
+        if standPart and standPart.Parent then
+            -- Place stand behind NPC (exactly like Xenon V5)
             standPart.CFrame = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
-            -- Player embaixo do chão
-            hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-3, -2) + Vector3.new(0, -35, 0)
+            -- Place player relative to stand: behind and far below
+            hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-3, -2) + Vector3.new(0, yOffset, 0)
         else
-            hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y - 15, npcHRP.Position.Z)
+            -- Fallback: just teleport player above/below NPC (less safe)
+            hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y + yOffset, npcHRP.Position.Z)
         end
 
+        -- Attack (M1)
         pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
 
+        -- Auto skills
         local skills = _config:Get("AutoSkills")
         if type(skills) == "table" then
             for _, sk in ipairs(skills) do
                 useSkill(sk)
             end
         end
-        task.wait(0.3)
+
+        task.wait(0.3)  -- Xenon V5 uses 0.3 sec loop
     end
 
+    -- Cleanup
+    _movement:ClearFocus()
     _movement:SetNoclip(false)
     if hrp then
         hrp.CFrame = oldPos
+    end
+    if oldCameraSubject then
+        pcall(function()
+            workspace.CurrentCamera.CameraSubject = oldCameraSubject
+        end)
     end
 
     return killed
@@ -112,7 +142,7 @@ function NPCFarm:Start()
     end
     stopRequested = false
     isRunning = true
-    print("[NPCFarm] Starting NPC farming...")
+    print("[NPCFarm] Starting NPC farming (Xenon V5 style)...")
 
     while not stopRequested do
         local npcName = _config:Get("SelectedNPC")
