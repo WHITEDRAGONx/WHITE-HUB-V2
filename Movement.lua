@@ -1,5 +1,6 @@
 -- =====================
--- Movement.lua 
+-- Movement.lua
+-- Handles all character movement: teleport, noclip, freeze, camera.
 -- =====================
 
 local Players    = game:GetService("Players")
