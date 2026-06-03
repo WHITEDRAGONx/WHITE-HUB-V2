@@ -1,7 +1,6 @@
 -- =====================
 -- Inventory.lua
 -- Handles item counting, selling, buying, and keep-item logic.
--- Includes stand detection and summoning for combat.
 -- =====================
 
 local Players            = game:GetService("Players")
@@ -167,9 +166,7 @@ function Inventory:BuyLucky()
     end
 end
 
--- =====================
--- Stand utilities (for quest/NPC farming, Xenon V5 style)
--- =====================
+-- Stand utilities
 function Inventory:GetCurrentStand()
     if Player and Player.PlayerStats and Player.PlayerStats.Stand then
         return Player.PlayerStats.Stand.Value
