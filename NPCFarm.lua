@@ -1,6 +1,6 @@
 -- =====================
 -- NPCFarm.lua
--- Handles farming a specific NPC repeatedly.
+-- Handles farming a specific NPC repeatedly (stand-based, no damage).
 -- =====================
 
 local Players = game:GetService("Players")
@@ -10,6 +10,7 @@ local NPCFarm = {}
 
 local _config    = nil
 local _movement  = nil
+local _inventory = nil
 local _serverHop = nil
 local _webhook   = nil
 
@@ -19,6 +20,7 @@ local stopRequested = false
 function NPCFarm:Init(Modules)
     _config    = Modules.Config
     _movement  = Modules.Movement
+    _inventory = Modules.Inventory
     _serverHop = Modules.ServerHop
     _webhook   = Modules.Webhook
 end
@@ -33,36 +35,68 @@ end
 local function killNPC(npcName)
     local npc = workspace.Living:FindFirstChild(npcName)
     if not npc then
-        print("[NPCFarm] NPC not found: " .. npcName .. " – waiting for respawn...")
+        print("[NPCFarm] NPC not found: " .. npcName .. " – waiting...")
         return false
     end
+
     local hrp = _movement:GetCharacter("HumanoidRootPart")
     local remoteFunc = _movement:GetCharacter("RemoteFunction")
-    if not hrp then
+    if not hrp or not remoteFunc then
         return false
     end
+
+    -- Save original position
+    local oldPos = hrp.CFrame
+
+    -- Summon stand if available
+    local hasStand = _inventory:HasStand()
+    if hasStand then
+        _inventory:SummonStand()
+        task.wait(0.3)
+    end
+
+    -- Focus camera on NPC
+    _movement:SetFocusOnPart(npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart)
+    _movement:SetNoclip(true)
+
     local startTime = tick()
-    while true do
-        if stopRequested then
-            return false
-        end
-        if tick() - startTime > 60 then
-            print("[NPCFarm] Timeout killing " .. npcName .. " – retrying next cycle.")
-            return false
-        end
+    local killed = false
+
+    while not stopRequested and tick() - startTime < 60 do
         npc = workspace.Living:FindFirstChild(npcName)
         if not npc then
+            killed = true
             break
         end
-        local npcHum = npc:FindFirstChildWhichIsA("Humanoid")
         local npcHRP = npc:FindFirstChild("HumanoidRootPart")
-        if not npcHum or not npcHRP or npcHum.Health <= 0 then
+        local npcHum = npc:FindFirstChildWhichIsA("Humanoid")
+        if not npcHRP or not npcHum or npcHum.Health <= 0 then
+            killed = true
             break
         end
-        hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y - 15, npcHRP.Position.Z)
-        if remoteFunc then
-            pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
+
+        if hasStand then
+            local standMorph = _movement:GetCharacter("StandMorph")
+            if standMorph and standMorph.PrimaryPart then
+                -- Place stand behind NPC
+                standMorph.PrimaryPart.CFrame = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
+                -- Position player relative to stand (Y offset -35 to stay underground)
+                local yOffset = -35
+                if npcName == "The Idol" then yOffset = 35 end
+                hrp.CFrame = standMorph.PrimaryPart.CFrame +
+                             standMorph.PrimaryPart.CFrame.LookVector * math.random(-3, -2) +
+                             Vector3.new(0, yOffset, 0)
+            else
+                hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y - 15, npcHRP.Position.Z)
+            end
+        else
+            hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y - 15, npcHRP.Position.Z)
         end
+
+        -- Attack
+        pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
+
+        -- Auto skills
         local skills = _config:Get("AutoSkills")
         if type(skills) == "table" then
             for _, sk in ipairs(skills) do
@@ -71,7 +105,15 @@ local function killNPC(npcName)
         end
         task.wait(0.3)
     end
-    return true
+
+    -- Cleanup
+    _movement:ClearFocus()
+    _movement:SetNoclip(false)
+    if hrp then
+        hrp.CFrame = oldPos
+    end
+
+    return killed
 end
 
 function NPCFarm:Start()
@@ -81,8 +123,8 @@ function NPCFarm:Start()
     end
     stopRequested = false
     isRunning = true
-    print("[NPCFarm] Starting NPC farming...")
-    
+    print("[NPCFarm] Starting NPC farming (Xenon-style)...")
+
     while not stopRequested do
         local npcName = _config:Get("SelectedNPC")
         if not npcName or npcName == "" then
@@ -95,7 +137,7 @@ function NPCFarm:Start()
                 print("[NPCFarm] Killed " .. npcName .. ". Waiting for respawn...")
                 task.wait(5)
             else
-                print("[NPCFarm] Failed to kill NPC or NPC not found. Waiting before retry...")
+                print("[NPCFarm] Failed to kill NPC. Waiting before retry...")
                 task.wait(5)
             end
         end
