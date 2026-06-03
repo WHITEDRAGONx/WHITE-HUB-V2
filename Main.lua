@@ -101,6 +101,26 @@ end
 
 if not allLoaded then
     ERR("BOOT", "Critical modules failed to load. Aborting.")
+    -- Try to show a simple error GUI
+    pcall(function()
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "WhiteHubError"
+        screenGui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui")
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(0, 300, 0, 100)
+        frame.Position = UDim2.new(0.5, -150, 0.5, -50)
+        frame.BackgroundColor3 = Color3.fromRGB(30,30,40)
+        frame.Parent = screenGui
+        Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, -10, 1, -10)
+        label.Position = UDim2.new(0, 5, 0, 5)
+        label.BackgroundTransparency = 1
+        label.Text = "WHITE HUB Failed to load.\nCheck console for details."
+        label.TextColor3 = Color3.fromRGB(255,100,100)
+        label.TextWrapped = true
+        label.Parent = frame
+    end)
     return
 end
 
@@ -114,6 +134,7 @@ if Modules.Config and Modules.Config.Load then
     else LOG("CONFIG", "✅ Config loaded.") end
 else
     ERR("CONFIG", "Config.Load() is missing.")
+    return
 end
 
 -- Initialize modules
@@ -170,7 +191,7 @@ LOG("BOOT", "✅ WHITE HUB — all systems running (manual UI active).")
 -- AUTO PRESTIGE LOADER
 -- =====================
 LOG("AUTOPRESTIGE", "Launching AutoPrestige loader...")
-getgenv().AutoPrestigeEnabled = Modules.Config:Get("AutoPrestige") == true
+getgenv().AutoPrestigeEnabled = Modules.Config and Modules.Config:Get("AutoPrestige") == true
 
 task.spawn(function()
     local url = BASE_URL .. "AutoPrestige.lua"
