@@ -1,5 +1,5 @@
 -- =====================
--- UI.lua (WHITE HUB V2) - with dynamic NPC detection
+-- UI.lua (WHITE HUB V2) - with unique NPC list
 -- =====================
 
 local Players          = game:GetService("Players")
@@ -19,7 +19,7 @@ local _npcFarm    = nil
 local toggleObjects = {}
 local dropdownContainer = nil
 
--- Dynamic NPC list
+-- Dynamic NPC list (unique names)
 local dynamicNPCList = {}
 local npcDropdownRefresh = nil
 
@@ -332,7 +332,6 @@ local function MakeStyledDropdown(parent, labelText, options, callback)
         end
     end)
 
-    -- Return button and refresh function
     return dropdownBtn, function(newOptions)
         currentOptions = newOptions
         dropdownBtn.Text = newOptions[1] or "None"
@@ -396,14 +395,18 @@ function UI:SetToggleValue(toggleName, value)
 end
 
 -- =====================
--- DYNAMIC NPC DETECTION (Xenon V5 style)
+-- DYNAMIC NPC DETECTION (unique names, Xenon V5 style)
 -- =====================
 local function updateNPCList()
-    local newList = {}
+    local uniqueNames = {}
     for _, obj in pairs(workspace.Living:GetChildren()) do
         if obj:FindFirstChild("Spawn") then
-            table.insert(newList, obj.Name)
+            uniqueNames[obj.Name] = true
         end
+    end
+    local newList = {}
+    for name in pairs(uniqueNames) do
+        table.insert(newList, name)
     end
     table.sort(newList)
     dynamicNPCList = newList
@@ -601,7 +604,6 @@ function UI:Create()
         if _config then _config:Set("BuyLucky", v) end
     end)
 
-    -- Stay in Private Server toggle
     MakeToggle(FarmPage, "Stay in Private Server", _config and _config:Get("StayInPrivateServer"), function(v)
         if _config then _config:Set("StayInPrivateServer", v) end
         print("[UI] Stay in Private Server set to " .. tostring(v))
@@ -668,7 +670,7 @@ function UI:Create()
     
     MakeSection(QuestPage, "NPC FARM")
     
-    -- Dynamic NPC dropdown
+    -- Dynamic NPC dropdown (unique names)
     local npcBtn, npcRefresh = MakeStyledDropdown(QuestPage, "Select NPC", dynamicNPCList, function(selected)
         if _config then _config:Set("SelectedNPC", selected) end
     end)
