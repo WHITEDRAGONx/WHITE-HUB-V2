@@ -1,5 +1,6 @@
 -- =====================
--- Movement.lua (com FreezeAtPosition e noclip seletivo)
+-- Movement.lua
+-- Handles all character movement: teleport, noclip, freeze, camera.
 -- =====================
 
 local Players    = game:GetService("Players")
@@ -11,15 +12,16 @@ local Movement = {}
 
 local _noclipActive = false
 
+-- Noclip loop that ignores stand parts
 RunService.Stepped:Connect(function()
     if not _noclipActive then return end
     local char = Player.Character
     if not char then return end
+    local standMorph = char:FindFirstChild("StandMorph")
     for _, part in pairs(char:GetDescendants()) do
         if part:IsA("BasePart") then
-            local standMorph = char:FindFirstChild("StandMorph")
             if standMorph and part:IsDescendantOf(standMorph) then
-                -- keep stand collision active
+                -- keep collision for stand
             else
                 part.CanCollide = false
             end
@@ -32,11 +34,11 @@ function Movement:SetNoclip(value)
     if not value then
         local char = Player.Character
         if not char then return end
+        local standMorph = char:FindFirstChild("StandMorph")
         for _, part in pairs(char:GetDescendants()) do
             if part:IsA("BasePart") then
-                local standMorph = char:FindFirstChild("StandMorph")
                 if standMorph and part:IsDescendantOf(standMorph) then
-                    -- keep stand collision
+                    -- keep collision for stand
                 else
                     part.CanCollide = true
                 end
@@ -70,11 +72,6 @@ function Movement:Unfreeze(bv)
     if bv and bv.Parent then bv:Destroy() end
 end
 
-function Movement:FreezeAtPosition(cf)
-    self:Teleport(cf)
-    return self:Freeze()
-end
-
 function Movement:FixCamera()
     pcall(function()
         local camera = Workspace.CurrentCamera
@@ -99,6 +96,7 @@ function Movement:GetCharacter(part)
     return char:FindFirstChild(part) or nil
 end
 
+-- Focus camera on a specific part (Xenon style)
 function Movement:SetFocusOnPart(part)
     local char = Player.Character
     if not char then return end
