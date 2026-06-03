@@ -81,6 +81,27 @@ function Movement:GetCharacter(part)
     return char:FindFirstChild(part) or nil
 end
 
+-- Focus camera on a part (used for stand combat)
+function Movement:SetFocusOnPart(part)
+    local char = Player.Character
+    if not char then return end
+    local focus = char:FindFirstChild("FocusCam")
+    if not focus then
+        focus = Instance.new("ObjectValue")
+        focus.Name = "FocusCam"
+        focus.Parent = char
+    end
+    focus.Value = part
+end
+
+function Movement:ClearFocus()
+    local char = Player.Character
+    if char then
+        local focus = char:FindFirstChild("FocusCam")
+        if focus then focus:Destroy() end
+    end
+end
+
 Player.CharacterAdded:Connect(function()
     task.wait(2)
     Movement:FixCamera()
