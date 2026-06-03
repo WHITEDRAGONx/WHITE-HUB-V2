@@ -1,5 +1,5 @@
 -- =====================
--- Main.lua (modified for manual UI with active creation)
+-- Main.lua (fixed loading and error handling)
 -- =====================
 
 repeat task.wait(1) until game:IsLoaded()
@@ -38,8 +38,8 @@ local function Load(file)
         t = t + 0.5
     end
 
-    if not response then
-        ERR("LOAD", "Timeout or fetch failed: " .. file)
+    if not response or response == "" then
+        ERR("LOAD", "Timeout or empty response: " .. file)
         return nil
     end
 
@@ -50,8 +50,9 @@ local function Load(file)
 
     LOG("LOAD", "Download OK: " .. file .. " (" .. #response .. " bytes)")
 
+    -- Safe compilation
     local func, compileErr = loadstring(response)
-    if not func then
+    if not func or type(func) ~= "function" then
         ERR("COMPILE", file .. " — " .. tostring(compileErr))
         return nil
     end
@@ -101,7 +102,6 @@ end
 
 if not allLoaded then
     ERR("BOOT", "Critical modules failed to load. Aborting.")
-    -- Try to show a simple error GUI
     pcall(function()
         local screenGui = Instance.new("ScreenGui")
         screenGui.Name = "WhiteHubError"
@@ -137,27 +137,33 @@ else
     return
 end
 
--- Initialize modules
+-- Initialize modules (ensure every module has an Init method, even if empty)
 local initOrder = { "Webhook", "Movement", "ServerHop", "Inventory", "UI", "QuestFarm", "NPCFarm", "Farm" }
 
 LOG("INIT", "Initializing modules...")
 for _, moduleName in ipairs(initOrder) do
     local module = Modules[moduleName]
-    if module and module.Init then
-        LOG("INIT", "Initializing " .. moduleName .. "...")
-        local ok, err = pcall(function() module:Init(Modules) end)
-        if not ok then ERR("INIT", moduleName .. ":Init() — " .. tostring(err))
-        else LOG("INIT", "✅ " .. moduleName .. " initialized.") end
+    if module then
+        if module.Init then
+            LOG("INIT", "Initializing " .. moduleName .. "...")
+            local ok, err = pcall(function() module:Init(Modules) end)
+            if not ok then ERR("INIT", moduleName .. ":Init() — " .. tostring(err))
+            else LOG("INIT", "✅ " .. moduleName .. " initialized.") end
+        else
+            -- Create an empty Init method if missing
+            module.Init = function() end
+            LOG("INIT", "⚠️ " .. moduleName .. " had no Init() — added empty one.")
+        end
     else
-        ERR("INIT", moduleName .. " has no Init() — skipping.")
+        ERR("INIT", moduleName .. " is nil — cannot initialize.")
     end
 end
 
--- Expose modules globally for the manual UI
+-- Expose modules globally
 _G.WhiteHubModules = Modules
 LOG("UI", "Manual UI will use _G.WhiteHubModules")
 
--- ========== UI CREATION ==========
+-- UI Creation
 LOG("UI", "Creating UI...")
 if Modules.UI and Modules.UI.Create then
     local ok, err = pcall(function() Modules.UI:Create() end)
@@ -187,9 +193,7 @@ end
 
 LOG("BOOT", "✅ WHITE HUB — all systems running (manual UI active).")
 
--- =====================
--- AUTO PRESTIGE LOADER
--- =====================
+-- Auto Prestige Loader
 LOG("AUTOPRESTIGE", "Launching AutoPrestige loader...")
 getgenv().AutoPrestigeEnabled = Modules.Config and Modules.Config:Get("AutoPrestige") == true
 
@@ -211,12 +215,12 @@ task.spawn(function()
         t = t + 0.5
     end
 
-    if not response then
-        ERR("AUTOPRESTIGE", "Timeout or fetch failed for AutoPrestige.lua — skipping.")
+    if not response or response == "" then
+        ERR("AUTOPRESTIGE", "Timeout or empty response — skipping.")
         return
     end
     if response:find("<!DOCTYPE") or response:sub(1,3) == "404" then
-        ERR("AUTOPRESTIGE", "AutoPrestige.lua not found on GitHub (404) — skipping.")
+        ERR("AUTOPRESTIGE", "AutoPrestige.lua not found (404) — skipping.")
         return
     end
 
