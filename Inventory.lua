@@ -166,7 +166,9 @@ function Inventory:BuyLucky()
     end
 end
 
--- Stand utilities
+-- =====================
+-- Stand utilities (for combat farm)
+-- =====================
 function Inventory:GetCurrentStand()
     if Player and Player.PlayerStats and Player.PlayerStats.Stand then
         return Player.PlayerStats.Stand.Value
@@ -186,7 +188,7 @@ function Inventory:SummonStand()
     local summoned = char:FindFirstChild("SummonedStand")
     if summoned and summoned.Value == false then
         remoteFunc:InvokeServer("ToggleStand", "Toggle")
-        task.wait(0.5)
+        task.wait(0.3)
         return true
     end
     return false
