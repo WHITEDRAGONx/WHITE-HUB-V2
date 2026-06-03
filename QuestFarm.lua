@@ -1,6 +1,6 @@
 -- =====================
 -- QuestFarm.lua
--- Xenon V5 style quest farming with cooldown handling.
+-- Handles automatic quest farming: accept, kill NPCs (stand maxforce + player frozen), collect items.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -38,6 +38,7 @@ function QuestFarm:Init(Modules)
     _serverHop = Modules.ServerHop
     _webhook   = Modules.Webhook
 
+    -- Monitor quest completion via GUI (Xenon V5 method)
     task.spawn(function()
         while true do
             task.wait(0.5)
@@ -81,19 +82,7 @@ local function useSkill(skillKey)
     end
 end
 
-local function disableStandConstraints(standMorph)
-    if not standMorph then return end
-    local primary = standMorph.PrimaryPart
-    if not primary then return end
-    local standAttach = primary:FindFirstChild("StandAttach")
-    if standAttach then
-        local alignPos = standAttach:FindFirstChild("AlignPosition")
-        local alignOri = standAttach:FindFirstChild("AlignOrientation")
-        if alignPos then alignPos.Enabled = false end
-        if alignOri then alignOri.Enabled = false end
-    end
-end
-
+-- Accept quest (Xenon V5 method) with cooldown detection
 local function acceptQuest(questName)
     if questOnCooldown and tick() < cooldownUntil then
         local remaining = math.ceil(cooldownUntil - tick())
@@ -146,6 +135,27 @@ local function acceptQuest(questName)
     return true
 end
 
+-- Strengthen stand constraints (Xenon V5 method)
+local function strengthenStandConstraints(standMorph)
+    if not standMorph then return end
+    local primary = standMorph.PrimaryPart
+    if not primary then return end
+    local standAttach = primary:FindFirstChild("StandAttach")
+    if standAttach then
+        local alignPos = standAttach:FindFirstChild("AlignPosition")
+        local alignOri = standAttach:FindFirstChild("AlignOrientation")
+        if alignPos then
+            alignPos.MaxForce = 9e9
+            alignPos.Enabled = true
+        end
+        if alignOri then
+            alignOri.MaxTorque = 9e9
+            alignOri.Enabled = true
+        end
+    end
+end
+
+-- Xenon V5 kill logic with player freeze (BodyVelocity) to avoid void falls
 local function killQuestNPC(npcName)
     local npc = workspace.Living:FindFirstChild(npcName)
     if not npc then
@@ -174,27 +184,29 @@ local function killQuestNPC(npcName)
         standMorph = _movement:GetCharacter("StandMorph")
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
-            disableStandConstraints(standMorph)
-            if standPart then
-                standPart.CanCollide = true
-            end
+            strengthenStandConstraints(standMorph)
+            standPart.CanCollide = true
         end
     end
 
+    -- Focus camera on stand (or NPC if no stand)
     if standPart then
         _movement:SetFocusOnPart(standPart)
     else
         _movement:SetFocusOnPart(npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart)
     end
 
+    -- Enable noclip only for player (stand keeps collision)
     _movement:SetNoclip(true)
     local yOffset = -35
+    if npcName == "The Idol" then yOffset = 35 end
+
+    -- Freeze player at initial underground position (WHITE HUB method)
+    local playerCF = CFrame.new(hrp.Position.X, hrp.Position.Y + yOffset, hrp.Position.Z)
+    freezeBV = _movement:FreezeAtPosition(playerCF)
 
     local startTime = tick()
     local killed = false
-
-    local playerUndergroundCF = CFrame.new(hrp.Position.X, hrp.Position.Y + yOffset, hrp.Position.Z)
-    freezeBV = _movement:FreezeAtPosition(playerUndergroundCF)
 
     while not stopRequested and tick() - startTime < 60 do
         npc = workspace.Living:FindFirstChild(npcName)
@@ -210,48 +222,46 @@ local function killQuestNPC(npcName)
         end
 
         if standPart and standPart.Parent then
-            local standTargetCF = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
-            standPart.CFrame = standTargetCF
-            local playerTargetCF = CFrame.new(standPart.Position.X, standPart.Position.Y + yOffset, standPart.Position.Z)
+            -- Position stand behind NPC
+            standPart.CFrame = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
+            -- Update player position relative to stand (underground)
+            local newPlayerCF = CFrame.new(standPart.Position.X, standPart.Position.Y + yOffset, standPart.Position.Z)
             if freezeBV and freezeBV.Parent then
-                hrp.CFrame = playerTargetCF
+                hrp.CFrame = newPlayerCF
             else
-                freezeBV = _movement:FreezeAtPosition(playerTargetCF)
+                freezeBV = _movement:FreezeAtPosition(newPlayerCF)
             end
+        else
+            -- Fallback: just teleport player
+            hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y + yOffset, npcHRP.Position.Z)
         end
 
+        -- Attack
         pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
 
+        -- Auto skills
         local skills = _config:Get("AutoSkills")
         if type(skills) == "table" then
             for _, sk in ipairs(skills) do
                 useSkill(sk)
             end
         end
+
         task.wait(0.3)
     end
 
+    -- Cleanup
     _movement:ClearFocus()
     _movement:Unfreeze(freezeBV)
     _movement:SetNoclip(false)
-    hrp.CFrame = oldPos
-
-    if standMorph then
-        local primary = standMorph.PrimaryPart
-        if primary then
-            local standAttach = primary:FindFirstChild("StandAttach")
-            if standAttach then
-                local alignPos = standAttach:FindFirstChild("AlignPosition")
-                local alignOri = standAttach:FindFirstChild("AlignOrientation")
-                if alignPos then alignPos.Enabled = true end
-                if alignOri then alignOri.Enabled = true end
-            end
-        end
+    if hrp then
+        hrp.CFrame = oldPos
     end
 
     return killed
 end
 
+-- Collect ground items (e.g., Gold Coin for Homeless Man Jill)
 local function collectItem(itemName, requiredAmount)
     local inventory = _inventory
     local movement  = _movement
@@ -291,6 +301,7 @@ local function collectItem(itemName, requiredAmount)
     return inventory:Count(itemName) >= requiredAmount
 end
 
+-- Execute a single quest
 local function runQuest(questName)
     local data = questInfo[questName]
     if not data then
@@ -301,7 +312,7 @@ local function runQuest(questName)
     print("[QuestFarm] Accepting quest: " .. questName)
     local accepted = acceptQuest(questName)
     if not accepted then
-        return false
+        return false  -- Cooldown active, will retry later
     end
     task.wait(2)
 
@@ -337,7 +348,7 @@ function QuestFarm:Start()
     isRunning = true
     questCompleted = false
     questOnCooldown = false
-    print("[QuestFarm] Starting quest farming...")
+    print("[QuestFarm] Starting quest farming (hybrid: stand maxforce + player frozen)...")
 
     while not stopRequested do
         local autoChoose = _config:Get("AutoChooseQuest")
@@ -348,13 +359,13 @@ function QuestFarm:Start()
         end
 
         if not currentQuest or currentQuest == "" then
-            print("[QuestFarm] No quest selected. Waiting...")
+            print("[QuestFarm] No quest selected or found. Waiting...")
             task.wait(5)
         else
             print("[QuestFarm] Working on quest: " .. currentQuest)
             local ok = runQuest(currentQuest)
             if ok then
-                print("[QuestFarm] Quest completed!")
+                print("[QuestFarm] Quest completed! Moving to next.")
                 task.wait(3)
                 questCompleted = false
                 questOnCooldown = false
@@ -363,7 +374,7 @@ function QuestFarm:Start()
                     print("[QuestFarm] Quest on cooldown, waiting 60 seconds...")
                     task.wait(60)
                 else
-                    print("[QuestFarm] Failed, retrying in 5 seconds...")
+                    print("[QuestFarm] Failed to complete quest. Retrying in 5 seconds...")
                     task.wait(5)
                 end
             end
