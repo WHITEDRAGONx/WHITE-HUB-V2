@@ -1,6 +1,6 @@
 -- =====================
 -- QuestFarm.lua
--- Handles automatic quest farming: accept, kill NPCs (stand maxforce + player frozen), collect items.
+-- Handles automatic quest farming: accept, kill NPCs (stand fixed + player frozen), collect items.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -82,6 +82,34 @@ local function useSkill(skillKey)
     end
 end
 
+-- Disable stand constraints so it doesn't snap back to player
+local function disableStandConstraints(standMorph)
+    if not standMorph then return end
+    local primary = standMorph.PrimaryPart
+    if not primary then return end
+    local standAttach = primary:FindFirstChild("StandAttach")
+    if standAttach then
+        local alignPos = standAttach:FindFirstChild("AlignPosition")
+        local alignOri = standAttach:FindFirstChild("AlignOrientation")
+        if alignPos then alignPos.Enabled = false end
+        if alignOri then alignOri.Enabled = false end
+    end
+end
+
+-- Re-enable constraints after combat (optional)
+local function enableStandConstraints(standMorph)
+    if not standMorph then return end
+    local primary = standMorph.PrimaryPart
+    if not primary then return end
+    local standAttach = primary:FindFirstChild("StandAttach")
+    if standAttach then
+        local alignPos = standAttach:FindFirstChild("AlignPosition")
+        local alignOri = standAttach:FindFirstChild("AlignOrientation")
+        if alignPos then alignPos.Enabled = true end
+        if alignOri then alignOri.Enabled = true end
+    end
+end
+
 -- Accept quest (Xenon V5 method) with cooldown detection
 local function acceptQuest(questName)
     if questOnCooldown and tick() < cooldownUntil then
@@ -135,26 +163,6 @@ local function acceptQuest(questName)
     return true
 end
 
--- Strengthen stand constraints (Xenon V5 method)
-local function strengthenStandConstraints(standMorph)
-    if not standMorph then return end
-    local primary = standMorph.PrimaryPart
-    if not primary then return end
-    local standAttach = primary:FindFirstChild("StandAttach")
-    if standAttach then
-        local alignPos = standAttach:FindFirstChild("AlignPosition")
-        local alignOri = standAttach:FindFirstChild("AlignOrientation")
-        if alignPos then
-            alignPos.MaxForce = 9e9
-            alignPos.Enabled = true
-        end
-        if alignOri then
-            alignOri.MaxTorque = 9e9
-            alignOri.Enabled = true
-        end
-    end
-end
-
 -- Xenon V5 kill logic with player freeze (BodyVelocity) to avoid void falls
 local function killQuestNPC(npcName)
     local npc = workspace.Living:FindFirstChild(npcName)
@@ -184,7 +192,7 @@ local function killQuestNPC(npcName)
         standMorph = _movement:GetCharacter("StandMorph")
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
-            strengthenStandConstraints(standMorph)
+            disableStandConstraints(standMorph)   -- CRITICAL: kill snap-back
             standPart.CanCollide = true
         end
     end
@@ -222,9 +230,9 @@ local function killQuestNPC(npcName)
         end
 
         if standPart and standPart.Parent then
-            -- Position stand behind NPC
+            -- Force stand position behind NPC (every loop)
             standPart.CFrame = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
-            -- Update player position relative to stand (underground)
+            -- Update player position relative to stand
             local newPlayerCF = CFrame.new(standPart.Position.X, standPart.Position.Y + yOffset, standPart.Position.Z)
             if freezeBV and freezeBV.Parent then
                 hrp.CFrame = newPlayerCF
@@ -232,7 +240,6 @@ local function killQuestNPC(npcName)
                 freezeBV = _movement:FreezeAtPosition(newPlayerCF)
             end
         else
-            -- Fallback: just teleport player
             hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y + yOffset, npcHRP.Position.Z)
         end
 
@@ -256,6 +263,11 @@ local function killQuestNPC(npcName)
     _movement:SetNoclip(false)
     if hrp then
         hrp.CFrame = oldPos
+    end
+
+    -- Re-enable constraints (optional)
+    if standMorph then
+        enableStandConstraints(standMorph)
     end
 
     return killed
@@ -348,7 +360,7 @@ function QuestFarm:Start()
     isRunning = true
     questCompleted = false
     questOnCooldown = false
-    print("[QuestFarm] Starting quest farming (hybrid: stand maxforce + player frozen)...")
+    print("[QuestFarm] Starting quest farming (hybrid: stand fixed + player frozen)...")
 
     while not stopRequested do
         local autoChoose = _config:Get("AutoChooseQuest")
