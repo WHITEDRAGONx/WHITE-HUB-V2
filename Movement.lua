@@ -12,12 +12,18 @@ local Movement = {}
 
 local _noclipActive = false
 
+-- Noclip loop (only affects player parts, not stand)
 RunService.Stepped:Connect(function()
     if not _noclipActive then return end
     local char = Player.Character
     if not char then return end
     for _, part in pairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then part.CanCollide = false end
+        if part:IsA("BasePart") then
+            -- Do not disable collision on stand parts
+            if not part:IsDescendantOf(char:FindFirstChild("StandMorph")) then
+                part.CanCollide = false
+            end
+        end
     end
 end)
 
@@ -27,7 +33,11 @@ function Movement:SetNoclip(value)
         local char = Player.Character
         if not char then return end
         for _, part in pairs(char:GetDescendants()) do
-            if part:IsA("BasePart") then part.CanCollide = true end
+            if part:IsA("BasePart") then
+                if not part:IsDescendantOf(char:FindFirstChild("StandMorph")) then
+                    part.CanCollide = true
+                end
+            end
         end
     end
 end
@@ -57,7 +67,6 @@ function Movement:Unfreeze(bv)
     if bv and bv.Parent then bv:Destroy() end
 end
 
--- Freeze the player at a specific CFrame (teleport + freeze)
 function Movement:FreezeAtPosition(cf)
     self:Teleport(cf)
     return self:Freeze()
@@ -87,7 +96,7 @@ function Movement:GetCharacter(part)
     return char:FindFirstChild(part) or nil
 end
 
--- Focus camera on a specific part (used for stand combat)
+-- Focus camera on a specific part
 function Movement:SetFocusOnPart(part)
     local char = Player.Character
     if not char then return end
