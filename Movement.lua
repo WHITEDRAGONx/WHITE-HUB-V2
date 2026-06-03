@@ -12,6 +12,10 @@ local Movement = {}
 
 local _noclipActive = false
 
+function Movement:Init(Modules)
+    -- No dependencies needed, but required for compatibility
+end
+
 RunService.Stepped:Connect(function()
     if not _noclipActive then return end
     local char = Player.Character
