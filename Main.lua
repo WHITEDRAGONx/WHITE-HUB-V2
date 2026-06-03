@@ -1,5 +1,5 @@
 -- =====================
--- Main.lua 
+-- Main.lua (modified for manual UI with active creation)
 -- =====================
 
 repeat task.wait(1) until game:IsLoaded()
