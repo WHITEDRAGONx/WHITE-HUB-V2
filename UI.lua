@@ -1,5 +1,5 @@
 -- =====================
--- UI.lua (WHITE HUB V2)
+-- UI.lua (WHITE HUB V2) - with dynamic NPC detection
 -- =====================
 
 local Players          = game:GetService("Players")
@@ -18,6 +18,11 @@ local _npcFarm    = nil
 
 local toggleObjects = {}
 local dropdownContainer = nil
+
+-- Dynamic NPC list
+local dynamicNPCList = {}
+local npcDropdownBtn = nil
+local npcDropdownRefreshFunc = nil
 
 function UI:Init(Modules)
     _config     = Modules.Config
@@ -195,7 +200,8 @@ local function ensureDropdownContainer()
     return dropdownContainer
 end
 
-local function MakeStyledDropdown(parent, labelText, options, callback)
+-- Styled dropdown with dynamic options (Xenon V5 style)
+local function MakeDynamicDropdown(parent, labelText, getOptionsFunc, callback, initialOptions)
     local holder = Instance.new("Frame")
     holder.Size = UDim2.new(1,-4,0,36)
     holder.BackgroundColor3 = Color3.fromRGB(22,22,30)
@@ -222,7 +228,7 @@ local function MakeStyledDropdown(parent, labelText, options, callback)
     dropdownBtn.Position = UDim2.new(0.5,0,0,0)
     dropdownBtn.BackgroundColor3 = Color3.fromRGB(40,40,55)
     dropdownBtn.BorderSizePixel = 0
-    dropdownBtn.Text = options[1] or "None"
+    dropdownBtn.Text = (initialOptions and initialOptions[1]) or "None"
     dropdownBtn.TextColor3 = Color3.fromRGB(255,255,255)
     dropdownBtn.TextSize = 14
     dropdownBtn.Font = Enum.Font.Gotham
@@ -234,6 +240,37 @@ local function MakeStyledDropdown(parent, labelText, options, callback)
 
     local menu = nil
     local active = false
+
+    local function rebuildMenu()
+        if not menu then return end
+        -- Clear existing buttons
+        for _, child in pairs(menu:GetChildren()) do
+            if child:IsA("TextButton") then child:Destroy() end
+        end
+        local options = getOptionsFunc()
+        for _, opt in ipairs(options) do
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(1,0,0,30)
+            btn.BackgroundColor3 = Color3.fromRGB(40,40,55)
+            btn.Text = opt
+            btn.TextColor3 = Color3.fromRGB(255,255,255)
+            btn.TextSize = 14
+            btn.Font = Enum.Font.Gotham
+            btn.Parent = menu
+            Instance.new("UICorner", btn).CornerRadius = UDim.new(0,4)
+            local optStroke = Instance.new("UIStroke", btn)
+            optStroke.Color = Color3.fromRGB(60,55,85)
+            optStroke.Thickness = 1
+            btn.MouseButton1Click:Connect(function()
+                dropdownBtn.Text = opt
+                callback(opt)
+                hideMenu()
+            end)
+        end
+        local count = #options
+        local height = math.min(count * 32, 150)
+        menu.Size = UDim2.new(0, 200, 0, height)
+    end
 
     local function hideMenu()
         if menu then
@@ -260,29 +297,7 @@ local function MakeStyledDropdown(parent, labelText, options, callback)
         local menuLayout = Instance.new("UIListLayout", menu)
         menuLayout.Padding = UDim.new(0,2)
 
-        for _, opt in ipairs(options) do
-            local btn = Instance.new("TextButton")
-            btn.Size = UDim2.new(1,0,0,30)
-            btn.BackgroundColor3 = Color3.fromRGB(40,40,55)
-            btn.Text = opt
-            btn.TextColor3 = Color3.fromRGB(255,255,255)
-            btn.TextSize = 14
-            btn.Font = Enum.Font.Gotham
-            btn.Parent = menu
-            Instance.new("UICorner", btn).CornerRadius = UDim.new(0,4)
-            local optStroke = Instance.new("UIStroke", btn)
-            optStroke.Color = Color3.fromRGB(60,55,85)
-            optStroke.Thickness = 1
-            btn.MouseButton1Click:Connect(function()
-                dropdownBtn.Text = opt
-                callback(opt)
-                hideMenu()
-            end)
-        end
-
-        local count = #options
-        local height = math.min(count * 32, 150)
-        menu.Size = UDim2.new(0, 200, 0, height)
+        rebuildMenu()
 
         local btnAbsPos = dropdownBtn.AbsolutePosition
         local btnSize = dropdownBtn.AbsoluteSize
@@ -319,64 +334,49 @@ local function MakeStyledDropdown(parent, labelText, options, callback)
         end
     end)
 
-    return dropdownBtn
-end
-
-function UI:ShowPopup(message, duration)
-    duration = duration or 3
-    local screenGui = PlayerGui:FindFirstChild("WhiteHubPopup")
-    if not screenGui then
-        screenGui = Instance.new("ScreenGui")
-        screenGui.Name = "WhiteHubPopup"
-        screenGui.ResetOnSpawn = false
-        screenGui.Parent = PlayerGui
-    end
-    
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 240, 0, 44)
-    frame.Position = UDim2.new(1, -250, 1, -60)
-    frame.BackgroundColor3 = Color3.fromRGB(22,22,30)
-    frame.BackgroundTransparency = 0.1
-    frame.BorderSizePixel = 0
-    frame.Parent = screenGui
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(0,8)
-    local stroke = Instance.new("UIStroke", frame)
-    stroke.Color = Color3.fromRGB(145,95,255)
-    stroke.Thickness = 1.2
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -10, 1, 0)
-    label.Position = UDim2.new(0, 5, 0, 0)
-    label.BackgroundTransparency = 1
-    label.Text = message
-    label.TextColor3 = Color3.fromRGB(255,255,255)
-    label.TextSize = 13
-    label.Font = Enum.Font.Gotham
-    label.TextWrapped = true
-    label.Parent = frame
-    
-    TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {BackgroundTransparency = 0}):Play()
-    task.delay(duration, function()
-        TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {BackgroundTransparency = 1}):Play()
-        task.wait(0.3)
-        frame:Destroy()
-    end)
-end
-
-function UI:SetToggleValue(toggleName, value)
-    local toggle = toggleObjects[toggleName]
-    if toggle then
-        toggle.enabled = value
-        toggle.track.BackgroundColor3 = value and Color3.fromRGB(145,95,255) or Color3.fromRGB(30,30,42)
-        toggle.circle.Position = value and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
-        if _config then _config:Set(toggleName, value) end
-    else
-        warn("[UI] Toggle not found: " .. toggleName)
+    return dropdownBtn, function() 
+        if menu and menu.Visible then rebuildMenu() end
     end
 end
 
+-- =====================
+-- DYNAMIC NPC DETECTION (Xenon V5 style)
+-- =====================
+local function updateNPCList()
+    local newList = {}
+    for _, obj in pairs(workspace.Living:GetChildren()) do
+        if obj:FindFirstChild("Spawn") then
+            table.insert(newList, obj.Name)
+        end
+    end
+    table.sort(newList)
+    dynamicNPCList = newList
+    return newList
+end
+
+local function getNPCList()
+    return dynamicNPCList
+end
+
+-- =====================
+-- UI CREATION
+-- =====================
 function UI:Create()
     CreateCreditsPopup()
+
+    -- Initial NPC scan
+    updateNPCList()
+    -- Watch for NPC changes
+    workspace.Living.ChildAdded:Connect(function(child)
+        if child:FindFirstChild("Spawn") then
+            updateNPCList()
+            if npcDropdownRefreshFunc then npcDropdownRefreshFunc() end
+        end
+    end)
+    workspace.Living.ChildRemoved:Connect(function()
+        updateNPCList()
+        if npcDropdownRefreshFunc then npcDropdownRefreshFunc() end
+    end)
 
     local W, H = 380, 320
 
@@ -552,7 +552,6 @@ function UI:Create()
         if _config then _config:Set("BuyLucky", v) end
     end)
 
-    -- Stay in Private Server toggle (NEW)
     MakeToggle(FarmPage, "Stay in Private Server", _config and _config:Get("StayInPrivateServer"), function(v)
         if _config then _config:Set("StayInPrivateServer", v) end
         print("[UI] Stay in Private Server set to " .. tostring(v))
@@ -619,10 +618,11 @@ function UI:Create()
     
     MakeSection(QuestPage, "NPC FARM")
     
-    local npcList = { "Security Guard", "Leaky Eye Luca", "Bucciarati", "Fugo", "Pesci", "Ghiaccio", "Diavolo" }
-    local npcDropdown = MakeStyledDropdown(QuestPage, "Select NPC", npcList, function(selected)
+    -- Dynamic NPC dropdown (Xenon V5 style)
+    local npcDropdownBtn, npcRefresh = MakeDynamicDropdown(QuestPage, "Select NPC", getNPCList, function(selected)
         if _config then _config:Set("SelectedNPC", selected) end
-    end)
+    end, getNPCList())
+    npcDropdownRefreshFunc = npcRefresh
     
     MakeToggle(QuestPage, "NPC Farm", _config and _config:Get("NPCFarmEnabled"), function(v)
         if _config then _config:Set("NPCFarmEnabled", v) end
