@@ -1,6 +1,7 @@
 -- =====================
 -- QuestFarm.lua
--- Xenon V5 style quest farming: accept quest, kill NPCs underground, collect items.
+-- Xenon V5 style quest farming: accept quest, kill NPCs (fixed stand + frozen player),
+-- collect items, and handle quest cooldown.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -18,6 +19,8 @@ local isRunning = false
 local stopRequested = false
 local currentQuest = nil
 local questCompleted = false
+local questOnCooldown = false
+local cooldownUntil = 0
 
 local questInfo = {
     ["Officer Sam [Lvl. 1+]"] = { enemy = "Thug" },
@@ -36,7 +39,7 @@ function QuestFarm:Init(Modules)
     _serverHop = Modules.ServerHop
     _webhook   = Modules.Webhook
 
-    -- Monitor quest completion via GUI (Xenon V5 method)
+    -- Monitor quest completion via GUI
     task.spawn(function()
         while true do
             task.wait(0.5)
@@ -80,8 +83,30 @@ local function useSkill(skillKey)
     end
 end
 
--- Accept quest (Xenon V5 method)
+-- Disable stand constraints
+local function disableStandConstraints(standMorph)
+    if not standMorph then return end
+    local primary = standMorph.PrimaryPart
+    if not primary then return end
+    local standAttach = primary:FindFirstChild("StandAttach")
+    if standAttach then
+        local alignPos = standAttach:FindFirstChild("AlignPosition")
+        local alignOri = standAttach:FindFirstChild("AlignOrientation")
+        if alignPos then alignPos.Enabled = false end
+        if alignOri then alignOri.Enabled = false end
+    end
+end
+
+-- Accept quest (with cooldown detection)
 local function acceptQuest(questName)
+    -- Check cooldown
+    if questOnCooldown and tick() < cooldownUntil then
+        local remaining = math.ceil(cooldownUntil - tick())
+        print("[QuestFarm] Quest on cooldown, waiting " .. remaining .. " seconds.")
+        return false
+    end
+    questOnCooldown = false
+
     local dialogueNPC = workspace.Dialogues:FindFirstChild(questName)
     if not dialogueNPC then
         print("[QuestFarm] Dialogue NPC not found: " .. questName)
@@ -99,6 +124,7 @@ local function acceptQuest(questName)
     local npcDialogue = dialogueValue.Value
     print("[QuestFarm] Accepting quest from " .. npcDialogue)
 
+    -- Try to accept quest
     for i = 1, 10 do
         remoteEvent:FireServer("EndDialogue", {
             ["NPC"] = npcDialogue,
@@ -111,6 +137,19 @@ local function acceptQuest(questName)
         })
         task.wait(0.2)
     end
+
+    -- Check if quest was actually accepted (maybe cooldown message appeared)
+    task.wait(1)
+    -- If quest progress didn't change, assume cooldown
+    local progress = Player.PlayerStats.QuestProgress.Value
+    local maxProgress = Player.PlayerStats.QuestMaxProgress.Value
+    if progress == 0 and maxProgress == 0 then
+        print("[QuestFarm] Quest acceptance failed - possibly on cooldown. Waiting 60 seconds.")
+        questOnCooldown = true
+        cooldownUntil = tick() + 60
+        return false
+    end
+
     questCompleted = false
     return true
 end
@@ -130,7 +169,7 @@ local function killQuestNPC(npcName)
     end
 
     local oldPos = hrp.CFrame
-    local oldCameraSubject = workspace.CurrentCamera and workspace.CurrentCamera.CameraSubject
+    local freezeBV = nil
 
     local hasStand = _inventory:HasStand()
     if hasStand then
@@ -139,10 +178,12 @@ local function killQuestNPC(npcName)
     end
 
     local standPart = nil
+    local standMorph = nil
     if hasStand then
-        local standMorph = _movement:GetCharacter("StandMorph")
+        standMorph = _movement:GetCharacter("StandMorph")
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
+            disableStandConstraints(standMorph)
         end
     end
 
@@ -153,10 +194,13 @@ local function killQuestNPC(npcName)
     end
 
     _movement:SetNoclip(true)
+    local yOffset = -35
 
     local startTime = tick()
     local killed = false
-    local yOffset = -35  -- underground
+
+    local targetPosCF = CFrame.new(hrp.Position.X, hrp.Position.Y + yOffset, hrp.Position.Z)
+    freezeBV = _movement:FreezeAtPosition(targetPosCF)
 
     while not stopRequested and tick() - startTime < 60 do
         npc = workspace.Living:FindFirstChild(npcName)
@@ -173,7 +217,14 @@ local function killQuestNPC(npcName)
 
         if standPart and standPart.Parent then
             standPart.CFrame = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
-            hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-3, -2) + Vector3.new(0, yOffset, 0)
+            local standPos = standPart.Position
+            local playerCF = CFrame.new(standPos.X, standPos.Y + yOffset, standPos.Z) +
+                             standPart.CFrame.LookVector * math.random(-3, -2)
+            if freezeBV and freezeBV.Parent then
+                hrp.CFrame = playerCF
+            else
+                freezeBV = _movement:FreezeAtPosition(playerCF)
+            end
         else
             hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y + yOffset, npcHRP.Position.Z)
         end
@@ -190,17 +241,27 @@ local function killQuestNPC(npcName)
     end
 
     _movement:ClearFocus()
+    _movement:Unfreeze(freezeBV)
     _movement:SetNoclip(false)
     hrp.CFrame = oldPos
-    if oldCameraSubject then
-        pcall(function()
-            workspace.CurrentCamera.CameraSubject = oldCameraSubject
-        end)
+
+    if standMorph then
+        local primary = standMorph.PrimaryPart
+        if primary then
+            local standAttach = primary:FindFirstChild("StandAttach")
+            if standAttach then
+                local alignPos = standAttach:FindFirstChild("AlignPosition")
+                local alignOri = standAttach:FindFirstChild("AlignOrientation")
+                if alignPos then alignPos.Enabled = true end
+                if alignOri then alignOri.Enabled = true end
+            end
+        end
     end
+
     return killed
 end
 
--- Collect ground items (e.g., Gold Coin for Homeless Man Jill)
+-- Collect ground items
 local function collectItem(itemName, requiredAmount)
     local inventory = _inventory
     local movement  = _movement
@@ -223,14 +284,16 @@ local function collectItem(itemName, requiredAmount)
             local hrp = movement:GetCharacter("HumanoidRootPart")
             if hrp then
                 local oldCF = hrp.CFrame
-                hrp.CFrame = itemModel.PrimaryPart.CFrame - Vector3.new(0, 10, 0)
+                local bv = movement:Freeze()
+                movement:SetNoclip(true)
+                movement:Teleport(itemModel.PrimaryPart.CFrame - Vector3.new(0, 10, 0))
                 task.wait(0.3)
                 local prompt = itemModel:FindFirstChildWhichIsA("ProximityPrompt")
-                if prompt then
-                    fireproximityprompt(prompt)
-                end
+                if prompt then fireproximityprompt(prompt) end
                 task.wait(0.6)
-                hrp.CFrame = oldCF
+                movement:Unfreeze(bv)
+                movement:Teleport(oldCF)
+                movement:SetNoclip(false)
             end
         end
         task.wait(1)
@@ -247,7 +310,10 @@ local function runQuest(questName)
     end
 
     print("[QuestFarm] Accepting quest: " .. questName)
-    acceptQuest(questName)
+    local accepted = acceptQuest(questName)
+    if not accepted then
+        return false  -- Cooldown active, will retry later
+    end
     task.wait(2)
 
     if questCompleted then
@@ -281,7 +347,8 @@ function QuestFarm:Start()
     stopRequested = false
     isRunning = true
     questCompleted = false
-    print("[QuestFarm] Starting quest farming (Xenon V5 style)...")
+    questOnCooldown = false
+    print("[QuestFarm] Starting quest farming (with cooldown handling)...")
 
     while not stopRequested do
         local autoChoose = _config:Get("AutoChooseQuest")
@@ -301,9 +368,15 @@ function QuestFarm:Start()
                 print("[QuestFarm] Quest completed! Moving to next.")
                 task.wait(3)
                 questCompleted = false
+                questOnCooldown = false
             else
-                print("[QuestFarm] Failed to complete quest. Retrying...")
-                task.wait(5)
+                if questOnCooldown then
+                    print("[QuestFarm] Quest on cooldown, waiting...")
+                    task.wait(60)  -- Wait for cooldown
+                else
+                    print("[QuestFarm] Failed to complete quest. Retrying in 5 seconds...")
+                    task.wait(5)
+                end
             end
         end
         task.wait(1)
