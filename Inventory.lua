@@ -105,7 +105,7 @@ function Inventory:AllKeepItemsFull()
 end
 
 function Inventory:SellAll()
-    if not _config:Get("FarmEnabled") then return end
+    if not _config:Get("FarmEnabled") then return end   -- Pause if farm disabled
     if self:IsMoneyMaxed() then
         print("[Inventory] Money already maxed — skipping sell.")
         return
@@ -138,7 +138,7 @@ function Inventory:SellAll()
 end
 
 function Inventory:BuyLucky()
-    if not _config:Get("FarmEnabled") then return end
+    if not _config:Get("FarmEnabled") then return end   -- Pause if farm disabled
     if not _config:Get("BuyLucky") then return end
     if self:Count("Lucky Arrow") >= LUCKY_STOP then return end
     local money = self:GetMoney()
@@ -164,34 +164,6 @@ function Inventory:BuyLucky()
             break
         end
     end
-end
-
--- =====================
--- Stand utilities (for quest/NPC farming)
--- =====================
-function Inventory:GetCurrentStand()
-    if Player and Player.PlayerStats and Player.PlayerStats.Stand then
-        return Player.PlayerStats.Stand.Value
-    end
-    return "None"
-end
-
-function Inventory:HasStand()
-    return self:GetCurrentStand() ~= "None"
-end
-
-function Inventory:SummonStand()
-    local char = Player.Character
-    if not char then return false end
-    local remoteFunc = char:FindFirstChild("RemoteFunction")
-    if not remoteFunc then return false end
-    local summoned = char:FindFirstChild("SummonedStand")
-    if summoned and summoned.Value == false then
-        remoteFunc:InvokeServer("ToggleStand", "Toggle")
-        task.wait(0.5)
-        return true
-    end
-    return false
 end
 
 return Inventory
