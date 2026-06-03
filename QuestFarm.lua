@@ -1,6 +1,7 @@
 -- =====================
 -- QuestFarm.lua
--- Handles automatic quest farming: accept, kill NPCs (stand fixed + player frozen), collect items.
+-- Handles automatic quest farming: accept, kill NPCs (stand with BodyVelocity lock),
+-- collect items, and cooldown handling.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -38,7 +39,7 @@ function QuestFarm:Init(Modules)
     _serverHop = Modules.ServerHop
     _webhook   = Modules.Webhook
 
-    -- Monitor quest completion via GUI (Xenon V5 method)
+    -- Monitor quest completion via GUI
     task.spawn(function()
         while true do
             task.wait(0.5)
@@ -82,12 +83,10 @@ local function useSkill(skillKey)
     end
 end
 
--- Disable stand constraints so it doesn't snap back to player
-local function disableStandConstraints(standMorph)
-    if not standMorph then return end
-    local primary = standMorph.PrimaryPart
-    if not primary then return end
-    local standAttach = primary:FindFirstChild("StandAttach")
+-- Disable stand constraints (so it doesn't snap back)
+local function disableStandConstraints(standPart)
+    if not standPart then return end
+    local standAttach = standPart:FindFirstChild("StandAttach")
     if standAttach then
         local alignPos = standAttach:FindFirstChild("AlignPosition")
         local alignOri = standAttach:FindFirstChild("AlignOrientation")
@@ -96,21 +95,7 @@ local function disableStandConstraints(standMorph)
     end
 end
 
--- Re-enable constraints after combat (optional)
-local function enableStandConstraints(standMorph)
-    if not standMorph then return end
-    local primary = standMorph.PrimaryPart
-    if not primary then return end
-    local standAttach = primary:FindFirstChild("StandAttach")
-    if standAttach then
-        local alignPos = standAttach:FindFirstChild("AlignPosition")
-        local alignOri = standAttach:FindFirstChild("AlignOrientation")
-        if alignPos then alignPos.Enabled = true end
-        if alignOri then alignOri.Enabled = true end
-    end
-end
-
--- Accept quest (Xenon V5 method) with cooldown detection
+-- Accept quest with cooldown detection
 local function acceptQuest(questName)
     if questOnCooldown and tick() < cooldownUntil then
         local remaining = math.ceil(cooldownUntil - tick())
@@ -163,7 +148,7 @@ local function acceptQuest(questName)
     return true
 end
 
--- Xenon V5 kill logic with player freeze (BodyVelocity) to avoid void falls
+-- Kill NPC with stand using BodyVelocity lock (same as NPCFarm)
 local function killQuestNPC(npcName)
     local npc = workspace.Living:FindFirstChild(npcName)
     if not npc then
@@ -179,6 +164,7 @@ local function killQuestNPC(npcName)
 
     local oldPos = hrp.CFrame
     local freezeBV = nil
+    local standVelocity = nil
 
     local hasStand = _inventory:HasStand()
     if hasStand then
@@ -192,24 +178,26 @@ local function killQuestNPC(npcName)
         standMorph = _movement:GetCharacter("StandMorph")
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
-            disableStandConstraints(standMorph)   -- CRITICAL: kill snap-back
+            disableStandConstraints(standPart)
             standPart.CanCollide = true
+            standPart.CustomPhysicalProperties = PhysicalProperties.new(1, 0.1, 0.1)
+            standVelocity = Instance.new("BodyVelocity")
+            standVelocity.Velocity = Vector3.new(0, 0, 0)
+            standVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+            standVelocity.Parent = standPart
         end
     end
 
-    -- Focus camera on stand (or NPC if no stand)
     if standPart then
         _movement:SetFocusOnPart(standPart)
     else
         _movement:SetFocusOnPart(npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart)
     end
 
-    -- Enable noclip only for player (stand keeps collision)
     _movement:SetNoclip(true)
     local yOffset = -35
     if npcName == "The Idol" then yOffset = 35 end
 
-    -- Freeze player at initial underground position (WHITE HUB method)
     local playerCF = CFrame.new(hrp.Position.X, hrp.Position.Y + yOffset, hrp.Position.Z)
     freezeBV = _movement:FreezeAtPosition(playerCF)
 
@@ -230,9 +218,7 @@ local function killQuestNPC(npcName)
         end
 
         if standPart and standPart.Parent then
-            -- Force stand position behind NPC (every loop)
             standPart.CFrame = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
-            -- Update player position relative to stand
             local newPlayerCF = CFrame.new(standPart.Position.X, standPart.Position.Y + yOffset, standPart.Position.Z)
             if freezeBV and freezeBV.Parent then
                 hrp.CFrame = newPlayerCF
@@ -243,10 +229,8 @@ local function killQuestNPC(npcName)
             hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y + yOffset, npcHRP.Position.Z)
         end
 
-        -- Attack
         pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
 
-        -- Auto skills
         local skills = _config:Get("AutoSkills")
         if type(skills) == "table" then
             for _, sk in ipairs(skills) do
@@ -257,23 +241,18 @@ local function killQuestNPC(npcName)
         task.wait(0.3)
     end
 
-    -- Cleanup
     _movement:ClearFocus()
     _movement:Unfreeze(freezeBV)
+    if standVelocity then standVelocity:Destroy() end
     _movement:SetNoclip(false)
     if hrp then
         hrp.CFrame = oldPos
     end
 
-    -- Re-enable constraints (optional)
-    if standMorph then
-        enableStandConstraints(standMorph)
-    end
-
     return killed
 end
 
--- Collect ground items (e.g., Gold Coin for Homeless Man Jill)
+-- Collect ground items
 local function collectItem(itemName, requiredAmount)
     local inventory = _inventory
     local movement  = _movement
@@ -313,7 +292,7 @@ local function collectItem(itemName, requiredAmount)
     return inventory:Count(itemName) >= requiredAmount
 end
 
--- Execute a single quest
+-- Run a single quest
 local function runQuest(questName)
     local data = questInfo[questName]
     if not data then
@@ -324,7 +303,7 @@ local function runQuest(questName)
     print("[QuestFarm] Accepting quest: " .. questName)
     local accepted = acceptQuest(questName)
     if not accepted then
-        return false  -- Cooldown active, will retry later
+        return false
     end
     task.wait(2)
 
@@ -360,7 +339,7 @@ function QuestFarm:Start()
     isRunning = true
     questCompleted = false
     questOnCooldown = false
-    print("[QuestFarm] Starting quest farming (hybrid: stand fixed + player frozen)...")
+    print("[QuestFarm] Starting quest farming (stand BodyVelocity lock)...")
 
     while not stopRequested do
         local autoChoose = _config:Get("AutoChooseQuest")
