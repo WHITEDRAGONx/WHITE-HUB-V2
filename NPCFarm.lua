@@ -1,6 +1,6 @@
 -- =====================
 -- NPCFarm.lua
--- Xenon V5 style NPC farming: stand behind NPC, player underground, camera on stand.
+-- Xenon V5 style NPC farming: stand fixed behind NPC, player frozen underground.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -32,7 +32,20 @@ local function useSkill(skillKey)
     end
 end
 
--- Xenon V5 kill logic
+-- Disable stand constraints so it stays where we put it
+local function disableStandConstraints(standMorph)
+    if not standMorph then return end
+    local primary = standMorph.PrimaryPart
+    if not primary then return end
+    local standAttach = primary:FindFirstChild("StandAttach")
+    if standAttach then
+        local alignPos = standAttach:FindFirstChild("AlignPosition")
+        local alignOri = standAttach:FindFirstChild("AlignOrientation")
+        if alignPos then alignPos.Enabled = false end
+        if alignOri then alignOri.Enabled = false end
+    end
+end
+
 local function killNPC(npcName)
     local npc = workspace.Living:FindFirstChild(npcName)
     if not npc then
@@ -46,9 +59,9 @@ local function killNPC(npcName)
         return false
     end
 
-    -- Save original position and camera subject
+    -- Save original position
     local oldPos = hrp.CFrame
-    local oldCameraSubject = workspace.CurrentCamera and workspace.CurrentCamera.CameraSubject
+    local freezeBV = nil
 
     -- Summon stand if available
     local hasStand = _inventory:HasStand()
@@ -58,32 +71,35 @@ local function killNPC(npcName)
     end
 
     local standPart = nil
+    local standMorph = nil
     if hasStand then
-        local standMorph = _movement:GetCharacter("StandMorph")
+        standMorph = _movement:GetCharacter("StandMorph")
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
+            disableStandConstraints(standMorph)
         end
     end
 
-    -- Focus camera on stand (or on NPC if no stand)
+    -- Focus camera on stand (or NPC if no stand)
     if standPart then
         _movement:SetFocusOnPart(standPart)
     else
         _movement:SetFocusOnPart(npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart)
     end
 
-    -- Enable noclip to avoid physics issues
+    -- Enable noclip and freeze player underground
     _movement:SetNoclip(true)
+    local yOffset = -35  -- underground offset
+    if npcName == "The Idol" then yOffset = 35 end
 
     local startTime = tick()
     local killed = false
-    local yOffset = -35  -- Standard underground offset (Xenon V5 uses -35 for most NPCs)
-    if npcName == "The Idol" then
-        yOffset = 35
-    end
+
+    -- Initial freeze at position below NPC
+    local targetPosCF = CFrame.new(hrp.Position.X, hrp.Position.Y + yOffset, hrp.Position.Z)
+    freezeBV = _movement:FreezeAtPosition(targetPosCF)
 
     while not stopRequested and tick() - startTime < 60 do
-        -- Refresh NPC reference (might respawn)
         npc = workspace.Living:FindFirstChild(npcName)
         if not npc then
             killed = true
@@ -97,16 +113,24 @@ local function killNPC(npcName)
         end
 
         if standPart and standPart.Parent then
-            -- Place stand behind NPC (exactly like Xenon V5)
+            -- Place stand behind NPC (fixed position each loop)
             standPart.CFrame = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
-            -- Place player relative to stand: behind and far below
-            hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-3, -2) + Vector3.new(0, yOffset, 0)
+            -- Keep player frozen at the same underground position (relative to stand)
+            local standPos = standPart.Position
+            local playerCF = CFrame.new(standPos.X, standPos.Y + yOffset, standPos.Z) +
+                             standPart.CFrame.LookVector * math.random(-3, -2)
+            if freezeBV and freezeBV.Parent then
+                hrp.CFrame = playerCF
+                -- BodyVelocity keeps velocity zero, but we also set CFrame each loop to be safe
+            else
+                freezeBV = _movement:FreezeAtPosition(playerCF)
+            end
         else
-            -- Fallback: just teleport player above/below NPC (less safe)
+            -- Fallback: just teleport player above/below NPC
             hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y + yOffset, npcHRP.Position.Z)
         end
 
-        -- Attack (M1)
+        -- Attack
         pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
 
         -- Auto skills
@@ -117,19 +141,28 @@ local function killNPC(npcName)
             end
         end
 
-        task.wait(0.3)  -- Xenon V5 uses 0.3 sec loop
+        task.wait(0.3)
     end
 
     -- Cleanup
     _movement:ClearFocus()
+    _movement:Unfreeze(freezeBV)
     _movement:SetNoclip(false)
     if hrp then
         hrp.CFrame = oldPos
     end
-    if oldCameraSubject then
-        pcall(function()
-            workspace.CurrentCamera.CameraSubject = oldCameraSubject
-        end)
+    -- Re-enable stand constraints (optional, but good practice)
+    if standMorph then
+        local primary = standMorph.PrimaryPart
+        if primary then
+            local standAttach = primary:FindFirstChild("StandAttach")
+            if standAttach then
+                local alignPos = standAttach:FindFirstChild("AlignPosition")
+                local alignOri = standAttach:FindFirstChild("AlignOrientation")
+                if alignPos then alignPos.Enabled = true end
+                if alignOri then alignOri.Enabled = true end
+            end
+        end
     end
 
     return killed
@@ -142,7 +175,7 @@ function NPCFarm:Start()
     end
     stopRequested = false
     isRunning = true
-    print("[NPCFarm] Starting NPC farming (Xenon V5 style)...")
+    print("[NPCFarm] Starting NPC farming (fixed stand + frozen player)...")
 
     while not stopRequested do
         local npcName = _config:Get("SelectedNPC")
