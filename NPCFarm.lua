@@ -1,5 +1,5 @@
 -- =====================
--- NPCFarm.lua (Xenon V5 style - fast attacks, delay 0.1s)
+-- NPCFarm.lua (Xenon V5 style - stable camera, 0.2s loop)
 -- =====================
 
 local Players = game:GetService("Players")
@@ -77,6 +77,7 @@ local function killNPC(npcName)
         end
     end
 
+    -- Set focus ONCE (do not change during loop)
     if standPart then
         _movement:SetFocusOnPart(standPart)
     else
@@ -111,12 +112,11 @@ local function killNPC(npcName)
             hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y + yOffset, npcHRP.Position.Z)
         end
 
-        -- Attack async (no delay between attacks)
+        -- Attack async
         task.spawn(function()
             pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
         end)
 
-        -- Auto skills async
         local skills = _config:Get("AutoSkills")
         if type(skills) == "table" then
             for _, sk in ipairs(skills) do
@@ -124,7 +124,7 @@ local function killNPC(npcName)
             end
         end
 
-        task.wait(0.1)  -- Fast attack speed (0.1 seconds)
+        task.wait(0.2)  -- Slightly slower to stabilize camera
     end
 
     _movement:ClearFocus()
@@ -145,7 +145,7 @@ function NPCFarm:Start()
     end
     stopRequested = false
     isRunning = true
-    print("[NPCFarm] Starting NPC farming (fast attacks, 0.1s delay)...")
+    print("[NPCFarm] Starting NPC farming (stable camera, 0.2s delay)...")
 
     while not stopRequested do
         local npcName = _config:Get("SelectedNPC")
