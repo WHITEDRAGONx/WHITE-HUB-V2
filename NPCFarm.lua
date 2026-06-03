@@ -1,6 +1,5 @@
 -- =====================
--- NPCFarm.lua
--- Handles farming a specific NPC repeatedly (stand-based, no damage).
+-- NPCFarm.lua 
 -- =====================
 
 local Players = game:GetService("Players")
@@ -35,7 +34,7 @@ end
 local function killNPC(npcName)
     local npc = workspace.Living:FindFirstChild(npcName)
     if not npc then
-        print("[NPCFarm] NPC not found: " .. npcName .. " – waiting...")
+        print("[NPCFarm] NPC not found: " .. npcName)
         return false
     end
 
@@ -45,20 +44,23 @@ local function killNPC(npcName)
         return false
     end
 
-    -- Save original position
     local oldPos = hrp.CFrame
-
-    -- Summon stand if available
     local hasStand = _inventory:HasStand()
     if hasStand then
         _inventory:SummonStand()
         task.wait(0.3)
     end
 
-    -- Focus camera on NPC
-    _movement:SetFocusOnPart(npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart)
-    _movement:SetNoclip(true)
+    -- Foco manual na câmera (sem precisar de SetFocusOnPart)
+    local standPart = nil
+    if hasStand then
+        local standMorph = _movement:GetCharacter("StandMorph")
+        if standMorph and standMorph.PrimaryPart then
+            standPart = standMorph.PrimaryPart
+        end
+    end
 
+    _movement:SetNoclip(true)
     local startTime = tick()
     local killed = false
 
@@ -75,28 +77,17 @@ local function killNPC(npcName)
             break
         end
 
-        if hasStand then
-            local standMorph = _movement:GetCharacter("StandMorph")
-            if standMorph and standMorph.PrimaryPart then
-                -- Place stand behind NPC
-                standMorph.PrimaryPart.CFrame = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
-                -- Position player relative to stand (Y offset -35 to stay underground)
-                local yOffset = -35
-                if npcName == "The Idol" then yOffset = 35 end
-                hrp.CFrame = standMorph.PrimaryPart.CFrame +
-                             standMorph.PrimaryPart.CFrame.LookVector * math.random(-3, -2) +
-                             Vector3.new(0, yOffset, 0)
-            else
-                hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y - 15, npcHRP.Position.Z)
-            end
+        if hasStand and standPart then
+            -- Stand atrás do NPC
+            standPart.CFrame = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
+            -- Player embaixo do chão
+            hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-3, -2) + Vector3.new(0, -35, 0)
         else
             hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y - 15, npcHRP.Position.Z)
         end
 
-        -- Attack
         pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
 
-        -- Auto skills
         local skills = _config:Get("AutoSkills")
         if type(skills) == "table" then
             for _, sk in ipairs(skills) do
@@ -106,8 +97,6 @@ local function killNPC(npcName)
         task.wait(0.3)
     end
 
-    -- Cleanup
-    _movement:ClearFocus()
     _movement:SetNoclip(false)
     if hrp then
         hrp.CFrame = oldPos
@@ -123,7 +112,7 @@ function NPCFarm:Start()
     end
     stopRequested = false
     isRunning = true
-    print("[NPCFarm] Starting NPC farming (Xenon-style)...")
+    print("[NPCFarm] Starting NPC farming...")
 
     while not stopRequested do
         local npcName = _config:Get("SelectedNPC")
