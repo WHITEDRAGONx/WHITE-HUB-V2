@@ -1,5 +1,5 @@
 -- =====================
--- UI.lua (WHITE HUB V2) - with unique NPC list
+-- UI.lua (WHITE HUB V2) - updated for CombatFarm
 -- =====================
 
 local Players          = game:GetService("Players")
@@ -11,10 +11,9 @@ local PlayerGui = Player:WaitForChild("PlayerGui")
 
 local UI = {}
 
-local _config     = nil
-local _webhook    = nil
-local _questFarm  = nil
-local _npcFarm    = nil
+local _config      = nil
+local _webhook     = nil
+local _combatFarm  = nil
 
 local toggleObjects = {}
 local dropdownContainer = nil
@@ -24,10 +23,9 @@ local dynamicNPCList = {}
 local npcDropdownRefresh = nil
 
 function UI:Init(Modules)
-    _config     = Modules.Config
-    _webhook    = Modules.Webhook
-    _questFarm  = Modules.QuestFarm
-    _npcFarm    = Modules.NPCFarm
+    _config      = Modules.Config
+    _webhook     = Modules.Webhook
+    _combatFarm  = Modules.CombatFarm
 end
 
 -- =====================
@@ -659,12 +657,13 @@ function UI:Create()
         if _config then _config:Set("SelectedQuest", selected) end
     end)
     
+    -- Quest Farm toggle (uses CombatFarm)
     MakeToggle(QuestPage, "Quest Farm", _config and _config:Get("QuestFarmEnabled"), function(v)
         if _config then _config:Set("QuestFarmEnabled", v) end
         if v then
-            if _questFarm then _questFarm:Start() end
+            if _combatFarm then _combatFarm:StartQuest() end
         else
-            if _questFarm then _questFarm:Stop() end
+            if _combatFarm then _combatFarm:Stop() end
         end
     end)
     
@@ -676,12 +675,13 @@ function UI:Create()
     end)
     npcDropdownRefresh = npcRefresh
     
+    -- NPC Farm toggle (uses CombatFarm)
     MakeToggle(QuestPage, "NPC Farm", _config and _config:Get("NPCFarmEnabled"), function(v)
         if _config then _config:Set("NPCFarmEnabled", v) end
         if v then
-            if _npcFarm then _npcFarm:Start() end
+            if _combatFarm then _combatFarm:StartNPC() end
         else
-            if _npcFarm then _npcFarm:Stop() end
+            if _combatFarm then _combatFarm:Stop() end
         end
     end)
     
