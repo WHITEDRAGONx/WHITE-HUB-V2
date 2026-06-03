@@ -1,5 +1,5 @@
 -- =====================
--- Main.lua (fixed loading and error handling)
+-- Main.lua 
 -- =====================
 
 repeat task.wait(1) until game:IsLoaded()
@@ -38,8 +38,8 @@ local function Load(file)
         t = t + 0.5
     end
 
-    if not response or response == "" then
-        ERR("LOAD", "Timeout or empty response: " .. file)
+    if not response then
+        ERR("LOAD", "Timeout or fetch failed: " .. file)
         return nil
     end
 
@@ -50,9 +50,8 @@ local function Load(file)
 
     LOG("LOAD", "Download OK: " .. file .. " (" .. #response .. " bytes)")
 
-    -- Safe compilation
     local func, compileErr = loadstring(response)
-    if not func or type(func) ~= "function" then
+    if not func then
         ERR("COMPILE", file .. " — " .. tostring(compileErr))
         return nil
     end
@@ -102,25 +101,6 @@ end
 
 if not allLoaded then
     ERR("BOOT", "Critical modules failed to load. Aborting.")
-    pcall(function()
-        local screenGui = Instance.new("ScreenGui")
-        screenGui.Name = "WhiteHubError"
-        screenGui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui")
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(0, 300, 0, 100)
-        frame.Position = UDim2.new(0.5, -150, 0.5, -50)
-        frame.BackgroundColor3 = Color3.fromRGB(30,30,40)
-        frame.Parent = screenGui
-        Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
-        local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(1, -10, 1, -10)
-        label.Position = UDim2.new(0, 5, 0, 5)
-        label.BackgroundTransparency = 1
-        label.Text = "WHITE HUB Failed to load.\nCheck console for details."
-        label.TextColor3 = Color3.fromRGB(255,100,100)
-        label.TextWrapped = true
-        label.Parent = frame
-    end)
     return
 end
 
@@ -134,36 +114,29 @@ if Modules.Config and Modules.Config.Load then
     else LOG("CONFIG", "✅ Config loaded.") end
 else
     ERR("CONFIG", "Config.Load() is missing.")
-    return
 end
 
--- Initialize modules (ensure every module has an Init method, even if empty)
+-- Initialize modules
 local initOrder = { "Webhook", "Movement", "ServerHop", "Inventory", "UI", "QuestFarm", "NPCFarm", "Farm" }
 
 LOG("INIT", "Initializing modules...")
 for _, moduleName in ipairs(initOrder) do
     local module = Modules[moduleName]
-    if module then
-        if module.Init then
-            LOG("INIT", "Initializing " .. moduleName .. "...")
-            local ok, err = pcall(function() module:Init(Modules) end)
-            if not ok then ERR("INIT", moduleName .. ":Init() — " .. tostring(err))
-            else LOG("INIT", "✅ " .. moduleName .. " initialized.") end
-        else
-            -- Create an empty Init method if missing
-            module.Init = function() end
-            LOG("INIT", "⚠️ " .. moduleName .. " had no Init() — added empty one.")
-        end
+    if module and module.Init then
+        LOG("INIT", "Initializing " .. moduleName .. "...")
+        local ok, err = pcall(function() module:Init(Modules) end)
+        if not ok then ERR("INIT", moduleName .. ":Init() — " .. tostring(err))
+        else LOG("INIT", "✅ " .. moduleName .. " initialized.") end
     else
-        ERR("INIT", moduleName .. " is nil — cannot initialize.")
+        ERR("INIT", moduleName .. " has no Init() — skipping.")
     end
 end
 
--- Expose modules globally
+-- Expose modules globally for the manual UI
 _G.WhiteHubModules = Modules
 LOG("UI", "Manual UI will use _G.WhiteHubModules")
 
--- UI Creation
+-- ========== UI CREATION ==========
 LOG("UI", "Creating UI...")
 if Modules.UI and Modules.UI.Create then
     local ok, err = pcall(function() Modules.UI:Create() end)
@@ -193,9 +166,11 @@ end
 
 LOG("BOOT", "✅ WHITE HUB — all systems running (manual UI active).")
 
--- Auto Prestige Loader
+-- =====================
+-- AUTO PRESTIGE LOADER
+-- =====================
 LOG("AUTOPRESTIGE", "Launching AutoPrestige loader...")
-getgenv().AutoPrestigeEnabled = Modules.Config and Modules.Config:Get("AutoPrestige") == true
+getgenv().AutoPrestigeEnabled = Modules.Config:Get("AutoPrestige") == true
 
 task.spawn(function()
     local url = BASE_URL .. "AutoPrestige.lua"
@@ -215,12 +190,12 @@ task.spawn(function()
         t = t + 0.5
     end
 
-    if not response or response == "" then
-        ERR("AUTOPRESTIGE", "Timeout or empty response — skipping.")
+    if not response then
+        ERR("AUTOPRESTIGE", "Timeout or fetch failed for AutoPrestige.lua — skipping.")
         return
     end
     if response:find("<!DOCTYPE") or response:sub(1,3) == "404" then
-        ERR("AUTOPRESTIGE", "AutoPrestige.lua not found (404) — skipping.")
+        ERR("AUTOPRESTIGE", "AutoPrestige.lua not found on GitHub (404) — skipping.")
         return
     end
 
