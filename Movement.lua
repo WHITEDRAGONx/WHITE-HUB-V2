@@ -1,6 +1,5 @@
 -- =====================
--- Movement.lua
--- Handles all character movement: teleport, noclip, freeze, camera.
+-- Movement.lua (com FreezeAtPosition e noclip seletivo)
 -- =====================
 
 local Players    = game:GetService("Players")
@@ -12,15 +11,16 @@ local Movement = {}
 
 local _noclipActive = false
 
--- Noclip loop (only affects player parts, not stand)
 RunService.Stepped:Connect(function()
     if not _noclipActive then return end
     local char = Player.Character
     if not char then return end
     for _, part in pairs(char:GetDescendants()) do
         if part:IsA("BasePart") then
-            -- Do not disable collision on stand parts
-            if not part:IsDescendantOf(char:FindFirstChild("StandMorph")) then
+            local standMorph = char:FindFirstChild("StandMorph")
+            if standMorph and part:IsDescendantOf(standMorph) then
+                -- keep stand collision active
+            else
                 part.CanCollide = false
             end
         end
@@ -34,7 +34,10 @@ function Movement:SetNoclip(value)
         if not char then return end
         for _, part in pairs(char:GetDescendants()) do
             if part:IsA("BasePart") then
-                if not part:IsDescendantOf(char:FindFirstChild("StandMorph")) then
+                local standMorph = char:FindFirstChild("StandMorph")
+                if standMorph and part:IsDescendantOf(standMorph) then
+                    -- keep stand collision
+                else
                     part.CanCollide = true
                 end
             end
@@ -96,7 +99,6 @@ function Movement:GetCharacter(part)
     return char:FindFirstChild(part) or nil
 end
 
--- Focus camera on a specific part
 function Movement:SetFocusOnPart(part)
     local char = Player.Character
     if not char then return end
