@@ -1,7 +1,5 @@
 -- =====================
--- QuestFarm.lua
--- Handles automatic quest farming: accept, kill NPCs (stable camera, 0.2s delay),
--- collect items, cooldown detection.
+-- QuestFarm.lua (Xenon V5 style - stand keeps collision)
 -- =====================
 
 local Players = game:GetService("Players")
@@ -39,7 +37,6 @@ function QuestFarm:Init(Modules)
     _serverHop = Modules.ServerHop
     _webhook   = Modules.Webhook
 
-    -- Monitor quest completion via GUI (Xenon V5 method)
     task.spawn(function()
         while true do
             task.wait(0.5)
@@ -83,21 +80,6 @@ local function useSkill(skillKey)
     end
 end
 
--- Disable stand constraints so it doesn't snap back to player
-local function disableStandConstraints(standMorph)
-    if not standMorph then return end
-    local primary = standMorph.PrimaryPart
-    if not primary then return end
-    local standAttach = primary:FindFirstChild("StandAttach")
-    if standAttach then
-        local alignPos = standAttach:FindFirstChild("AlignPosition")
-        local alignOri = standAttach:FindFirstChild("AlignOrientation")
-        if alignPos then alignPos.Enabled = false end
-        if alignOri then alignOri.Enabled = false end
-    end
-end
-
--- Accept quest (Xenon V5 method) with cooldown detection
 local function acceptQuest(questName)
     if questOnCooldown and tick() < cooldownUntil then
         local remaining = math.ceil(cooldownUntil - tick())
@@ -150,7 +132,6 @@ local function acceptQuest(questName)
     return true
 end
 
--- Kill NPC with stand (stable camera, 0.2s delay)
 local function killQuestNPC(npcName)
     local npc = workspace.Living:FindFirstChild(npcName)
     if not npc then
@@ -179,12 +160,10 @@ local function killQuestNPC(npcName)
         standMorph = _movement:GetCharacter("StandMorph")
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
-            disableStandConstraints(standMorph)
             standPart.CanCollide = true
         end
     end
 
-    -- Set focus ONCE (do not change during loop) to avoid camera flickering
     if standPart then
         _movement:SetFocusOnPart(standPart)
     else
@@ -219,12 +198,10 @@ local function killQuestNPC(npcName)
             hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y + yOffset, npcHRP.Position.Z)
         end
 
-        -- Attack async (no delay between attacks)
         task.spawn(function()
             pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
         end)
 
-        -- Auto skills async
         local skills = _config:Get("AutoSkills")
         if type(skills) == "table" then
             for _, sk in ipairs(skills) do
@@ -232,7 +209,7 @@ local function killQuestNPC(npcName)
             end
         end
 
-        task.wait(0.2)  -- Stable camera delay
+        task.wait(0.2)
     end
 
     _movement:ClearFocus()
@@ -246,7 +223,6 @@ local function killQuestNPC(npcName)
     return killed
 end
 
--- Collect ground items (e.g., Gold Coin for Homeless Man Jill)
 local function collectItem(itemName, requiredAmount)
     local inventory = _inventory
     local movement  = _movement
@@ -286,7 +262,6 @@ local function collectItem(itemName, requiredAmount)
     return inventory:Count(itemName) >= requiredAmount
 end
 
--- Execute a single quest
 local function runQuest(questName)
     local data = questInfo[questName]
     if not data then
@@ -297,7 +272,7 @@ local function runQuest(questName)
     print("[QuestFarm] Accepting quest: " .. questName)
     local accepted = acceptQuest(questName)
     if not accepted then
-        return false  -- Cooldown active, will retry later
+        return false
     end
     task.wait(2)
 
@@ -333,7 +308,7 @@ function QuestFarm:Start()
     isRunning = true
     questCompleted = false
     questOnCooldown = false
-    print("[QuestFarm] Starting quest farming (stable camera, 0.2s delay)...")
+    print("[QuestFarm] Starting quest farming...")
 
     while not stopRequested do
         local autoChoose = _config:Get("AutoChooseQuest")
