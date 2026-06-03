@@ -59,11 +59,10 @@ local function killNPC(npcName)
         return false
     end
 
-    -- Save original position
     local oldPos = hrp.CFrame
     local freezeBV = nil
 
-    -- Summon stand if available
+    -- Summon stand
     local hasStand = _inventory:HasStand()
     if hasStand then
         _inventory:SummonStand()
@@ -77,27 +76,31 @@ local function killNPC(npcName)
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
             disableStandConstraints(standMorph)
+            -- Ensure stand has collision enabled
+            if standPart then
+                standPart.CanCollide = true
+            end
         end
     end
 
-    -- Focus camera on stand (or NPC if no stand)
+    -- Focus camera on stand or NPC
     if standPart then
         _movement:SetFocusOnPart(standPart)
     else
         _movement:SetFocusOnPart(npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart)
     end
 
-    -- Enable noclip and freeze player underground
+    -- Enable noclip only for player (stand not affected)
     _movement:SetNoclip(true)
-    local yOffset = -35  -- underground offset
+    local yOffset = -35
     if npcName == "The Idol" then yOffset = 35 end
 
     local startTime = tick()
     local killed = false
 
-    -- Initial freeze at position below NPC
-    local targetPosCF = CFrame.new(hrp.Position.X, hrp.Position.Y + yOffset, hrp.Position.Z)
-    freezeBV = _movement:FreezeAtPosition(targetPosCF)
+    -- Freeze player at initial underground position
+    local playerUndergroundCF = CFrame.new(hrp.Position.X, hrp.Position.Y + yOffset, hrp.Position.Z)
+    freezeBV = _movement:FreezeAtPosition(playerUndergroundCF)
 
     while not stopRequested and tick() - startTime < 60 do
         npc = workspace.Living:FindFirstChild(npcName)
@@ -113,21 +116,18 @@ local function killNPC(npcName)
         end
 
         if standPart and standPart.Parent then
-            -- Place stand behind NPC (fixed position each loop)
-            standPart.CFrame = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
-            -- Keep player frozen at the same underground position (relative to stand)
-            local standPos = standPart.Position
-            local playerCF = CFrame.new(standPos.X, standPos.Y + yOffset, standPos.Z) +
-                             standPart.CFrame.LookVector * math.random(-3, -2)
+            -- Move stand behind NPC (always on ground level)
+            local standTargetCF = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
+            standPart.CFrame = standTargetCF
+            
+            -- Keep player at the same relative underground position
+            -- (stand position X/Z, but Y is far below)
+            local playerTargetCF = CFrame.new(standPart.Position.X, standPart.Position.Y + yOffset, standPart.Position.Z)
             if freezeBV and freezeBV.Parent then
-                hrp.CFrame = playerCF
-                -- BodyVelocity keeps velocity zero, but we also set CFrame each loop to be safe
+                hrp.CFrame = playerTargetCF
             else
-                freezeBV = _movement:FreezeAtPosition(playerCF)
+                freezeBV = _movement:FreezeAtPosition(playerTargetCF)
             end
-        else
-            -- Fallback: just teleport player above/below NPC
-            hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y + yOffset, npcHRP.Position.Z)
         end
 
         -- Attack
@@ -151,7 +151,8 @@ local function killNPC(npcName)
     if hrp then
         hrp.CFrame = oldPos
     end
-    -- Re-enable stand constraints (optional, but good practice)
+
+    -- Re-enable stand constraints (optional)
     if standMorph then
         local primary = standMorph.PrimaryPart
         if primary then
