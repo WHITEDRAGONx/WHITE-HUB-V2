@@ -1,5 +1,5 @@
 -- =====================
--- NPCFarm.lua (stand: AlignPosition.MaxForce=9e9; player: BodyVelocity)
+-- NPCFarm.lua (Xenon V5 style with constraints disabled)
 -- =====================
 
 local Players = game:GetService("Players")
@@ -31,8 +31,8 @@ local function useSkill(skillKey)
     end
 end
 
--- Xenon V5 method: increase constraint forces so stand stays where placed
-local function strengthenStandConstraints(standMorph)
+-- Disable stand constraints so it doesn't snap back to player
+local function disableStandConstraints(standMorph)
     if not standMorph then return end
     local primary = standMorph.PrimaryPart
     if not primary then return end
@@ -40,14 +40,22 @@ local function strengthenStandConstraints(standMorph)
     if standAttach then
         local alignPos = standAttach:FindFirstChild("AlignPosition")
         local alignOri = standAttach:FindFirstChild("AlignOrientation")
-        if alignPos then
-            alignPos.MaxForce = 9e9
-            alignPos.Enabled = true
-        end
-        if alignOri then
-            alignOri.MaxTorque = 9e9
-            alignOri.Enabled = true
-        end
+        if alignPos then alignPos.Enabled = false end
+        if alignOri then alignOri.Enabled = false end
+    end
+end
+
+-- Optionally re-enable after combat (not strictly necessary)
+local function enableStandConstraints(standMorph)
+    if not standMorph then return end
+    local primary = standMorph.PrimaryPart
+    if not primary then return end
+    local standAttach = primary:FindFirstChild("StandAttach")
+    if standAttach then
+        local alignPos = standAttach:FindFirstChild("AlignPosition")
+        local alignOri = standAttach:FindFirstChild("AlignOrientation")
+        if alignPos then alignPos.Enabled = true end
+        if alignOri then alignOri.Enabled = true end
     end
 end
 
@@ -64,7 +72,6 @@ local function killNPC(npcName)
         return false
     end
 
-    -- Save original position
     local oldPos = hrp.CFrame
     local freezeBV = nil
 
@@ -81,7 +88,7 @@ local function killNPC(npcName)
         standMorph = _movement:GetCharacter("StandMorph")
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
-            strengthenStandConstraints(standMorph)
+            disableStandConstraints(standMorph)   -- CRITICAL: kill the snap-back
             standPart.CanCollide = true
         end
     end
@@ -98,7 +105,7 @@ local function killNPC(npcName)
     local yOffset = -35
     if npcName == "The Idol" then yOffset = 35 end
 
-    -- Freeze player at initial underground position (like item farm)
+    -- Freeze player at initial underground position (WHITE HUB method)
     local playerCF = CFrame.new(hrp.Position.X, hrp.Position.Y + yOffset, hrp.Position.Z)
     freezeBV = _movement:FreezeAtPosition(playerCF)
 
@@ -119,9 +126,9 @@ local function killNPC(npcName)
         end
 
         if standPart and standPart.Parent then
-            -- Position stand behind NPC
+            -- Force stand position behind NPC (every loop)
             standPart.CFrame = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
-            -- Update player position relative to stand (underground)
+            -- Update player position relative to stand
             local newPlayerCF = CFrame.new(standPart.Position.X, standPart.Position.Y + yOffset, standPart.Position.Z)
             if freezeBV and freezeBV.Parent then
                 hrp.CFrame = newPlayerCF
@@ -129,7 +136,6 @@ local function killNPC(npcName)
                 freezeBV = _movement:FreezeAtPosition(newPlayerCF)
             end
         else
-            -- Fallback: just teleport player
             hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y + yOffset, npcHRP.Position.Z)
         end
 
@@ -155,6 +161,11 @@ local function killNPC(npcName)
         hrp.CFrame = oldPos
     end
 
+    -- Re-enable constraints (optional)
+    if standMorph then
+        enableStandConstraints(standMorph)
+    end
+
     return killed
 end
 
@@ -165,7 +176,7 @@ function NPCFarm:Start()
     end
     stopRequested = false
     isRunning = true
-    print("[NPCFarm] Starting NPC farming (stand maxforce + player frozen)...")
+    print("[NPCFarm] Starting NPC farming (constraints disabled)...")
 
     while not stopRequested do
         local npcName = _config:Get("SelectedNPC")
