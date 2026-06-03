@@ -552,7 +552,7 @@ function UI:Create()
         if _config then _config:Set("BuyLucky", v) end
     end)
 
-    -- Stay in Private Server toggle (NEW)
+    -- Stay in Private Server toggle
     MakeToggle(FarmPage, "Stay in Private Server", _config and _config:Get("StayInPrivateServer"), function(v)
         if _config then _config:Set("StayInPrivateServer", v) end
         print("[UI] Stay in Private Server set to " .. tostring(v))
@@ -869,8 +869,5 @@ function UI:Create()
         end
     end)
 end
-
-function UI:Notify(msg) print("[UI] " .. tostring(msg)) end
-function UI:SetVisible(value) end
 
 return UI
