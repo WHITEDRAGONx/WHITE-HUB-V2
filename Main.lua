@@ -1,5 +1,5 @@
 -- =====================
--- Main.lua (modified for manual UI with active creation)
+-- Main.lua (modified for CombatFarm)
 -- =====================
 
 repeat task.wait(1) until game:IsLoaded()
@@ -75,15 +75,14 @@ end
 LOG("MODULES", "Loading modules...")
 local Modules = {}
 local moduleFiles = {
-    { key = "Config",    file = "Config.lua"    },
-    { key = "Webhook",   file = "Webhook.lua"   },
-    { key = "Movement",  file = "Movement.lua"  },
-    { key = "ServerHop", file = "ServerHop.lua" },
-    { key = "Inventory", file = "Inventory.lua" },
-    { key = "UI",        file = "UI.lua"        },
-    { key = "QuestFarm", file = "QuestFarm.lua" },
-    { key = "NPCFarm",   file = "NPCFarm.lua"   },
-    { key = "Farm",      file = "Farm.lua"      },
+    { key = "Config",      file = "Config.lua"      },
+    { key = "Webhook",     file = "Webhook.lua"     },
+    { key = "Movement",    file = "Movement.lua"    },
+    { key = "ServerHop",   file = "ServerHop.lua"   },
+    { key = "Inventory",   file = "Inventory.lua"   },
+    { key = "UI",          file = "UI.lua"          },
+    { key = "CombatFarm",  file = "CombatFarm.lua"  },  -- unified combat module
+    { key = "Farm",        file = "Farm.lua"        },
 }
 
 local allLoaded = true
@@ -117,7 +116,7 @@ else
 end
 
 -- Initialize modules
-local initOrder = { "Webhook", "Movement", "ServerHop", "Inventory", "UI", "QuestFarm", "NPCFarm", "Farm" }
+local initOrder = { "Webhook", "Movement", "ServerHop", "Inventory", "UI", "CombatFarm", "Farm" }
 
 LOG("INIT", "Initializing modules...")
 for _, moduleName in ipairs(initOrder) do
@@ -136,7 +135,7 @@ end
 _G.WhiteHubModules = Modules
 LOG("UI", "Manual UI will use _G.WhiteHubModules")
 
--- ========== UI CREATION ==========
+-- UI Creation
 LOG("UI", "Creating UI...")
 if Modules.UI and Modules.UI.Create then
     local ok, err = pcall(function() Modules.UI:Create() end)
@@ -166,11 +165,9 @@ end
 
 LOG("BOOT", "✅ WHITE HUB — all systems running (manual UI active).")
 
--- =====================
--- AUTO PRESTIGE LOADER
--- =====================
+-- Auto Prestige Loader
 LOG("AUTOPRESTIGE", "Launching AutoPrestige loader...")
-getgenv().AutoPrestigeEnabled = Modules.Config:Get("AutoPrestige") == true
+getgenv().AutoPrestigeEnabled = Modules.Config and Modules.Config:Get("AutoPrestige") == true
 
 task.spawn(function()
     local url = BASE_URL .. "AutoPrestige.lua"
@@ -190,12 +187,12 @@ task.spawn(function()
         t = t + 0.5
     end
 
-    if not response then
-        ERR("AUTOPRESTIGE", "Timeout or fetch failed for AutoPrestige.lua — skipping.")
+    if not response or response == "" then
+        ERR("AUTOPRESTIGE", "Timeout or empty response — skipping.")
         return
     end
     if response:find("<!DOCTYPE") or response:sub(1,3) == "404" then
-        ERR("AUTOPRESTIGE", "AutoPrestige.lua not found on GitHub (404) — skipping.")
+        ERR("AUTOPRESTIGE", "AutoPrestige.lua not found (404) — skipping.")
         return
     end
 
