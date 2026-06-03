@@ -1,7 +1,6 @@
 -- =====================
 -- Movement.lua
 -- Handles all character movement: teleport, noclip, freeze, camera.
--- Includes focus camera methods for stand-based combat.
 -- =====================
 
 local Players    = game:GetService("Players")
@@ -13,7 +12,6 @@ local Movement = {}
 
 local _noclipActive = false
 
--- Noclip loop
 RunService.Stepped:Connect(function()
     if not _noclipActive then return end
     local char = Player.Character
@@ -59,6 +57,12 @@ function Movement:Unfreeze(bv)
     if bv and bv.Parent then bv:Destroy() end
 end
 
+-- Freeze the player at a specific CFrame (teleport + freeze)
+function Movement:FreezeAtPosition(cf)
+    self:Teleport(cf)
+    return self:Freeze()
+end
+
 function Movement:FixCamera()
     pcall(function()
         local camera = Workspace.CurrentCamera
@@ -96,7 +100,6 @@ function Movement:SetFocusOnPart(part)
     focus.Value = part
 end
 
--- Remove camera focus
 function Movement:ClearFocus()
     local char = Player.Character
     if char then
