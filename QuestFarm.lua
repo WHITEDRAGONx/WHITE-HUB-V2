@@ -1,5 +1,6 @@
 -- =====================
 -- QuestFarm.lua
+-- Xenon V5 style quest farming: accept quest, kill NPCs underground, collect items.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -35,6 +36,7 @@ function QuestFarm:Init(Modules)
     _serverHop = Modules.ServerHop
     _webhook   = Modules.Webhook
 
+    -- Monitor quest completion via GUI (Xenon V5 method)
     task.spawn(function()
         while true do
             task.wait(0.5)
@@ -43,7 +45,7 @@ function QuestFarm:Init(Modules)
                 local completedFrame = hud:FindFirstChild("QuestCompleted")
                 if completedFrame then
                     questCompleted = true
-                    print("[QuestFarm] Quest completed.")
+                    print("[QuestFarm] Quest completed frame detected.")
                     task.wait(1)
                     while completedFrame and completedFrame.Parent do
                         task.wait(0.5)
@@ -78,7 +80,7 @@ local function useSkill(skillKey)
     end
 end
 
--- Aceitar quest (método Xenon)
+-- Accept quest (Xenon V5 method)
 local function acceptQuest(questName)
     local dialogueNPC = workspace.Dialogues:FindFirstChild(questName)
     if not dialogueNPC then
@@ -86,10 +88,17 @@ local function acceptQuest(questName)
         return false
     end
     local dialogueValue = dialogueNPC:FindFirstChild("Dialogue")
-    if not dialogueValue then return false end
+    if not dialogueValue then
+        print("[QuestFarm] No Dialogue value for " .. questName)
+        return false
+    end
     local remoteEvent = _movement:GetCharacter("RemoteEvent")
-    if not remoteEvent then return false end
+    if not remoteEvent then
+        return false
+    end
     local npcDialogue = dialogueValue.Value
+    print("[QuestFarm] Accepting quest from " .. npcDialogue)
+
     for i = 1, 10 do
         remoteEvent:FireServer("EndDialogue", {
             ["NPC"] = npcDialogue,
@@ -106,19 +115,29 @@ local function acceptQuest(questName)
     return true
 end
 
--- Matar NPC (mesma lógica do NPCFarm)
+-- Xenon V5 kill logic (identical to NPCFarm)
 local function killQuestNPC(npcName)
     local npc = workspace.Living:FindFirstChild(npcName)
-    if not npc then return false end
+    if not npc then
+        print("[QuestFarm] NPC not found: " .. npcName)
+        return false
+    end
+
     local hrp = _movement:GetCharacter("HumanoidRootPart")
     local remoteFunc = _movement:GetCharacter("RemoteFunction")
-    if not hrp or not remoteFunc then return false end
+    if not hrp or not remoteFunc then
+        return false
+    end
+
     local oldPos = hrp.CFrame
+    local oldCameraSubject = workspace.CurrentCamera and workspace.CurrentCamera.CameraSubject
+
     local hasStand = _inventory:HasStand()
     if hasStand then
         _inventory:SummonStand()
         task.wait(0.3)
     end
+
     local standPart = nil
     if hasStand then
         local standMorph = _movement:GetCharacter("StandMorph")
@@ -126,22 +145,41 @@ local function killQuestNPC(npcName)
             standPart = standMorph.PrimaryPart
         end
     end
+
+    if standPart then
+        _movement:SetFocusOnPart(standPart)
+    else
+        _movement:SetFocusOnPart(npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart)
+    end
+
     _movement:SetNoclip(true)
+
     local startTime = tick()
     local killed = false
+    local yOffset = -35  -- underground
+
     while not stopRequested and tick() - startTime < 60 do
         npc = workspace.Living:FindFirstChild(npcName)
-        if not npc then killed = true break end
+        if not npc then
+            killed = true
+            break
+        end
         local npcHRP = npc:FindFirstChild("HumanoidRootPart")
         local npcHum = npc:FindFirstChildWhichIsA("Humanoid")
-        if not npcHRP or not npcHum or npcHum.Health <= 0 then killed = true break end
-        if hasStand and standPart then
-            standPart.CFrame = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
-            hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-3, -2) + Vector3.new(0, -35, 0)
-        else
-            hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y - 15, npcHRP.Position.Z)
+        if not npcHRP or not npcHum or npcHum.Health <= 0 then
+            killed = true
+            break
         end
+
+        if standPart and standPart.Parent then
+            standPart.CFrame = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
+            hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-3, -2) + Vector3.new(0, yOffset, 0)
+        else
+            hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y + yOffset, npcHRP.Position.Z)
+        end
+
         pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
+
         local skills = _config:Get("AutoSkills")
         if type(skills) == "table" then
             for _, sk in ipairs(skills) do
@@ -150,12 +188,19 @@ local function killQuestNPC(npcName)
         end
         task.wait(0.3)
     end
+
+    _movement:ClearFocus()
     _movement:SetNoclip(false)
     hrp.CFrame = oldPos
+    if oldCameraSubject then
+        pcall(function()
+            workspace.CurrentCamera.CameraSubject = oldCameraSubject
+        end)
+    end
     return killed
 end
 
--- Coletar itens do chão
+-- Collect ground items (e.g., Gold Coin for Homeless Man Jill)
 local function collectItem(itemName, requiredAmount)
     local inventory = _inventory
     local movement  = _movement
@@ -181,7 +226,9 @@ local function collectItem(itemName, requiredAmount)
                 hrp.CFrame = itemModel.PrimaryPart.CFrame - Vector3.new(0, 10, 0)
                 task.wait(0.3)
                 local prompt = itemModel:FindFirstChildWhichIsA("ProximityPrompt")
-                if prompt then fireproximityprompt(prompt) end
+                if prompt then
+                    fireproximityprompt(prompt)
+                end
                 task.wait(0.6)
                 hrp.CFrame = oldCF
             end
@@ -191,13 +238,23 @@ local function collectItem(itemName, requiredAmount)
     return inventory:Count(itemName) >= requiredAmount
 end
 
+-- Execute one quest
 local function runQuest(questName)
     local data = questInfo[questName]
-    if not data then return false end
+    if not data then
+        print("[QuestFarm] Unknown quest: " .. questName)
+        return false
+    end
+
     print("[QuestFarm] Accepting quest: " .. questName)
     acceptQuest(questName)
     task.wait(2)
-    if questCompleted then return true end
+
+    if questCompleted then
+        print("[QuestFarm] Quest already completed.")
+        return true
+    end
+
     if data.enemy then
         print("[QuestFarm] Killing " .. data.enemy)
         local ok = killQuestNPC(data.enemy)
@@ -210,17 +267,22 @@ local function runQuest(questName)
         end
         return false
     elseif data.item then
+        print("[QuestFarm] Collecting " .. data.amount .. "x " .. data.item)
         return collectItem(data.item, data.amount)
     end
     return false
 end
 
 function QuestFarm:Start()
-    if isRunning then return end
+    if isRunning then
+        print("[QuestFarm] Already running.")
+        return
+    end
     stopRequested = false
     isRunning = true
     questCompleted = false
-    print("[QuestFarm] Starting quest farming...")
+    print("[QuestFarm] Starting quest farming (Xenon V5 style)...")
+
     while not stopRequested do
         local autoChoose = _config:Get("AutoChooseQuest")
         if autoChoose then
@@ -228,29 +290,32 @@ function QuestFarm:Start()
         else
             currentQuest = _config:Get("SelectedQuest")
         end
+
         if not currentQuest or currentQuest == "" then
-            print("[QuestFarm] No quest selected. Waiting...")
+            print("[QuestFarm] No quest selected or found. Waiting...")
             task.wait(5)
         else
-            print("[QuestFarm] Working on: " .. currentQuest)
+            print("[QuestFarm] Working on quest: " .. currentQuest)
             local ok = runQuest(currentQuest)
             if ok then
-                print("[QuestFarm] Quest completed!")
+                print("[QuestFarm] Quest completed! Moving to next.")
                 task.wait(3)
                 questCompleted = false
             else
-                print("[QuestFarm] Failed, retrying...")
+                print("[QuestFarm] Failed to complete quest. Retrying...")
                 task.wait(5)
             end
         end
         task.wait(1)
     end
     isRunning = false
+    print("[QuestFarm] Stopped.")
 end
 
 function QuestFarm:Stop()
     stopRequested = true
     isRunning = false
+    print("[QuestFarm] Stop requested.")
 end
 
 return QuestFarm
