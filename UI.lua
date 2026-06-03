@@ -1,5 +1,5 @@
 -- =====================
--- UI.lua (WHITE HUB V2)
+-- UI.lua (WHITE HUB V2) - Fixed nil checks, safe clipboard copy
 -- =====================
 
 local Players          = game:GetService("Players")
@@ -24,6 +24,28 @@ function UI:Init(Modules)
     _webhook    = Modules.Webhook
     _questFarm  = Modules.QuestFarm
     _npcFarm    = Modules.NPCFarm
+end
+
+-- Safe clipboard copy (works on most executors)
+local function safeSetClipboard(text)
+    local success = pcall(function()
+        if setclipboard then
+            setclipboard(text)
+        elseif toclipboard then
+            toclipboard(text)
+        elseif syn and syn.set_clipboard then
+            syn.set_clipboard(text)
+        elseif game:GetService("CoreGui").RobloxGui:FindFirstChild("ChatWindow") then
+            -- Fallback: try to use the chat input
+            local chatBar = game:GetService("CoreGui").RobloxGui:FindFirstChild("ChatWindow"):FindFirstChild("ChatBarParentFrame"):FindFirstChild("ChatBar")
+            if chatBar then
+                chatBar:CaptureFocus()
+                chatBar.Text = text
+                chatBar:ReleaseFocus()
+            end
+        end
+    end)
+    return success
 end
 
 -- =====================
@@ -112,6 +134,9 @@ local function MakeSection(parent, text)
 end
 
 local function MakeToggle(parent, labelText, default, onChanged)
+    -- Safety: if _config is nil, use false as default
+    local enabled = (default == nil) and true or default
+    
     local holder = Instance.new("Frame")
     holder.Size             = UDim2.new(1,-4,0,32)
     holder.BackgroundColor3 = Color3.fromRGB(22,22,30)
@@ -131,8 +156,6 @@ local function MakeToggle(parent, labelText, default, onChanged)
     lbl.Font             = Enum.Font.Gotham
     lbl.TextXAlignment   = Enum.TextXAlignment.Left
     lbl.Parent           = holder
-
-    local enabled = (default == nil) and true or default
 
     local track = Instance.new("TextButton")
     track.Size             = UDim2.new(0,44,0,22)
@@ -376,6 +399,12 @@ function UI:SetToggleValue(toggleName, value)
 end
 
 function UI:Create()
+    -- Check if required modules exist
+    if not _config then
+        warn("[UI] Config module is nil, cannot create UI.")
+        return
+    end
+
     CreateCreditsPopup()
 
     local W, H = 380, 320
@@ -552,7 +581,6 @@ function UI:Create()
         if _config then _config:Set("BuyLucky", v) end
     end)
 
-    -- Stay in Private Server toggle
     MakeToggle(FarmPage, "Stay in Private Server", _config and _config:Get("StayInPrivateServer"), function(v)
         if _config then _config:Set("StayInPrivateServer", v) end
         print("[UI] Stay in Private Server set to " .. tostring(v))
@@ -637,7 +665,7 @@ function UI:Create()
     local skillsLabel = UI:AddLabel(QuestPage, "Skills: None")
     
     local function updateSkillsLabel()
-        local skills = _config:Get("AutoSkills") or {}
+        local skills = _config and _config:Get("AutoSkills") or {}
         local text = #skills > 0 and "Skills: " .. table.concat(skills, ", ") or "Skills: None"
         skillsLabel.Text = text
     end
@@ -650,10 +678,10 @@ function UI:Create()
                 if gp then return end
                 local key = input.KeyCode.Name
                 if key and key ~= "Unknown" then
-                    local current = _config:Get("AutoSkills") or {}
+                    local current = _config and _config:Get("AutoSkills") or {}
                     if not table.find(current, key) then
                         table.insert(current, key)
-                        _config:Set("AutoSkills", current)
+                        if _config then _config:Set("AutoSkills", current) end
                         updateSkillsLabel()
                     end
                     connection:Disconnect()
@@ -670,7 +698,7 @@ function UI:Create()
     
     MakeToggle(QuestPage, "Clear Skills", false, function(v)
         if v then
-            _config:Set("AutoSkills", {})
+            if _config then _config:Set("AutoSkills", {}) end
             updateSkillsLabel()
             local toggleObj = toggleObjects["Clear Skills"]
             if toggleObj then
@@ -784,7 +812,7 @@ function UI:Create()
         TweenService:Create(discordBtn, TweenInfo.new(0.15), {BackgroundColor3=Color3.fromRGB(88,101,242)}):Play()
     end)
     discordBtn.MouseButton1Click:Connect(function()
-        pcall(function() setclipboard("https://discord.gg/Qwd23ZRNxJ") end)
+        safeSetClipboard("https://discord.gg/Qwd23ZRNxJ")
         local orig = discordBtn.Text
         discordBtn.Text = "✅ Copied!"
         TweenService:Create(discordBtn, TweenInfo.new(0.15), {BackgroundColor3=Color3.fromRGB(50,180,80)}):Play()
