@@ -1,6 +1,5 @@
 -- =====================
--- NPCFarm.lua
--- Xenon V5 style NPC farming: stand fixed behind NPC, player frozen underground.
+-- NPCFarm.lua (stand: AlignPosition.MaxForce=9e9; player: BodyVelocity)
 -- =====================
 
 local Players = game:GetService("Players")
@@ -32,8 +31,8 @@ local function useSkill(skillKey)
     end
 end
 
--- Disable stand constraints so it stays where we put it
-local function disableStandConstraints(standMorph)
+-- Xenon V5 method: increase constraint forces so stand stays where placed
+local function strengthenStandConstraints(standMorph)
     if not standMorph then return end
     local primary = standMorph.PrimaryPart
     if not primary then return end
@@ -41,8 +40,14 @@ local function disableStandConstraints(standMorph)
     if standAttach then
         local alignPos = standAttach:FindFirstChild("AlignPosition")
         local alignOri = standAttach:FindFirstChild("AlignOrientation")
-        if alignPos then alignPos.Enabled = false end
-        if alignOri then alignOri.Enabled = false end
+        if alignPos then
+            alignPos.MaxForce = 9e9
+            alignPos.Enabled = true
+        end
+        if alignOri then
+            alignOri.MaxTorque = 9e9
+            alignOri.Enabled = true
+        end
     end
 end
 
@@ -59,10 +64,11 @@ local function killNPC(npcName)
         return false
     end
 
+    -- Save original position
     local oldPos = hrp.CFrame
     local freezeBV = nil
 
-    -- Summon stand
+    -- Summon stand if available
     local hasStand = _inventory:HasStand()
     if hasStand then
         _inventory:SummonStand()
@@ -75,32 +81,29 @@ local function killNPC(npcName)
         standMorph = _movement:GetCharacter("StandMorph")
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
-            disableStandConstraints(standMorph)
-            -- Ensure stand has collision enabled
-            if standPart then
-                standPart.CanCollide = true
-            end
+            strengthenStandConstraints(standMorph)
+            standPart.CanCollide = true
         end
     end
 
-    -- Focus camera on stand or NPC
+    -- Focus camera on stand (or NPC if no stand)
     if standPart then
         _movement:SetFocusOnPart(standPart)
     else
         _movement:SetFocusOnPart(npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart)
     end
 
-    -- Enable noclip only for player (stand not affected)
+    -- Enable noclip only for player (stand keeps collision)
     _movement:SetNoclip(true)
     local yOffset = -35
     if npcName == "The Idol" then yOffset = 35 end
 
+    -- Freeze player at initial underground position (like item farm)
+    local playerCF = CFrame.new(hrp.Position.X, hrp.Position.Y + yOffset, hrp.Position.Z)
+    freezeBV = _movement:FreezeAtPosition(playerCF)
+
     local startTime = tick()
     local killed = false
-
-    -- Freeze player at initial underground position
-    local playerUndergroundCF = CFrame.new(hrp.Position.X, hrp.Position.Y + yOffset, hrp.Position.Z)
-    freezeBV = _movement:FreezeAtPosition(playerUndergroundCF)
 
     while not stopRequested and tick() - startTime < 60 do
         npc = workspace.Living:FindFirstChild(npcName)
@@ -116,18 +119,18 @@ local function killNPC(npcName)
         end
 
         if standPart and standPart.Parent then
-            -- Move stand behind NPC (always on ground level)
-            local standTargetCF = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
-            standPart.CFrame = standTargetCF
-            
-            -- Keep player at the same relative underground position
-            -- (stand position X/Z, but Y is far below)
-            local playerTargetCF = CFrame.new(standPart.Position.X, standPart.Position.Y + yOffset, standPart.Position.Z)
+            -- Position stand behind NPC
+            standPart.CFrame = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
+            -- Update player position relative to stand (underground)
+            local newPlayerCF = CFrame.new(standPart.Position.X, standPart.Position.Y + yOffset, standPart.Position.Z)
             if freezeBV and freezeBV.Parent then
-                hrp.CFrame = playerTargetCF
+                hrp.CFrame = newPlayerCF
             else
-                freezeBV = _movement:FreezeAtPosition(playerTargetCF)
+                freezeBV = _movement:FreezeAtPosition(newPlayerCF)
             end
+        else
+            -- Fallback: just teleport player
+            hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y + yOffset, npcHRP.Position.Z)
         end
 
         -- Attack
@@ -152,20 +155,6 @@ local function killNPC(npcName)
         hrp.CFrame = oldPos
     end
 
-    -- Re-enable stand constraints (optional)
-    if standMorph then
-        local primary = standMorph.PrimaryPart
-        if primary then
-            local standAttach = primary:FindFirstChild("StandAttach")
-            if standAttach then
-                local alignPos = standAttach:FindFirstChild("AlignPosition")
-                local alignOri = standAttach:FindFirstChild("AlignOrientation")
-                if alignPos then alignPos.Enabled = true end
-                if alignOri then alignOri.Enabled = true end
-            end
-        end
-    end
-
     return killed
 end
 
@@ -176,7 +165,7 @@ function NPCFarm:Start()
     end
     stopRequested = false
     isRunning = true
-    print("[NPCFarm] Starting NPC farming (fixed stand + frozen player)...")
+    print("[NPCFarm] Starting NPC farming (stand maxforce + player frozen)...")
 
     while not stopRequested do
         local npcName = _config:Get("SelectedNPC")
