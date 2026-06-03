@@ -1,5 +1,5 @@
 -- =====================
--- NPCFarm.lua (stand fixed with BodyVelocity + anchoring)
+-- NPCFarm.lua 
 -- =====================
 
 local Players = game:GetService("Players")
@@ -31,7 +31,35 @@ local function useSkill(skillKey)
     end
 end
 
+-- Disable stand constraints (so stand doesn't snap back)
+local function disableStandConstraints(standMorph)
+    if not standMorph then return end
+    local primary = standMorph.PrimaryPart
+    if not primary then return end
+    local standAttach = primary:FindFirstChild("StandAttach")
+    if standAttach then
+        local alignPos = standAttach:FindFirstChild("AlignPosition")
+        local alignOri = standAttach:FindFirstChild("AlignOrientation")
+        if alignPos then alignPos.Enabled = false end
+        if alignOri then alignOri.Enabled = false end
+    end
+end
+
+local function enableStandConstraints(standMorph)
+    if not standMorph then return end
+    local primary = standMorph.PrimaryPart
+    if not primary then return end
+    local standAttach = primary:FindFirstChild("StandAttach")
+    if standAttach then
+        local alignPos = standAttach:FindFirstChild("AlignPosition")
+        local alignOri = standAttach:FindFirstChild("AlignOrientation")
+        if alignPos then alignPos.Enabled = true end
+        if alignOri then alignOri.Enabled = true end
+    end
+end
+
 local function killNPC(npcName)
+    -- Get initial NPC reference
     local npc = workspace.Living:FindFirstChild(npcName)
     if not npc then
         print("[NPCFarm] NPC not found: " .. npcName)
@@ -44,11 +72,11 @@ local function killNPC(npcName)
         return false
     end
 
+    -- Save original position and camera subject
     local oldPos = hrp.CFrame
-    local freezeBV = nil
-    local standVelocity = nil
+    local oldCameraSubject = workspace.CurrentCamera and workspace.CurrentCamera.CameraSubject
 
-    -- Summon stand
+    -- Summon stand if available
     local hasStand = _inventory:HasStand()
     if hasStand then
         _inventory:SummonStand()
@@ -61,52 +89,38 @@ local function killNPC(npcName)
         standMorph = _movement:GetCharacter("StandMorph")
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
-            
-            -- Disable original constraints
-            local standAttach = standPart:FindFirstChild("StandAttach")
-            if standAttach then
-                local alignPos = standAttach:FindFirstChild("AlignPosition")
-                local alignOri = standAttach:FindFirstChild("AlignOrientation")
-                if alignPos then alignPos.Enabled = false end
-                if alignOri then alignOri.Enabled = false end
-            end
-            
-            -- Make stand physically stable
+            disableStandConstraints(standMorph)
             standPart.CanCollide = true
-            standPart.CustomPhysicalProperties = PhysicalProperties.new(1, 0.1, 0.1)
-            
-            -- BodyVelocity to keep stand in place (zero velocity, high force)
-            standVelocity = Instance.new("BodyVelocity")
-            standVelocity.Velocity = Vector3.new(0, 0, 0)
-            standVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-            standVelocity.Parent = standPart
         end
     end
 
-    -- Focus camera
+    -- Focus camera on stand (or NPC if no stand)
     if standPart then
         _movement:SetFocusOnPart(standPart)
     else
         _movement:SetFocusOnPart(npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart)
     end
 
+    -- Enable noclip only for player (stand keeps collision)
     _movement:SetNoclip(true)
     local yOffset = -35
     if npcName == "The Idol" then yOffset = 35 end
 
-    -- Freeze player underground
+    -- Freeze player at initial underground position (BodyVelocity)
     local playerCF = CFrame.new(hrp.Position.X, hrp.Position.Y + yOffset, hrp.Position.Z)
-    freezeBV = _movement:FreezeAtPosition(playerCF)
+    local freezeBV = _movement:FreezeAtPosition(playerCF)
 
     local startTime = tick()
     local killed = false
 
     while not stopRequested and tick() - startTime < 60 do
+        -- Refresh NPC reference (in case it respawns, but if dead it will be nil)
         npc = workspace.Living:FindFirstChild(npcName)
         if not npc then
             killed = true
             break
         end
+
         local npcHRP = npc:FindFirstChild("HumanoidRootPart")
         local npcHum = npc:FindFirstChildWhichIsA("Humanoid")
         if not npcHRP or not npcHum or npcHum.Health <= 0 then
@@ -114,12 +128,10 @@ local function killNPC(npcName)
             break
         end
 
+        -- Position stand behind NPC (every loop)
         if standPart and standPart.Parent then
-            -- Teleport stand behind NPC
-            local targetCF = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
-            standPart.CFrame = targetCF
-            
-            -- Update player position
+            standPart.CFrame = npcHRP.CFrame - npcHRP.CFrame.LookVector * 1.1
+            -- Update player position relative to stand
             local newPlayerCF = CFrame.new(standPart.Position.X, standPart.Position.Y + yOffset, standPart.Position.Z)
             if freezeBV and freezeBV.Parent then
                 hrp.CFrame = newPlayerCF
@@ -127,11 +139,14 @@ local function killNPC(npcName)
                 freezeBV = _movement:FreezeAtPosition(newPlayerCF)
             end
         else
+            -- Fallback: just teleport player relative to NPC
             hrp.CFrame = CFrame.new(npcHRP.Position.X, npcHRP.Position.Y + yOffset, npcHRP.Position.Z)
         end
 
+        -- Attack (M1)
         pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
 
+        -- Auto skills
         local skills = _config:Get("AutoSkills")
         if type(skills) == "table" then
             for _, sk in ipairs(skills) do
@@ -145,10 +160,18 @@ local function killNPC(npcName)
     -- Cleanup
     _movement:ClearFocus()
     _movement:Unfreeze(freezeBV)
-    if standVelocity then standVelocity:Destroy() end
     _movement:SetNoclip(false)
     if hrp then
         hrp.CFrame = oldPos
+    end
+    if oldCameraSubject then
+        pcall(function()
+            workspace.CurrentCamera.CameraSubject = oldCameraSubject
+        end)
+    end
+
+    if standMorph then
+        enableStandConstraints(standMorph)
     end
 
     return killed
@@ -161,7 +184,7 @@ function NPCFarm:Start()
     end
     stopRequested = false
     isRunning = true
-    print("[NPCFarm] Starting NPC farming (BodyVelocity lock)...")
+    print("[NPCFarm] Starting NPC farming (stand follows NPC)...")
 
     while not stopRequested do
         local npcName = _config:Get("SelectedNPC")
@@ -173,7 +196,7 @@ function NPCFarm:Start()
             local ok = killNPC(npcName)
             if ok then
                 print("[NPCFarm] Killed " .. npcName .. ". Waiting for respawn...")
-                task.wait(5)
+                task.wait(5)  -- Wait for NPC to respawn
             else
                 print("[NPCFarm] Failed to kill NPC. Waiting before retry...")
                 task.wait(5)
