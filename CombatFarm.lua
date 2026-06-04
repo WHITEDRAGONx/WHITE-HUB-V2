@@ -1,7 +1,7 @@
 -- =====================
 -- CombatFarm.lua
 -- Unified combat farming: NPC, Quest, and future Player farming.
--- Xenon V5 style: no noclip, no freeze, no constraint disabling.
+-- Xenon V5 style: stand follows NPC, player stays underground.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -100,7 +100,7 @@ local function equipStand()
 end
 
 -- =====================
--- Combat core (Xenon V5 kill function)
+-- Combat core (fixed: only stand moves, player stays underground)
 -- =====================
 local function killTarget(targetName, isNPC, isQuest)
     local target = workspace.Living:FindFirstChild(targetName)
@@ -137,10 +137,14 @@ local function killTarget(targetName, isNPC, isQuest)
     end
     focusCam.Value = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
 
-    local startTime = tick()
-    local killed = false
+    -- Set player underground position (once)
     local yOffset = -35
     if targetName == "The Idol" then yOffset = 35 end
+    local playerUndergroundCF = CFrame.new(hrp.Position.X, hrp.Position.Y + yOffset, hrp.Position.Z)
+    hrp.CFrame = playerUndergroundCF
+
+    local startTime = tick()
+    local killed = false
 
     while not stopRequested and tick() - startTime < 60 do
         target = workspace.Living:FindFirstChild(targetName)
@@ -155,20 +159,27 @@ local function killTarget(targetName, isNPC, isQuest)
             break
         end
 
+        -- Move stand behind NPC (using task.spawn to avoid delays)
         if standPart and standPart.Parent then
-            standPart.CFrame = targetHRP.CFrame - targetHRP.CFrame.LookVector * 1.1
-            hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-3, -2) + Vector3.new(0, yOffset, 0)
-        else
-            hrp.CFrame = targetHRP.CFrame - targetHRP.CFrame.LookVector * 2.3
+            task.spawn(function()
+                standPart.CFrame = targetHRP.CFrame - targetHRP.CFrame.LookVector * 1.1
+            end)
         end
 
-        useMove("m1")
+        -- Attack (async)
+        task.spawn(function()
+            useMove("m1")
+        end)
+
+        -- Auto skills (async)
         local skills = _config:Get("AutoSkills")
         if type(skills) == "table" then
             for _, sk in ipairs(skills) do
                 local keyCode = Enum.KeyCode[sk]
                 if keyCode then
-                    useMove(keyCode)
+                    task.spawn(function()
+                        useMove(keyCode)
+                    end)
                 end
             end
         end
@@ -354,7 +365,7 @@ end
 -- Player farming (future)
 -- =====================
 local function runPlayerFarm()
-    -- TODO: implement player farming (like Xenon's stand attach / kill player)
+    -- TODO: implement player farming
     print("[CombatFarm] Player farming not yet implemented.")
     return false
 end
