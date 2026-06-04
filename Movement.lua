@@ -12,6 +12,11 @@ local Movement = {}
 
 local _noclipActive = false
 
+-- Empty Init to satisfy the initializer
+function Movement:Init(Modules)
+    -- No dependencies needed
+end
+
 -- Noclip loop that ignores stand parts
 RunService.Stepped:Connect(function()
     if not _noclipActive then return end
