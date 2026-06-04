@@ -1,6 +1,6 @@
 -- =====================
 -- CombatFarm.lua
--- Unified combat farming: NPC, Quest, and future Player farming.
+-- Uses BodyVelocity on player (underground freeze) and on stand (smooth follow)
 -- =====================
 
 local Players = game:GetService("Players")
@@ -105,7 +105,7 @@ local function getClosestNPC(npcName)
     return closest
 end
 
--- Core kill function
+-- Core kill function with BodyVelocity
 local function killTarget(targetName)
     local target = getClosestNPC(targetName) or workspace.Living:FindFirstChild(targetName)
     if not target then
@@ -125,11 +125,25 @@ local function killTarget(targetName)
     -- Summon stand if available
     local hasStand = _inventory:HasStand()
     local standPart = nil
+    local standBV = nil
     if hasStand then
         equipStand()
         local standMorph = _movement:GetCharacter("StandMorph")
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
+            -- Disable original constraints to prevent snapping back
+            local standAttach = standPart:FindFirstChild("StandAttach")
+            if standAttach then
+                local alignPos = standAttach:FindFirstChild("AlignPosition")
+                local alignOri = standAttach:FindFirstChild("AlignOrientation")
+                if alignPos then alignPos.Enabled = false end
+                if alignOri then alignOri.Enabled = false end
+            end
+            -- BodyVelocity to keep stand stable
+            standBV = Instance.new("BodyVelocity")
+            standBV.Velocity = Vector3.new(0, 0, 0)
+            standBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+            standBV.Parent = standPart
         end
     end
 
@@ -142,17 +156,17 @@ local function killTarget(targetName)
     end
     focusCam.Value = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
 
-    -- Teleport player underground (once, stay there)
+    -- Player BodyVelocity: freeze underground
     local yOffset = -35
     if targetName == "The Idol" then yOffset = 35 end
     local playerUndergroundCF = CFrame.new(hrp.Position.X, hrp.Position.Y + yOffset, hrp.Position.Z)
     hrp.CFrame = playerUndergroundCF
+    local playerBV = _movement:Freeze()  -- BodyVelocity with zero velocity
 
     local startTime = tick()
     local killed = false
 
     while not stopRequested and tick() - startTime < 60 do
-        -- Refresh target reference (handle death/respawn)
         target = getClosestNPC(targetName) or workspace.Living:FindFirstChild(targetName)
         if not target then
             killed = true
@@ -165,15 +179,16 @@ local function killTarget(targetName)
             break
         end
 
-        -- Position stand behind NPC (synchronous)
+        -- Update stand position behind NPC (smoothly)
         if standPart and standPart.Parent then
-            standPart.CFrame = targetHRP.CFrame - targetHRP.CFrame.LookVector * 1.1
+            local targetCF = targetHRP.CFrame - targetHRP.CFrame.LookVector * 1.1
+            standPart.CFrame = targetCF
         end
 
-        -- Attack (direct, not async)
+        -- Attack
         useMove("m1")
 
-        -- Auto skills (direct)
+        -- Auto skills
         local skills = _config:Get("AutoSkills")
         if type(skills) == "table" then
             for _, sk in ipairs(skills) do
@@ -184,11 +199,13 @@ local function killTarget(targetName)
             end
         end
 
-        task.wait(0.3)  -- Slightly slower to prevent flickering
+        task.wait(0.3)  -- Stable loop
     end
 
     -- Cleanup
     if focusCam then focusCam:Destroy() end
+    _movement:Unfreeze(playerBV)
+    if standBV then standBV:Destroy() end
     if hrp then
         hrp.CFrame = oldPos
     end
@@ -229,18 +246,20 @@ end
 
 local function acceptQuest(questName)
     if questOnCooldown and tick() < cooldownUntil then
-        print("[CombatFarm] Quest on cooldown.")
+        local remaining = math.ceil(cooldownUntil - tick())
+        print("[CombatFarm] Quest on cooldown, waiting " .. remaining .. " seconds.")
         return false
     end
     questOnCooldown = false
 
     local dialogueNPC = workspace.Dialogues:FindFirstChild(questName)
     if not dialogueNPC then
-        print("[CombatFarm] Dialogue NPC not found.")
+        print("[CombatFarm] Dialogue NPC not found: " .. questName)
         return false
     end
     local dialogueValue = dialogueNPC:FindFirstChild("Dialogue")
     if not dialogueValue then
+        print("[CombatFarm] No Dialogue value for " .. questName)
         return false
     end
     local remoteEvent = _movement:GetCharacter("RemoteEvent")
@@ -248,6 +267,8 @@ local function acceptQuest(questName)
         return false
     end
     local npcDialogue = dialogueValue.Value
+    print("[CombatFarm] Accepting quest from " .. npcDialogue)
+
     for i = 1, 10 do
         remoteEvent:FireServer("EndDialogue", {
             ["NPC"] = npcDialogue,
@@ -260,14 +281,17 @@ local function acceptQuest(questName)
         })
         task.wait(0.2)
     end
+
     task.wait(1)
     local progress = Player.PlayerStats.QuestProgress.Value
     local maxProgress = Player.PlayerStats.QuestMaxProgress.Value
     if progress == 0 and maxProgress == 0 then
+        print("[CombatFarm] Quest acceptance failed - possibly on cooldown. Waiting 60 seconds.")
         questOnCooldown = true
         cooldownUntil = tick() + 60
         return false
     end
+
     questCompleted = false
     return true
 end
@@ -294,12 +318,16 @@ local function collectItem(itemName, requiredAmount)
             local hrp = movement:GetCharacter("HumanoidRootPart")
             if hrp then
                 local oldCF = hrp.CFrame
+                local bv = movement:Freeze()
+                movement:SetNoclip(true)
                 movement:Teleport(itemModel.PrimaryPart.CFrame - Vector3.new(0, 10, 0))
                 task.wait(0.3)
                 local prompt = itemModel:FindFirstChildWhichIsA("ProximityPrompt")
                 if prompt then fireproximityprompt(prompt) end
                 task.wait(0.6)
+                movement:Unfreeze(bv)
                 movement:Teleport(oldCF)
+                movement:SetNoclip(false)
             end
         end
         task.wait(1)
@@ -315,20 +343,25 @@ local function runQuestFarm()
         currentQuest = _config:Get("SelectedQuest")
     end
     if not currentQuest or currentQuest == "" then
-        print("[CombatFarm] No quest selected.")
+        print("[CombatFarm] No quest selected or found.")
         return false
     end
 
-    if not acceptQuest(currentQuest) then
+    print("[CombatFarm] Accepting quest: " .. currentQuest)
+    local accepted = acceptQuest(currentQuest)
+    if not accepted then
         return false
     end
     task.wait(2)
+
     if questCompleted then
+        print("[CombatFarm] Quest already completed.")
         return true
     end
 
     local data = questInfo[currentQuest]
     if data.enemy then
+        print("[CombatFarm] Killing " .. data.enemy)
         local ok = killTarget(data.enemy)
         if ok then
             local timeout = tick()
@@ -339,6 +372,7 @@ local function runQuestFarm()
         end
         return false
     elseif data.item then
+        print("[CombatFarm] Collecting " .. data.amount .. "x " .. data.item)
         return collectItem(data.item, data.amount)
     end
     return false
@@ -347,22 +381,27 @@ end
 local function farmLoop()
     while not stopRequested do
         if activeMode == "NPC" then
-            if runNPCFarm() then
+            local ok = runNPCFarm()
+            if ok then
                 print("[CombatFarm] NPC killed. Waiting for respawn...")
                 task.wait(5)
             else
+                print("[CombatFarm] NPC farm failed. Retrying in 5 seconds...")
                 task.wait(5)
             end
         elseif activeMode == "Quest" then
-            if runQuestFarm() then
-                print("[CombatFarm] Quest completed.")
+            local ok = runQuestFarm()
+            if ok then
+                print("[CombatFarm] Quest completed! Moving to next.")
                 task.wait(3)
                 questCompleted = false
                 questOnCooldown = false
             else
                 if questOnCooldown then
+                    print("[CombatFarm] Quest on cooldown, waiting 60 seconds...")
                     task.wait(60)
                 else
+                    print("[CombatFarm] Quest failed. Retrying in 5 seconds...")
                     task.wait(5)
                 end
             end
@@ -379,6 +418,7 @@ function CombatFarm:StartNPC()
     activeMode = "NPC"
     stopRequested = false
     isRunning = true
+    print("[CombatFarm] Starting NPC farming (BodyVelocity freeze)...")
     task.spawn(farmLoop)
 end
 
@@ -390,6 +430,17 @@ function CombatFarm:StartQuest()
     isRunning = true
     questCompleted = false
     questOnCooldown = false
+    print("[CombatFarm] Starting Quest farming (BodyVelocity freeze)...")
+    task.spawn(farmLoop)
+end
+
+function CombatFarm:StartPlayer()
+    if isRunning and activeMode == "Player" then return end
+    if isRunning then self:Stop() end
+    activeMode = "Player"
+    stopRequested = false
+    isRunning = true
+    print("[CombatFarm] Starting Player farming (coming soon)...")
     task.spawn(farmLoop)
 end
 
@@ -397,6 +448,7 @@ function CombatFarm:Stop()
     stopRequested = true
     isRunning = false
     activeMode = nil
+    print("[CombatFarm] Stopped.")
 end
 
 return CombatFarm
