@@ -48,6 +48,30 @@ local Defaults = {
     }
 }
 
+-- Define ApplyDefaults BEFORE it is used
+local function ApplyDefaults(data)
+    if data.BuyLucky       == nil then data.BuyLucky       = Defaults.BuyLucky       end
+    if data.AutoSell       == nil then data.AutoSell       = Defaults.AutoSell       end
+    if data.WebhookURL     == nil then data.WebhookURL     = Defaults.WebhookURL     end
+    if data.Phase1Notified == nil then data.Phase1Notified = Defaults.Phase1Notified end
+    if data.Phase3Notified == nil then data.Phase3Notified = Defaults.Phase3Notified end
+    if data.FarmEnabled    == nil then data.FarmEnabled    = Defaults.FarmEnabled    end
+    if data.AutoPrestige   == nil then data.AutoPrestige   = Defaults.AutoPrestige   end
+    if data.PrestigeMaxNotified == nil then data.PrestigeMaxNotified = Defaults.PrestigeMaxNotified end
+    if data.StayInPrivateServer == nil then data.StayInPrivateServer = Defaults.StayInPrivateServer end
+    if data.NPCFarmEnabled   == nil then data.NPCFarmEnabled   = Defaults.NPCFarmEnabled end
+    if data.QuestFarmEnabled == nil then data.QuestFarmEnabled = Defaults.QuestFarmEnabled end
+    if data.AutoChooseQuest  == nil then data.AutoChooseQuest  = Defaults.AutoChooseQuest end
+    if data.SelectedQuest    == nil then data.SelectedQuest    = Defaults.SelectedQuest end
+    if data.SelectedNPC      == nil then data.SelectedNPC      = Defaults.SelectedNPC end
+    if type(data.AutoSkills) ~= "table" then data.AutoSkills = {} end
+    if type(data.SellItems) ~= "table" then data.SellItems = {} end
+    for k, v in pairs(Defaults.SellItems) do
+        if data.SellItems[k] == nil then data.SellItems[k] = v end
+    end
+    return data
+end
+
 function Config:Load()
     if _data then return end
     local ok, result = pcall(function()
@@ -96,29 +120,6 @@ end
 function Config:GetSellItems()
     if not _data then self:Load() end
     return _data.SellItems
-end
-
-local function ApplyDefaults(data)
-    if data.BuyLucky       == nil then data.BuyLucky       = Defaults.BuyLucky       end
-    if data.AutoSell       == nil then data.AutoSell       = Defaults.AutoSell       end
-    if data.WebhookURL     == nil then data.WebhookURL     = Defaults.WebhookURL     end
-    if data.Phase1Notified == nil then data.Phase1Notified = Defaults.Phase1Notified end
-    if data.Phase3Notified == nil then data.Phase3Notified = Defaults.Phase3Notified end
-    if data.FarmEnabled    == nil then data.FarmEnabled    = Defaults.FarmEnabled    end
-    if data.AutoPrestige   == nil then data.AutoPrestige   = Defaults.AutoPrestige   end
-    if data.PrestigeMaxNotified == nil then data.PrestigeMaxNotified = Defaults.PrestigeMaxNotified end
-    if data.StayInPrivateServer == nil then data.StayInPrivateServer = Defaults.StayInPrivateServer end
-    if data.NPCFarmEnabled   == nil then data.NPCFarmEnabled   = Defaults.NPCFarmEnabled end
-    if data.QuestFarmEnabled == nil then data.QuestFarmEnabled = Defaults.QuestFarmEnabled end
-    if data.AutoChooseQuest  == nil then data.AutoChooseQuest  = Defaults.AutoChooseQuest end
-    if data.SelectedQuest    == nil then data.SelectedQuest    = Defaults.SelectedQuest end
-    if data.SelectedNPC      == nil then data.SelectedNPC      = Defaults.SelectedNPC end
-    if type(data.AutoSkills) ~= "table" then data.AutoSkills = {} end
-    if type(data.SellItems) ~= "table" then data.SellItems = {} end
-    for k, v in pairs(Defaults.SellItems) do
-        if data.SellItems[k] == nil then data.SellItems[k] = v end
-    end
-    return data
 end
 
 return Config
