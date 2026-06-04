@@ -1,7 +1,7 @@
 -- =====================
 -- CombatFarm.lua
--- Unified combat: NPC and Quest farming.
--- Player frozen with BodyVelocity, stand repositioned every loop (no task.spawn)
+-- Unified combat farming: NPC, Quest, and future Player farming.
+-- Xenon V5 style: no noclip, no freeze, no constraint disabling.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -15,7 +15,7 @@ local _movement  = nil
 local _serverHop = nil
 local _webhook   = nil
 
-local activeMode = nil
+local activeMode = nil   -- "NPC", "Quest", or "Player"
 local isRunning = false
 local stopRequested = false
 local currentQuest = nil
@@ -23,6 +23,7 @@ local questCompleted = false
 local questOnCooldown = false
 local cooldownUntil = 0
 
+-- Quest definitions
 local questInfo = {
     ["Officer Sam [Lvl. 1+]"] = { enemy = "Thug" },
     ["Deputy Bertrude [Lvl. 10+]"] = { enemy = "Corrupt Police" },
@@ -40,6 +41,7 @@ function CombatFarm:Init(Modules)
     _serverHop = Modules.ServerHop
     _webhook   = Modules.Webhook
 
+    -- Monitor quest completion (for Quest mode)
     task.spawn(function()
         while true do
             task.wait(0.5)
@@ -48,7 +50,7 @@ function CombatFarm:Init(Modules)
                 local completedFrame = hud:FindFirstChild("QuestCompleted")
                 if completedFrame then
                     questCompleted = true
-                    print("[CombatFarm] Quest completed.")
+                    print("[CombatFarm] Quest completed frame detected.")
                     task.wait(1)
                     while completedFrame and completedFrame.Parent do
                         task.wait(0.5)
@@ -59,7 +61,16 @@ function CombatFarm:Init(Modules)
     end)
 end
 
--- Helper functions
+-- =====================
+-- Helper functions (Xenon V5 style)
+-- =====================
+local function useSkill(skillKey)
+    local re = _movement:GetCharacter("RemoteEvent")
+    if re then
+        re:FireServer("InputBegan", { Input = Enum.KeyCode[skillKey] })
+    end
+end
+
 local function useMove(move)
     local char = _movement:GetCharacter()
     if not char then return end
@@ -88,27 +99,11 @@ local function equipStand()
     end
 end
 
-local function getClosestNPC(npcName)
-    local closest = nil
-    local closestDist = math.huge
-    local hrp = _movement:GetCharacter("HumanoidRootPart")
-    if not hrp then return nil end
-    for _, npc in pairs(workspace.Living:GetChildren()) do
-        if npc.Name == npcName and npc:FindFirstChild("HumanoidRootPart") then
-            local npcHRP = npc.HumanoidRootPart
-            local dist = (hrp.Position - npcHRP.Position).Magnitude
-            if dist < closestDist then
-                closestDist = dist
-                closest = npc
-            end
-        end
-    end
-    return closest
-end
-
--- Core kill function (player frozen, stand repositioned)
-local function killTarget(targetName)
-    local target = getClosestNPC(targetName) or workspace.Living:FindFirstChild(targetName)
+-- =====================
+-- Combat core (Xenon V5 kill function)
+-- =====================
+local function killTarget(targetName, isNPC, isQuest)
+    local target = workspace.Living:FindFirstChild(targetName)
     if not target then
         print("[CombatFarm] Target not found: " .. targetName)
         return false
@@ -123,7 +118,6 @@ local function killTarget(targetName)
     local oldCameraSubject = workspace.CurrentCamera and workspace.CurrentCamera.CameraSubject
     local oldPos = hrp.CFrame
 
-    -- Summon stand if available
     local hasStand = _inventory:HasStand()
     local standPart = nil
     if hasStand then
@@ -131,19 +125,10 @@ local function killTarget(targetName)
         local standMorph = _movement:GetCharacter("StandMorph")
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
-            -- Disable original constraints to prevent snapping back
-            local standAttach = standPart:FindFirstChild("StandAttach")
-            if standAttach then
-                local alignPos = standAttach:FindFirstChild("AlignPosition")
-                local alignOri = standAttach:FindFirstChild("AlignOrientation")
-                if alignPos then alignPos.Enabled = false
-                if alignOri then alignOri.Enabled = false
-            end
-            standPart.CanCollide = true
         end
     end
 
-    -- Focus camera on target
+    -- Focus camera on target (Xenon style)
     local focusCam = _movement:GetCharacter("FocusCam")
     if not focusCam then
         focusCam = Instance.new("ObjectValue")
@@ -152,19 +137,13 @@ local function killTarget(targetName)
     end
     focusCam.Value = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
 
-    -- Teleport player underground and freeze with BodyVelocity
-    local yOffset = -35
-    if targetName == "The Idol" then yOffset = 35 end
-    local playerUndergroundCF = CFrame.new(hrp.Position.X, hrp.Position.Y + yOffset, hrp.Position.Z)
-    hrp.CFrame = playerUndergroundCF
-    local playerBV = _movement:Freeze()  -- BodyVelocity with zero velocity
-
     local startTime = tick()
     local killed = false
+    local yOffset = -35
+    if targetName == "The Idol" then yOffset = 35 end
 
     while not stopRequested and tick() - startTime < 60 do
-        -- Refresh target (in case it respawns or moves)
-        target = getClosestNPC(targetName) or workspace.Living:FindFirstChild(targetName)
+        target = workspace.Living:FindFirstChild(targetName)
         if not target then
             killed = true
             break
@@ -176,15 +155,14 @@ local function killTarget(targetName)
             break
         end
 
-        -- Position stand behind NPC (direct, no task.spawn)
         if standPart and standPart.Parent then
             standPart.CFrame = targetHRP.CFrame - targetHRP.CFrame.LookVector * 1.1
+            hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-3, -2) + Vector3.new(0, yOffset, 0)
+        else
+            hrp.CFrame = targetHRP.CFrame - targetHRP.CFrame.LookVector * 2.3
         end
 
-        -- Attack (direct)
         useMove("m1")
-
-        -- Auto skills (direct)
         local skills = _config:Get("AutoSkills")
         if type(skills) == "table" then
             for _, sk in ipairs(skills) do
@@ -195,12 +173,11 @@ local function killTarget(targetName)
             end
         end
 
-        task.wait(0.35)  -- Stable delay
+        task.wait(0.2)  -- Xenon V5 loop delay
     end
 
     -- Cleanup
     if focusCam then focusCam:Destroy() end
-    _movement:Unfreeze(playerBV)
     if hrp then
         hrp.CFrame = oldPos
     end
@@ -211,17 +188,21 @@ local function killTarget(targetName)
     return killed
 end
 
--- NPC farm
+-- =====================
+-- NPC farming
+-- =====================
 local function runNPCFarm()
     local npcName = _config:Get("SelectedNPC")
     if not npcName or npcName == "" then
-        print("[CombatFarm] No NPC selected.")
+        print("[CombatFarm] No NPC selected for NPC farm.")
         return false
     end
-    return killTarget(npcName)
+    return killTarget(npcName, true, false)
 end
 
--- Quest acceptance and item collection
+-- =====================
+-- Quest farming
+-- =====================
 local function getBestQuest()
     local level = Player.PlayerStats.Level.Value
     local best = nil
@@ -313,16 +294,12 @@ local function collectItem(itemName, requiredAmount)
             local hrp = movement:GetCharacter("HumanoidRootPart")
             if hrp then
                 local oldCF = hrp.CFrame
-                local bv = movement:Freeze()
-                movement:SetNoclip(true)
                 movement:Teleport(itemModel.PrimaryPart.CFrame - Vector3.new(0, 10, 0))
                 task.wait(0.3)
                 local prompt = itemModel:FindFirstChildWhichIsA("ProximityPrompt")
                 if prompt then fireproximityprompt(prompt) end
                 task.wait(0.6)
-                movement:Unfreeze(bv)
                 movement:Teleport(oldCF)
-                movement:SetNoclip(false)
             end
         end
         task.wait(1)
@@ -357,7 +334,7 @@ local function runQuestFarm()
     local data = questInfo[currentQuest]
     if data.enemy then
         print("[CombatFarm] Killing " .. data.enemy)
-        local ok = killTarget(data.enemy)
+        local ok = killTarget(data.enemy, true, true)
         if ok then
             local timeout = tick()
             while not questCompleted and tick() - timeout < 15 do
@@ -373,7 +350,18 @@ local function runQuestFarm()
     return false
 end
 
--- Main loops
+-- =====================
+-- Player farming (future)
+-- =====================
+local function runPlayerFarm()
+    -- TODO: implement player farming (like Xenon's stand attach / kill player)
+    print("[CombatFarm] Player farming not yet implemented.")
+    return false
+end
+
+-- =====================
+-- Main loop
+-- =====================
 local function farmLoop()
     while not stopRequested do
         if activeMode == "NPC" then
@@ -401,6 +389,9 @@ local function farmLoop()
                     task.wait(5)
                 end
             end
+        elseif activeMode == "Player" then
+            runPlayerFarm()
+            task.wait(5)
         else
             break
         end
@@ -410,24 +401,40 @@ end
 
 -- Public API
 function CombatFarm:StartNPC()
-    if isRunning and activeMode == "NPC" then return end
-    if isRunning then self:Stop() end
+    if isRunning then
+        if activeMode == "NPC" then return end
+        self:Stop()
+    end
     activeMode = "NPC"
     stopRequested = false
     isRunning = true
-    print("[CombatFarm] Starting NPC farming (player frozen, stand follows).")
+    print("[CombatFarm] Starting NPC farming...")
     task.spawn(farmLoop)
 end
 
 function CombatFarm:StartQuest()
-    if isRunning and activeMode == "Quest" then return end
-    if isRunning then self:Stop() end
+    if isRunning then
+        if activeMode == "Quest" then return end
+        self:Stop()
+    end
     activeMode = "Quest"
     stopRequested = false
     isRunning = true
     questCompleted = false
     questOnCooldown = false
-    print("[CombatFarm] Starting Quest farming (player frozen, stand follows).")
+    print("[CombatFarm] Starting Quest farming...")
+    task.spawn(farmLoop)
+end
+
+function CombatFarm:StartPlayer()
+    if isRunning then
+        if activeMode == "Player" then return end
+        self:Stop()
+    end
+    activeMode = "Player"
+    stopRequested = false
+    isRunning = true
+    print("[CombatFarm] Starting Player farming (coming soon)...")
     task.spawn(farmLoop)
 end
 
