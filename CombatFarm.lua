@@ -99,11 +99,37 @@ local function equipStand()
     end
 end
 
+-- Get closest NPC with the given name
+local function getClosestNPC(npcName)
+    local hrp = _movement:GetCharacter("HumanoidRootPart")
+    if not hrp then return nil end
+    local closest = nil
+    local closestDist = math.huge
+    for _, npc in pairs(workspace.Living:GetChildren()) do
+        if npc.Name == npcName and npc:FindFirstChild("HumanoidRootPart") then
+            local npcHRP = npc.HumanoidRootPart
+            local dist = (hrp.Position - npcHRP.Position).Magnitude
+            if dist < closestDist then
+                closestDist = dist
+                closest = npc
+            end
+        end
+    end
+    return closest
+end
+
 -- =====================
--- Combat core (fixed: only stand moves, player stays underground)
+-- Combat core (stand moves synchronously, attacks synchronously)
 -- =====================
 local function killTarget(targetName, isNPC, isQuest)
-    local target = workspace.Living:FindFirstChild(targetName)
+    -- For quests, we use FindFirstChild because quest NPCs are usually unique
+    local target
+    if isQuest then
+        target = workspace.Living:FindFirstChild(targetName)
+    else
+        target = getClosestNPC(targetName)  -- For NPC farm, pick closest
+    end
+    
     if not target then
         print("[CombatFarm] Target not found: " .. targetName)
         return false
@@ -145,41 +171,36 @@ local function killTarget(targetName, isNPC, isQuest)
 
     local startTime = tick()
     local killed = false
+    local targetRef = target  -- lock onto this specific instance
 
     while not stopRequested and tick() - startTime < 60 do
-        target = workspace.Living:FindFirstChild(targetName)
-        if not target then
+        -- Check if the same target still exists and is alive
+        if not targetRef or not targetRef.Parent then
             killed = true
             break
         end
-        local targetHRP = target:FindFirstChild("HumanoidRootPart")
-        local targetHum = target:FindFirstChildWhichIsA("Humanoid")
+        local targetHRP = targetRef:FindFirstChild("HumanoidRootPart")
+        local targetHum = targetRef:FindFirstChildWhichIsA("Humanoid")
         if not targetHRP or not targetHum or targetHum.Health <= 0 then
             killed = true
             break
         end
 
-        -- Move stand behind NPC (using task.spawn to avoid delays)
+        -- Move stand behind NPC (synchronously, every loop)
         if standPart and standPart.Parent then
-            task.spawn(function()
-                standPart.CFrame = targetHRP.CFrame - targetHRP.CFrame.LookVector * 1.1
-            end)
+            standPart.CFrame = targetHRP.CFrame - targetHRP.CFrame.LookVector * 1.1
         end
 
-        -- Attack (async)
-        task.spawn(function()
-            useMove("m1")
-        end)
+        -- Attack M1 (synchronously, to ensure it actually happens)
+        pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
 
-        -- Auto skills (async)
+        -- Auto skills (synchronous, but can be spawned if too heavy)
         local skills = _config:Get("AutoSkills")
         if type(skills) == "table" then
             for _, sk in ipairs(skills) do
                 local keyCode = Enum.KeyCode[sk]
                 if keyCode then
-                    task.spawn(function()
-                        useMove(keyCode)
-                    end)
+                    useMove(keyCode)
                 end
             end
         end
@@ -365,7 +386,6 @@ end
 -- Player farming (future)
 -- =====================
 local function runPlayerFarm()
-    -- TODO: implement player farming
     print("[CombatFarm] Player farming not yet implemented.")
     return false
 end
