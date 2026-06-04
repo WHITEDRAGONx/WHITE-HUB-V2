@@ -1,6 +1,7 @@
 -- =====================
 -- CombatFarm.lua
--- Uses BodyVelocity on player (underground freeze) and on stand (smooth follow)
+-- Unified combat: NPC and Quest farming.
+-- Player frozen with BodyVelocity, stand repositioned every loop (no task.spawn)
 -- =====================
 
 local Players = game:GetService("Players")
@@ -105,7 +106,7 @@ local function getClosestNPC(npcName)
     return closest
 end
 
--- Core kill function with BodyVelocity
+-- Core kill function (player frozen, stand repositioned)
 local function killTarget(targetName)
     local target = getClosestNPC(targetName) or workspace.Living:FindFirstChild(targetName)
     if not target then
@@ -125,7 +126,6 @@ local function killTarget(targetName)
     -- Summon stand if available
     local hasStand = _inventory:HasStand()
     local standPart = nil
-    local standBV = nil
     if hasStand then
         equipStand()
         local standMorph = _movement:GetCharacter("StandMorph")
@@ -136,14 +136,10 @@ local function killTarget(targetName)
             if standAttach then
                 local alignPos = standAttach:FindFirstChild("AlignPosition")
                 local alignOri = standAttach:FindFirstChild("AlignOrientation")
-                if alignPos then alignPos.Enabled = false end
-                if alignOri then alignOri.Enabled = false end
+                if alignPos then alignPos.Enabled = false
+                if alignOri then alignOri.Enabled = false
             end
-            -- BodyVelocity to keep stand stable
-            standBV = Instance.new("BodyVelocity")
-            standBV.Velocity = Vector3.new(0, 0, 0)
-            standBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-            standBV.Parent = standPart
+            standPart.CanCollide = true
         end
     end
 
@@ -156,7 +152,7 @@ local function killTarget(targetName)
     end
     focusCam.Value = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
 
-    -- Player BodyVelocity: freeze underground
+    -- Teleport player underground and freeze with BodyVelocity
     local yOffset = -35
     if targetName == "The Idol" then yOffset = 35 end
     local playerUndergroundCF = CFrame.new(hrp.Position.X, hrp.Position.Y + yOffset, hrp.Position.Z)
@@ -167,6 +163,7 @@ local function killTarget(targetName)
     local killed = false
 
     while not stopRequested and tick() - startTime < 60 do
+        -- Refresh target (in case it respawns or moves)
         target = getClosestNPC(targetName) or workspace.Living:FindFirstChild(targetName)
         if not target then
             killed = true
@@ -179,16 +176,15 @@ local function killTarget(targetName)
             break
         end
 
-        -- Update stand position behind NPC (smoothly)
+        -- Position stand behind NPC (direct, no task.spawn)
         if standPart and standPart.Parent then
-            local targetCF = targetHRP.CFrame - targetHRP.CFrame.LookVector * 1.1
-            standPart.CFrame = targetCF
+            standPart.CFrame = targetHRP.CFrame - targetHRP.CFrame.LookVector * 1.1
         end
 
-        -- Attack
+        -- Attack (direct)
         useMove("m1")
 
-        -- Auto skills
+        -- Auto skills (direct)
         local skills = _config:Get("AutoSkills")
         if type(skills) == "table" then
             for _, sk in ipairs(skills) do
@@ -199,13 +195,12 @@ local function killTarget(targetName)
             end
         end
 
-        task.wait(0.3)  -- Stable loop
+        task.wait(0.35)  -- Stable delay
     end
 
     -- Cleanup
     if focusCam then focusCam:Destroy() end
     _movement:Unfreeze(playerBV)
-    if standBV then standBV:Destroy() end
     if hrp then
         hrp.CFrame = oldPos
     end
@@ -226,7 +221,7 @@ local function runNPCFarm()
     return killTarget(npcName)
 end
 
--- Quest farm (acceptance, item collection)
+-- Quest acceptance and item collection
 local function getBestQuest()
     local level = Player.PlayerStats.Level.Value
     local best = nil
@@ -378,6 +373,7 @@ local function runQuestFarm()
     return false
 end
 
+-- Main loops
 local function farmLoop()
     while not stopRequested do
         if activeMode == "NPC" then
@@ -412,13 +408,14 @@ local function farmLoop()
     end
 end
 
+-- Public API
 function CombatFarm:StartNPC()
     if isRunning and activeMode == "NPC" then return end
     if isRunning then self:Stop() end
     activeMode = "NPC"
     stopRequested = false
     isRunning = true
-    print("[CombatFarm] Starting NPC farming (BodyVelocity freeze)...")
+    print("[CombatFarm] Starting NPC farming (player frozen, stand follows).")
     task.spawn(farmLoop)
 end
 
@@ -430,17 +427,7 @@ function CombatFarm:StartQuest()
     isRunning = true
     questCompleted = false
     questOnCooldown = false
-    print("[CombatFarm] Starting Quest farming (BodyVelocity freeze)...")
-    task.spawn(farmLoop)
-end
-
-function CombatFarm:StartPlayer()
-    if isRunning and activeMode == "Player" then return end
-    if isRunning then self:Stop() end
-    activeMode = "Player"
-    stopRequested = false
-    isRunning = true
-    print("[CombatFarm] Starting Player farming (coming soon)...")
+    print("[CombatFarm] Starting Quest farming (player frozen, stand follows).")
     task.spawn(farmLoop)
 end
 
