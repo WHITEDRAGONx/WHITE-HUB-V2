@@ -139,8 +139,8 @@ local function killTarget(targetName)
             if standAttach then
                 local alignPos = standAttach:FindFirstChild("AlignPosition")
                 local alignOri = standAttach:FindFirstChild("AlignOrientation")
-                if alignPos then alignPos.Enabled = false
-                if alignOri then alignOri.Enabled = false
+                if alignPos then alignPos.Enabled = false end
+                if alignOri then alignOri.Enabled = false end
             end
             standPart.CanCollide = true
         end
@@ -327,7 +327,7 @@ local function collectItem(itemName, requiredAmount)
                 movement:Teleport(itemModel.PrimaryPart.CFrame - Vector3.new(0, 10, 0))
                 task.wait(0.3)
                 local prompt = itemModel:FindFirstChildWhichIsA("ProximityPrompt")
-                if prompt then fireproximityprompt(prompt)
+                if prompt then fireproximityprompt(prompt) end
                 task.wait(0.6)
                 movement:Unfreeze(bv)
                 movement:Teleport(oldCF)
