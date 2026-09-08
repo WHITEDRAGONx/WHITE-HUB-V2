@@ -40,7 +40,6 @@ function CombatFarm:Init(Modules)
     _serverHop = Modules.ServerHop
     _webhook   = Modules.Webhook
 
-    -- Monitor quest completion via GUI (Xenon V5 method)
     task.spawn(function()
         while true do
             task.wait(0.5)
@@ -155,9 +154,6 @@ local function killTarget(targetName)
     end
     focusCam.Value = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
 
-    local enemyHRP = target:FindFirstChild("HumanoidRootPart")
-    local enemyHumanoid = target:FindFirstChildWhichIsA("Humanoid")
-    local enemyHealth = target:FindFirstChild("Health")
     local yOffset = -35
     if targetName == "The Idol" then yOffset = 35 end
 
@@ -170,9 +166,10 @@ local function killTarget(targetName)
             killed = true
             break
         end
-        enemyHRP = target:FindFirstChild("HumanoidRootPart")
-        enemyHumanoid = target:FindFirstChildWhichIsA("Humanoid")
-        enemyHealth = target:FindFirstChild("Health")
+
+        local enemyHRP = target:FindFirstChild("HumanoidRootPart")
+        local enemyHumanoid = target:FindFirstChildWhichIsA("Humanoid")
+        local enemyHealth = target:FindFirstChild("Health")
 
         if not enemyHRP or not enemyHumanoid or not enemyHealth or enemyHealth.Value <= 0 then
             killed = true
