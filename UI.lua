@@ -767,7 +767,8 @@ function UI:Create()
     whBox.Parent             = whHolder
     whBox.Focused:Connect(function()
         TweenService:Create(whStroke, TweenInfo.new(0.1), {Color=Color3.fromRGB(120,90,255)}):Play()
-        whBox.BackgroundColor3 = Color3.from
+        whBox.BackgroundColor3 = Color3.fromRGB(55,55,75)
+    end)
     whBox.FocusLost:Connect(function()
         if _config then _config:Set("WebhookURL", whBox.Text) end
         TweenService:Create(whStroke, TweenInfo.new(0.1), {Color=Color3.fromRGB(60,55,85)}):Play()
@@ -786,22 +787,19 @@ function UI:Create()
     resetBtn.Parent = WebhookPage
     Instance.new("UICorner", resetBtn).CornerRadius = UDim.new(0,7)
     Instance.new("UIStroke", resetBtn).Color = Color3.fromRGB(60,70,200)
-
     resetBtn.MouseButton1Click:Connect(function()
         if _config then
             _config:Set("Phase1Notified", false)
             _config:Set("Phase3Notified", false)
             print("[UI] Webhook flags reset.")
             if _webhook then
-                _webhook:Send("🔄 **Webhook flags reset**\nPlayer: `" .. Player.Name .. "`\nPhase1 and Phase3 notifications will be re-sent on next completion.")
+                _webhook:Send("🔄 **Webhook flags reset**\nPlayer: `" .. Player.Name .. "`\nPhase1 and Phase3 notifications will be re‑sent on next completion.")
             end
         end
     end)
-
     resetBtn.MouseEnter:Connect(function()
         TweenService:Create(resetBtn, TweenInfo.new(0.15), {BackgroundColor3=Color3.fromRGB(110,125,255)}):Play()
     end)
-
     resetBtn.MouseLeave:Connect(function()
         TweenService:Create(resetBtn, TweenInfo.new(0.15), {BackgroundColor3=Color3.fromRGB(88,101,242)}):Play()
     end)
@@ -812,7 +810,6 @@ function UI:Create()
     -- CREDITS PAGE
     -- =====================
     MakeSection(CreditsPage, "WHITE HUB")
-
     local creditLabel = Instance.new("TextLabel")
     creditLabel.Size             = UDim2.new(1,-4,0,44)
     creditLabel.BackgroundColor3 = Color3.fromRGB(22,22,30)
@@ -823,10 +820,8 @@ function UI:Create()
     creditLabel.Font             = Enum.Font.GothamBold
     creditLabel.Parent           = CreditsPage
     Instance.new("UICorner", creditLabel).CornerRadius = UDim.new(0,7)
-
     local creditStroke = Instance.new("UIStroke", creditLabel)
     creditStroke.Color = Color3.fromRGB(60,55,85)
-
     local discordBtn = Instance.new("TextButton")
     discordBtn.Size             = UDim2.new(1,-4,0,36)
     discordBtn.BackgroundColor3 = Color3.fromRGB(88,101,242)
@@ -838,27 +833,22 @@ function UI:Create()
     discordBtn.Parent           = CreditsPage
     Instance.new("UICorner", discordBtn).CornerRadius = UDim.new(0,7)
     Instance.new("UIStroke", discordBtn).Color = Color3.fromRGB(60,70,200)
-
     discordBtn.MouseEnter:Connect(function()
         TweenService:Create(discordBtn, TweenInfo.new(0.15), {BackgroundColor3=Color3.fromRGB(110,125,255)}):Play()
     end)
-
     discordBtn.MouseLeave:Connect(function()
         TweenService:Create(discordBtn, TweenInfo.new(0.15), {BackgroundColor3=Color3.fromRGB(88,101,242)}):Play()
     end)
-
     discordBtn.MouseButton1Click:Connect(function()
         pcall(function() setclipboard("https://discord.gg/Qwd23ZRNxJ") end)
         local orig = discordBtn.Text
         discordBtn.Text = "✅ Copied!"
         TweenService:Create(discordBtn, TweenInfo.new(0.15), {BackgroundColor3=Color3.fromRGB(50,180,80)}):Play()
-
         task.delay(2, function()
             discordBtn.Text = orig
             TweenService:Create(discordBtn, TweenInfo.new(0.15), {BackgroundColor3=Color3.fromRGB(88,101,242)}):Play()
         end)
     end)
-
     AutoCanvas(CreditsPage)
 
     -- =====================
@@ -874,7 +864,6 @@ function UI:Create()
     ToggleBtn.TextSize         = 14
     ToggleBtn.Font             = Enum.Font.GothamBold
     Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(0,6)
-
     local tStroke = Instance.new("UIStroke", ToggleBtn)
     tStroke.Color     = Color3.fromRGB(60,55,85)
     tStroke.Thickness = 1.3
@@ -882,21 +871,17 @@ function UI:Create()
     ToggleBtn.MouseEnter:Connect(function()
         TweenService:Create(tStroke, TweenInfo.new(0.15), {Color=Color3.fromRGB(120,90,255)}):Play()
     end)
-
     ToggleBtn.MouseLeave:Connect(function()
         TweenService:Create(tStroke, TweenInfo.new(0.15), {Color=Color3.fromRGB(60,55,85)}):Play()
     end)
 
     local isOpen = false
-
     local function ToggleWindow()
         isOpen = not isOpen
-
         if isOpen then
             MainFrame.Visible = true
             MainFrame.Size = UDim2.new(0,0,0,0)
             MainFrame.Position = UDim2.new(0.5,0,0.5,0)
-
             TweenService:Create(MainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
                 Size = UDim2.new(0,W,0,H),
                 Position = UDim2.new(0.5,-W/2,0.5,-H/2),
@@ -906,73 +891,42 @@ function UI:Create()
                 Size = UDim2.new(0,0,0,0),
                 Position = UDim2.new(0.5,0,0.5,0),
             })
-
             t:Play()
-
-            t.Completed:Connect(function()
-                MainFrame.Visible = false
-            end)
+            t.Completed:Connect(function() MainFrame.Visible = false end)
         end
     end
 
     ToggleBtn.MouseButton1Click:Connect(ToggleWindow)
-
-    CloseButton.MouseButton1Click:Connect(function()
-        if isOpen then
-            ToggleWindow()
-        end
-    end)
+    CloseButton.MouseButton1Click:Connect(function() if isOpen then ToggleWindow() end end)
 
     UserInputService.InputBegan:Connect(function(input, gp)
         if gp then return end
-
-        if input.KeyCode == Enum.KeyCode.RightAlt then
-            ToggleWindow()
+        if input.KeyCode == Enum.KeyCode.RightAlt then ToggleWindow()
         elseif input.KeyCode == Enum.KeyCode.RightControl then
             ToggleBtn.Visible = not ToggleBtn.Visible
         end
     end)
 
     local dragging, dragStart, startPos = false, nil, nil
-
     TopBar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = MainFrame.Position
-
             input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
             end)
         end
     end)
-
     UserInputService.InputChanged:Connect(function(input)
-        if dragging
-            and (input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch) then
-
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local d = input.Position - dragStart
-
-            MainFrame.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + d.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + d.Y
-            )
+            MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
         end
     end)
 end
 
-function UI:Notify(msg)
-    print("[UI] " .. tostring(msg))
-end
-
-function UI:SetVisible(value)
-end
+function UI:Notify(msg) print("[UI] " .. tostring(msg)) end
+function UI:SetVisible(value) end
 
 return UI
