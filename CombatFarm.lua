@@ -15,7 +15,7 @@ local _movement  = nil
 local _serverHop = nil
 local _webhook   = nil
 
-local activeMode = nil          -- "NPC" or "Quest"
+local activeMode = nil
 local isRunning = false
 local stopRequested = false
 local currentQuest = nil
@@ -46,13 +46,9 @@ function CombatFarm:Init(Modules)
             local hud = Player.PlayerGui:FindFirstChild("HUD")
             if hud then
                 local completedFrame = hud:FindFirstChild("QuestCompleted")
-                if completedFrame then
+                if completedFrame and completedFrame.Visible then
                     questCompleted = true
                     print("[CombatFarm] Quest completed.")
-                    task.wait(1)
-                    while completedFrame and completedFrame.Parent do
-                        task.wait(0.5)
-                    end
                 end
             end
         end
@@ -60,7 +56,7 @@ function CombatFarm:Init(Modules)
 end
 
 -- =============================================
--- HELPER FUNCTIONS (Xenon V5 style)
+-- HELPER FUNCTIONS
 -- =============================================
 
 local function useMove(move)
@@ -110,7 +106,7 @@ local function getClosestNPC(npcName)
 end
 
 -- =============================================
--- COMBAT CORE (Xenon V5 kill logic)
+-- COMBAT CORE
 -- =============================================
 local function killTarget(targetName)
     local target = getClosestNPC(targetName) or workspace.Living:FindFirstChild(targetName)
@@ -128,8 +124,9 @@ local function killTarget(targetName)
     local oldPos = hrp.CFrame
     local oldCameraSubject = workspace.CurrentCamera and workspace.CurrentCamera.CameraSubject
 
-    local hasStand = _inventory:HasStand()
+    -- Equip stand
     local standPart = nil
+    local hasStand = _inventory:HasStand()
     if hasStand then
         equipStand()
         local standMorph = _movement:GetCharacter("StandMorph")
@@ -146,6 +143,7 @@ local function killTarget(targetName)
         end
     end
 
+    -- Focus camera
     local focusCam = _movement:GetCharacter("FocusCam")
     if not focusCam then
         focusCam = Instance.new("ObjectValue")
@@ -176,15 +174,17 @@ local function killTarget(targetName)
             break
         end
 
+        -- Stand positioning
         if standPart and standPart.Parent then
-            standPart.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.1
-            hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-3, -2) + Vector3.new(0, yOffset, 0)
+            standPart.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.5
+            hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-2, -1) + Vector3.new(0, yOffset, 0)
         else
-            hrp.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.3
+            hrp.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.5
         end
 
-        task.spawn(function()
-            useMove("m1")
+        -- Attack
+        pcall(function()
+            remoteFunc:InvokeServer("Attack", "m1")
         end)
 
         local skills = _config:Get("AutoSkills")
@@ -192,7 +192,7 @@ local function killTarget(targetName)
             for _, sk in ipairs(skills) do
                 local keyCode = Enum.KeyCode[sk]
                 if keyCode then
-                    task.spawn(function()
+                    pcall(function()
                         useMove(keyCode)
                     end)
                 end
@@ -202,8 +202,9 @@ local function killTarget(targetName)
         task.wait()
     end
 
-    task.wait(2)
+    task.wait(1)
 
+    -- Cleanup: destroy FocusCam and restore camera
     if focusCam then focusCam:Destroy() end
     if hrp then
         hrp.CFrame = oldPos
@@ -286,9 +287,16 @@ local function acceptQuest(questName)
         task.wait(0.2)
     end
 
-    task.wait(1)
+    -- Wait for quest to register
+    local timeout = tick() + 10
     local progress = Player.PlayerStats.QuestProgress.Value
     local maxProgress = Player.PlayerStats.QuestMaxProgress.Value
+    while (progress == 0 and maxProgress == 0) and tick() < timeout do
+        task.wait(0.5)
+        progress = Player.PlayerStats.QuestProgress.Value
+        maxProgress = Player.PlayerStats.QuestMaxProgress.Value
+    end
+
     if progress == 0 and maxProgress == 0 then
         print("[CombatFarm] Quest acceptance failed - possibly on cooldown. Waiting 60 seconds.")
         questOnCooldown = true
@@ -297,6 +305,7 @@ local function acceptQuest(questName)
     end
 
     questCompleted = false
+    print("[CombatFarm] Quest accepted: " .. questName)
     return true
 end
 
