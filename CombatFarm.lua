@@ -2,7 +2,7 @@
 -- CombatFarm.lua
 -- Unified combat: NPC and Quest farming.
 -- Logic identical to Xenon V5 (stand positioning, attacks, death detection).
--- FIXED: player positioned underground (yOffset -35) for safety.
+-- FIXED: player positioned underground (yOffset -35) with noclip for safety.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -153,6 +153,9 @@ local function killTarget(targetName)
     end
     focusCam.Value = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
 
+    -- Enable noclip so player can stay underground without collision
+    _movement:SetNoclip(true)
+
     -- Y offset for player position (Xenon V5: player stays underground for safety)
     local yOffset = -35
     if targetName == "The Idol" then yOffset = 35 end
@@ -205,6 +208,9 @@ local function killTarget(targetName)
     end
 
     task.wait(1)
+
+    -- Disable noclip after combat
+    _movement:SetNoclip(false)
 
     -- Cleanup: destroy FocusCam and restore camera
     if focusCam then focusCam:Destroy() end
