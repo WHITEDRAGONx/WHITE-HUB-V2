@@ -123,7 +123,9 @@ local function killTarget(targetName)
     end
 
     local oldPos = hrp.CFrame
-    local oldCameraSubject = workspace.CurrentCamera and workspace.CurrentCamera.CameraSubject
+    local camera = workspace.CurrentCamera
+    local oldCameraSubject = camera and camera.CameraSubject
+    local oldCameraType = camera and camera.CameraType
 
     -- Equip stand
     local standPart = nil
@@ -207,19 +209,38 @@ local function killTarget(targetName)
         task.wait()
     end
 
-    task.wait(1)
+    -- Cleanup immediately after the combat loop.
+    -- Existing combat offsets/distances are intentionally unchanged.
+    if focusCam then
+        pcall(function()
+            focusCam.Value = nil
+            focusCam:Destroy()
+        end)
+    end
 
-    -- Disable noclip after combat
     _movement:SetNoclip(false)
 
-    -- Cleanup: destroy FocusCam and restore camera
-    if focusCam then focusCam:Destroy() end
-    if hrp then
-        hrp.CFrame = oldPos
-    end
-    if oldCameraSubject then
+    if hrp and hrp.Parent then
         pcall(function()
-            workspace.CurrentCamera.CameraSubject = oldCameraSubject
+            hrp.CFrame = oldPos
+        end)
+    end
+
+    if camera and camera.Parent then
+        pcall(function()
+            if oldCameraSubject and oldCameraSubject.Parent then
+                camera.CameraSubject = oldCameraSubject
+            else
+                local character = _movement:GetCharacter()
+                local humanoid = character and character:FindFirstChildWhichIsA("Humanoid")
+                if humanoid then
+                    camera.CameraSubject = humanoid
+                end
+            end
+
+            if oldCameraType then
+                camera.CameraType = oldCameraType
+            end
         end)
     end
 
@@ -258,6 +279,18 @@ local function getBestQuest()
     return best
 end
 
+local function readQuestState()
+    local stats = Player:FindFirstChild("PlayerStats")
+    if not stats then return nil, nil end
+
+    local progressObj = stats:FindFirstChild("QuestProgress")
+    local maxProgressObj = stats:FindFirstChild("QuestMaxProgress")
+
+    local progress = progressObj and tonumber(progressObj.Value) or 0
+    local maxProgress = maxProgressObj and tonumber(maxProgressObj.Value) or 0
+    return progress, maxProgress
+end
+
 local function acceptQuest(questName)
     if questOnCooldown and tick() < cooldownUntil then
         local remaining = math.ceil(cooldownUntil - tick())
@@ -266,55 +299,91 @@ local function acceptQuest(questName)
     end
     questOnCooldown = false
 
-    local dialogueNPC = workspace.Dialogues:FindFirstChild(questName)
+    local dialogues = workspace:FindFirstChild("Dialogues")
+    if not dialogues then
+        print("[CombatFarm] Dialogues folder not found.")
+        return false
+    end
+
+    -- Recursive lookup also works when dialogue NPCs are nested in folders.
+    local dialogueNPC = dialogues:FindFirstChild(questName, true)
     if not dialogueNPC then
         print("[CombatFarm] Dialogue NPC not found: " .. questName)
         return false
     end
-    local dialogueValue = dialogueNPC:FindFirstChild("Dialogue")
+
+    local dialogueValue = dialogueNPC:FindFirstChild("Dialogue", true)
     if not dialogueValue then
         print("[CombatFarm] No Dialogue value for " .. questName)
         return false
     end
+
     local remoteEvent = _movement:GetCharacter("RemoteEvent")
     if not remoteEvent then
+        print("[CombatFarm] RemoteEvent not found.")
         return false
     end
+
     local npcDialogue = dialogueValue.Value
+    local beforeProgress, beforeMax = readQuestState()
 
+    -- Advance dialogue one step at a time and stop as soon as the quest
+    -- state changes, instead of blindly sending the full sequence.
     for i = 1, 10 do
-        remoteEvent:FireServer("EndDialogue", {
-            ["NPC"] = npcDialogue,
-            ["Option"] = "Option1",
-            ["Dialogue"] = "Dialogue" .. i
-        })
-        remoteEvent:FireServer("EndDialogue", {
-            ["NPC"] = npcDialogue,
-            ["Dialogue"] = "Dialogue" .. i
-        })
-        task.wait(0.2)
+        local dialogueId = "Dialogue" .. i
+
+        pcall(function()
+            remoteEvent:FireServer("EndDialogue", {
+                ["NPC"] = npcDialogue,
+                ["Option"] = "Option1",
+                ["Dialogue"] = dialogueId
+            })
+        end)
+
+        task.wait(0.08)
+
+        local progress, maxProgress = readQuestState()
+        if (maxProgress or 0) > 0 or progress ~= beforeProgress or maxProgress ~= beforeMax then
+            questCompleted = false
+            print("[CombatFarm] Quest accepted: " .. questName)
+            return true
+        end
+
+        -- Compatibility with dialogue implementations that expect a second
+        -- packet without the Option field.
+        pcall(function()
+            remoteEvent:FireServer("EndDialogue", {
+                ["NPC"] = npcDialogue,
+                ["Dialogue"] = dialogueId
+            })
+        end)
+
+        task.wait(0.08)
+
+        progress, maxProgress = readQuestState()
+        if (maxProgress or 0) > 0 or progress ~= beforeProgress or maxProgress ~= beforeMax then
+            questCompleted = false
+            print("[CombatFarm] Quest accepted: " .. questName)
+            return true
+        end
     end
 
-    -- Wait for quest to register
-    local timeout = tick() + 10
-    local progress = Player.PlayerStats.QuestProgress.Value
-    local maxProgress = Player.PlayerStats.QuestMaxProgress.Value
-    while (progress == 0 and maxProgress == 0) and tick() < timeout do
-        task.wait(0.5)
-        progress = Player.PlayerStats.QuestProgress.Value
-        maxProgress = Player.PlayerStats.QuestMaxProgress.Value
+    -- Short replication window rather than the previous 10-second polling.
+    local timeout = tick() + 3
+    while tick() < timeout do
+        local progress, maxProgress = readQuestState()
+        if (maxProgress or 0) > 0 or progress ~= beforeProgress or maxProgress ~= beforeMax then
+            questCompleted = false
+            print("[CombatFarm] Quest accepted: " .. questName)
+            return true
+        end
+        task.wait(0.1)
     end
 
-    if progress == 0 and maxProgress == 0 then
-        print("[CombatFarm] Quest acceptance failed - possibly on cooldown. Waiting 60 seconds.")
-        questOnCooldown = true
-        cooldownUntil = tick() + 60
-        return false
-    end
-
-    questCompleted = false
-    print("[CombatFarm] Quest accepted: " .. questName)
-    return true
+    print("[CombatFarm] Quest acceptance failed - possibly on cooldown.")
+    questOnCooldown = true
+    cooldownUntil = tick() + 60
+    return false
 end
 
 local function collectItem(itemName, requiredAmount)
