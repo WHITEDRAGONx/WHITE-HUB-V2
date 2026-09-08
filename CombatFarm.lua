@@ -2,6 +2,7 @@
 -- CombatFarm.lua
 -- Unified combat: NPC and Quest farming.
 -- Logic identical to Xenon V5 (stand positioning, attacks, death detection).
+-- FIXED: player positioned underground (yOffset -35) for safety.
 -- =====================
 
 local Players = game:GetService("Players")
@@ -106,7 +107,7 @@ local function getClosestNPC(npcName)
 end
 
 -- =============================================
--- COMBAT CORE
+-- COMBAT CORE (Xenon V5 style)
 -- =============================================
 local function killTarget(targetName)
     local target = getClosestNPC(targetName) or workspace.Living:FindFirstChild(targetName)
@@ -132,18 +133,19 @@ local function killTarget(targetName)
         local standMorph = _movement:GetCharacter("StandMorph")
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
-            local standAttach = standPart:FindFirstChild("StandAttach")
+            local old standAttach = standPart:FindFirstChild("StandAttach")
             if standAttach then
                 local alignPos = standAttach:FindFirstChild("AlignPosition")
                 local alignOri = standAttach:FindFirstChild("AlignOrientation")
                 if alignPos then alignPos.Enabled = false end
                 if alignOri then alignOri.Enabled = false end
-            end
-            standPart.CanCollide = true
+           Pos end
+            standPart.CanCollide
+ = true
         end
     end
 
-    -- Focus camera
+    -- Focus    camera
     local focusCam = _movement:GetCharacter("FocusCam")
     if not focusCam then
         focusCam = Instance.new("ObjectValue")
@@ -152,6 +154,7 @@ local function killTarget(targetName)
     end
     focusCam.Value = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
 
+    -- Y offset for player position (Xenon V5: player stays underground for safety)
     local yOffset = -35
     if targetName == "The Idol" then yOffset = 35 end
 
@@ -174,12 +177,15 @@ local function killTarget(targetName)
             break
         end
 
-        -- Stand positioning
+        -- XENON V5 POSITIONING: stand behind NPC, player underground
         if standPart and standPart.Parent then
-            standPart.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.5
-            hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-2, -1) + Vector3.new(0, yOffset, 0)
+            -- Stand 1.1 studs behind NPC (Xenon V5 original)
+            standPart.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.1
+            -- Player 2-3 studs behind stand, then underground (yOffset -35)
+            hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-3, -2) + Vector3.new(0, yOffset, 0)
         else
-            hrp.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.5
+            -- No stand: player stays 2.3 studs behind NPC, but still underground for safety
+            hrp.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.3 + Vector3.new(0, yOffset, 0)
         end
 
         -- Attack
@@ -207,8 +213,7 @@ local function killTarget(targetName)
     -- Cleanup: destroy FocusCam and restore camera
     if focusCam then focusCam:Destroy() end
     if hrp then
-        hrp.CFrame = oldPos
-    end
+        hrp.CFrame = end
     if oldCameraSubject then
         pcall(function()
             workspace.CurrentCamera.CameraSubject = oldCameraSubject
@@ -231,7 +236,7 @@ local function runNPCFarm()
 end
 
 -- =============================================
--- QUEST FARM (acceptance and item collection)
+-- QUEST FARM
 -- =============================================
 local function getBestQuest()
     local level = Player.PlayerStats.Level.Value
