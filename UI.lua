@@ -1,5 +1,6 @@
 -- =====================
--- UI.lua (WHITE HUB V2) - updated for CombatFarm
+-- UI.lua (WHITE HUB V2)
+-- Full English, dynamic NPC list, dropdown auto-close on selection.
 -- =====================
 
 local Players          = game:GetService("Players")
@@ -197,7 +198,7 @@ local function ensureDropdownContainer()
     return dropdownContainer
 end
 
--- Styled dropdown with refresh capability (dynamic NPC list)
+-- Styled dropdown with refresh capability (dynamic NPC list) and auto-close on selection
 local function MakeStyledDropdown(parent, labelText, options, callback)
     local holder = Instance.new("Frame")
     holder.Size = UDim2.new(1,-4,0,36)
@@ -260,7 +261,7 @@ local function MakeStyledDropdown(parent, labelText, options, callback)
             btn.MouseButton1Click:Connect(function()
                 dropdownBtn.Text = opt
                 callback(opt)
-                hideMenu()
+                hideMenu()  -- AUTO-CLOSE on selection
             end)
         end
         local count = #newOptions
@@ -669,7 +670,7 @@ function UI:Create()
     
     MakeSection(QuestPage, "NPC FARM")
     
-    -- Dynamic NPC dropdown (unique names)
+    -- Dynamic NPC dropdown (unique names) with refresh support
     local npcBtn, npcRefresh = MakeStyledDropdown(QuestPage, "Select NPC", dynamicNPCList, function(selected)
         if _config then _config:Set("SelectedNPC", selected) end
     end)
