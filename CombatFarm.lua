@@ -1,7 +1,7 @@
 -- =====================
 -- CombatFarm.lua
--- Unified combat module: NPC and Quest farming.
--- Logic is IDENTICAL to Xenon V5 (stand positioning, attacks, death detection).
+-- Unified combat: NPC and Quest farming.
+-- Logic identical to Xenon V5 (stand positioning, attacks, death detection).
 -- =====================
 
 local Players = game:GetService("Players")
@@ -23,7 +23,6 @@ local questCompleted = false
 local questOnCooldown = false
 local cooldownUntil = 0
 
--- Quest definitions (enemy to kill or item to collect)
 local questInfo = {
     ["Officer Sam [Lvl. 1+]"] = { enemy = "Thug" },
     ["Deputy Bertrude [Lvl. 10+]"] = { enemy = "Corrupt Police" },
@@ -65,7 +64,6 @@ end
 -- HELPER FUNCTIONS (Xenon V5 style)
 -- =============================================
 
--- Execute a move (M1, M2, or skill key)
 local function useMove(move)
     local char = _movement:GetCharacter()
     if not char then return end
@@ -82,7 +80,6 @@ local function useMove(move)
     end
 end
 
--- Summon the player's stand if it is not already out
 local function equipStand()
     local char = _movement:GetCharacter()
     if not char then return end
@@ -95,7 +92,6 @@ local function equipStand()
     end
 end
 
--- Get the closest NPC with the given name (handles multiple instances)
 local function getClosestNPC(npcName)
     local closest = nil
     local closestDist = math.huge
@@ -118,7 +114,6 @@ end
 -- COMBAT CORE (Xenon V5 kill logic)
 -- =============================================
 local function killTarget(targetName)
-    -- Get the closest target (or any if closest not found)
     local target = getClosestNPC(targetName) or workspace.Living:FindFirstChild(targetName)
     if not target then
         print("[CombatFarm] Target not found: " .. targetName)
@@ -131,11 +126,9 @@ local function killTarget(targetName)
         return false
     end
 
-    -- Save original position and camera subject
     local oldPos = hrp.CFrame
     local oldCameraSubject = workspace.CurrentCamera and workspace.CurrentCamera.CameraSubject
 
-    -- Summon stand if available
     local hasStand = _inventory:HasStand()
     local standPart = nil
     if hasStand then
@@ -143,7 +136,6 @@ local function killTarget(targetName)
         local standMorph = _movement:GetCharacter("StandMorph")
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
-            -- Disable original constraints to prevent snapping back (fixes flickering)
             local standAttach = standPart:FindFirstChild("StandAttach")
             if standAttach then
                 local alignPos = standAttach:FindFirstChild("AlignPosition")
@@ -155,7 +147,6 @@ local function killTarget(targetName)
         end
     end
 
-    -- Focus camera on target (Xenon V5 style)
     local focusCam = _movement:GetCharacter("FocusCam")
     if not focusCam then
         focusCam = Instance.new("ObjectValue")
@@ -164,19 +155,16 @@ local function killTarget(targetName)
     end
     focusCam.Value = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
 
-    -- Combat variables
     local enemyHRP = target:FindFirstChild("HumanoidRootPart")
     local enemyHumanoid = target:FindFirstChildWhichIsA("Humanoid")
     local enemyHealth = target:FindFirstChild("Health")
     local yOffset = -35
     if targetName == "The Idol" then yOffset = 35 end
 
-    -- Main combat loop (identical to Xenon V5)
     local startTime = tick()
     local killed = false
 
     while not stopRequested and tick() - startTime < 60 do
-        -- Refresh target references (handles death / respawn)
         target = getClosestNPC(targetName) or workspace.Living:FindFirstChild(targetName)
         if not target then
             killed = true
@@ -191,18 +179,13 @@ local function killTarget(targetName)
             break
         end
 
-        -- Position stand and player (exactly like Xenon V5)
         if standPart and standPart.Parent then
-            -- Stand behind NPC (1.1 studs behind)
             standPart.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.1
-            -- Player placed underground (Y = -35) with random offset behind stand
             hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-3, -2) + Vector3.new(0, yOffset, 0)
         else
-            -- No stand: player stays behind NPC
             hrp.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.3
         end
 
-        -- Launch attacks and skills in separate threads (Xenon V5 style)
         task.spawn(function()
             useMove("m1")
         end)
@@ -219,14 +202,11 @@ local function killTarget(targetName)
             end
         end
 
-        -- No fixed delay – loop runs as fast as possible (Xenon V5 behavior)
         task.wait()
     end
 
-    -- Wait 2 seconds after kill (Xenon V5 does this)
     task.wait(2)
 
-    -- Cleanup: restore position and camera
     if focusCam then focusCam:Destroy() end
     if hrp then
         hrp.CFrame = oldPos
@@ -272,7 +252,6 @@ local function getBestQuest()
     return best
 end
 
--- Accept a quest (Xenon V5 method)
 local function acceptQuest(questName)
     if questOnCooldown and tick() < cooldownUntil then
         local remaining = math.ceil(cooldownUntil - tick())
@@ -324,7 +303,6 @@ local function acceptQuest(questName)
     return true
 end
 
--- Collect ground items (e.g., Gold Coins for Homeless Man Jill)
 local function collectItem(itemName, requiredAmount)
     local inventory = _inventory
     local movement  = _movement
@@ -352,7 +330,7 @@ local function collectItem(itemName, requiredAmount)
                 movement:Teleport(itemModel.PrimaryPart.CFrame - Vector3.new(0, 10, 0))
                 task.wait(0.3)
                 local prompt = itemModel:FindFirstChildWhichIsA("ProximityPrompt")
-                if prompt then fireproximityprompt(prompt) end
+                if prompt then fireproximityprompt(prompt)
                 task.wait(0.6)
                 movement:Unfreeze(bv)
                 movement:Teleport(oldCF)
@@ -364,7 +342,6 @@ local function collectItem(itemName, requiredAmount)
     return inventory:Count(itemName) >= requiredAmount
 end
 
--- Execute a quest
 local function runQuestFarm()
     local autoChoose = _config:Get("AutoChooseQuest")
     if autoChoose then
@@ -405,7 +382,7 @@ local function runQuestFarm()
 end
 
 -- =============================================
--- MAIN LOOP (NPC / Quest)
+-- MAIN LOOP
 -- =============================================
 local function farmLoop()
     while not stopRequested do
