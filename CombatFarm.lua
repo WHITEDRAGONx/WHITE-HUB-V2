@@ -133,19 +133,18 @@ local function killTarget(targetName)
         local standMorph = _movement:GetCharacter("StandMorph")
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
-            local old standAttach = standPart:FindFirstChild("StandAttach")
+            local standAttach = standPart:FindFirstChild("StandAttach")
             if standAttach then
                 local alignPos = standAttach:FindFirstChild("AlignPosition")
                 local alignOri = standAttach:FindFirstChild("AlignOrientation")
                 if alignPos then alignPos.Enabled = false end
                 if alignOri then alignOri.Enabled = false end
-           Pos end
-            standPart.CanCollide
- = true
+            end
+            standPart.CanCollide = true
         end
     end
 
-    -- Focus    camera
+    -- Focus camera
     local focusCam = _movement:GetCharacter("FocusCam")
     if not focusCam then
         focusCam = Instance.new("ObjectValue")
@@ -179,12 +178,9 @@ local function killTarget(targetName)
 
         -- XENON V5 POSITIONING: stand behind NPC, player underground
         if standPart and standPart.Parent then
-            -- Stand 1.1 studs behind NPC (Xenon V5 original)
             standPart.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.1
-            -- Player 2-3 studs behind stand, then underground (yOffset -35)
             hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-3, -2) + Vector3.new(0, yOffset, 0)
         else
-            -- No stand: player stays 2.3 studs behind NPC, but still underground for safety
             hrp.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.3 + Vector3.new(0, yOffset, 0)
         end
 
@@ -213,7 +209,8 @@ local function killTarget(targetName)
     -- Cleanup: destroy FocusCam and restore camera
     if focusCam then focusCam:Destroy() end
     if hrp then
-        hrp.CFrame = end
+        hrp.CFrame = oldPos
+    end
     if oldCameraSubject then
         pcall(function()
             workspace.CurrentCamera.CameraSubject = oldCameraSubject
