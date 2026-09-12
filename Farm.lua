@@ -18,7 +18,7 @@ local _webhook   = nil
 
 local SpawnedItems    = {}
 local ItemSpawnFolder = nil
-local NO_ITEM_TIMEOUT = 20
+local NO_ITEM_TIMEOUT = 10   -- <-- alterado de 20 para 10
 local lastItemTime    = tick()
 
 local lastSellItemsSnapshot = nil
@@ -173,7 +173,7 @@ local SAFE_SPOT = CFrame.new(978, -42, -49)
 
 local function CollectItem(itemInfo, index)
     if not _config:Get("FarmEnabled") then return end
-    
+
     local hrp = _movement:GetCharacter("HumanoidRootPart")
     if not hrp then return end
     SpawnedItems[index] = nil
@@ -291,7 +291,7 @@ function Farm:Start()
         print("[Farm] >>> Phase 1 started — farming normally.")
         while not _inventory:ShouldStopPhase1() and not _config:Get("AutoPrestige") do
             if not _config:Get("FarmEnabled") then break end
-            
+
             local snapshot = {}
             for idx, info in pairs(SpawnedItems) do
                 table.insert(snapshot, {Index=idx, ItemInfo=info})
@@ -327,7 +327,7 @@ function Farm:Start()
             print("[Farm] >>> Phase 2 started — farming keep-items: " .. table.concat(keepItems, ", "))
             while not _inventory:AllKeepItemsFull() and not _config:Get("AutoPrestige") do
                 if not _config:Get("FarmEnabled") then break end
-                
+
                 local snapshot = {}
                 for idx, info in pairs(SpawnedItems) do
                     local isKeep = _config:GetSellItem(info.Name) == false
