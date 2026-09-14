@@ -6,6 +6,7 @@
 local Players          = game:GetService("Players")
 local TweenService     = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local TextService      = game:GetService("TextService")
 
 local Player    = Players.LocalPlayer
 local PlayerGui = Player:WaitForChild("PlayerGui")
@@ -15,6 +16,7 @@ local UI = {}
 local _config      = nil
 local _webhook     = nil
 local _combatFarm  = nil
+local _runtimeLog   = nil
 
 local toggleObjects = {}
 local dropdownContainer = nil
@@ -35,6 +37,29 @@ function UI:Init(Modules)
     _config      = Modules.Config
     _webhook     = Modules.Webhook
     _combatFarm  = Modules.CombatFarm
+    _runtimeLog  = Modules.RuntimeLog
+end
+
+local function runtimeLog(level, message)
+    if _runtimeLog and type(_runtimeLog.Write) == "function" then
+        pcall(_runtimeLog.Write, _runtimeLog, level, "UI", message)
+    end
+end
+
+local function copyToClipboard(text)
+    if type(setclipboard) == "function" then
+        local ok = pcall(setclipboard, text)
+        if ok then return true end
+    end
+    if type(toclipboard) == "function" then
+        local ok = pcall(toclipboard, text)
+        if ok then return true end
+    end
+    if Clipboard and type(Clipboard.set) == "function" then
+        local ok = pcall(function() Clipboard.set(text) end)
+        if ok then return true end
+    end
+    return false
 end
 
 -- =====================
@@ -535,6 +560,7 @@ function UI:Create()
     local ItemsPage   = MakePage("ItemsPage")
     local QuestPage   = MakePage("QuestPage")
     local WebhookPage = MakePage("WebhookPage")
+    local ConsolePage = MakePage("ConsolePage")
     local CreditsPage = MakePage("CreditsPage")
     FarmPage.Visible = true
 
@@ -543,6 +569,7 @@ function UI:Create()
         { name="Items",   page=ItemsPage   },
         { name="Quests/NPCs", page=QuestPage },
         { name="Webhook", page=WebhookPage },
+        { name="Console", page=ConsolePage },
         { name="Credits", page=CreditsPage },
     }
     local tabButtons = {}
@@ -603,9 +630,11 @@ function UI:Create()
         if _config then _config:Set("FarmEnabled", v) end
         if not v then
             print("[UI] Farm disabled by user.")
+            runtimeLog("INFO", "Farm disabled by user.")
             if _webhook then _webhook:SendFarmDisabled() end
         else
             print("[UI] Farm enabled. Resuming...")
+            runtimeLog("INFO", "Farm enabled by user.")
             if _webhook then _webhook:SendFarmResumed() end
         end
     end)
@@ -620,6 +649,7 @@ function UI:Create()
     MakeToggle(FarmPage, "Stay in Private Server", _config and _config:Get("StayInPrivateServer"), function(v)
         if _config then _config:Set("StayInPrivateServer", v) end
         print("[UI] Stay in Private Server set to " .. tostring(v))
+        runtimeLog("INFO", "Stay in Private Server = " .. tostring(v))
     end)
 
     MakeSection(FarmPage, "PRESTIGE")
@@ -637,8 +667,10 @@ function UI:Create()
             UI:SetToggleValue("NPC Farm", false)
             if _combatFarm then _combatFarm:Stop() end
             print("[UI] Auto Prestige enabled.")
+            runtimeLog("INFO", "Auto Prestige enabled.")
         else
             print("[UI] Auto Prestige disabled.")
+            runtimeLog("INFO", "Auto Prestige disabled.")
         end
     end)
 
@@ -666,6 +698,7 @@ function UI:Create()
     MakeToggle(QuestPage, "Auto Choose Quest", _config and _config:Get("AutoChooseQuest"), function(v)
         if _config then _config:Set("AutoChooseQuest", v) end
         print("[UI] Auto Choose Quest set to " .. tostring(v))
+        runtimeLog("INFO", "Auto Choose Quest = " .. tostring(v))
     end)
     
     local questList = {
@@ -698,9 +731,11 @@ function UI:Create()
             getgenv().AutoPrestigeEnabled = false
             UI:SetToggleValue("NPC Farm", false)
             UI:SetToggleValue("Auto Prestige", false)
+            runtimeLog("INFO", "Quest Farm enabled.")
             if _combatFarm then _combatFarm:StartQuest() end
         else
             local running, mode = _combatFarm and _combatFarm:IsRunning()
+            runtimeLog("INFO", "Quest Farm disabled.")
             if running and mode == "Quest" then _combatFarm:Stop() end
         end
     end)
@@ -729,9 +764,11 @@ function UI:Create()
             getgenv().AutoPrestigeEnabled = false
             UI:SetToggleValue("Quest Farm", false)
             UI:SetToggleValue("Auto Prestige", false)
+            runtimeLog("INFO", "NPC Farm enabled.")
             if _combatFarm then _combatFarm:StartNPC() end
         else
             local running, mode = _combatFarm and _combatFarm:IsRunning()
+            runtimeLog("INFO", "NPC Farm disabled.")
             if running and mode == "NPC" then _combatFarm:Stop() end
         end
     end)
@@ -835,6 +872,7 @@ function UI:Create()
             _config:Set("Phase1Notified", false)
             _config:Set("Phase3Notified", false)
             print("[UI] Webhook flags reset.")
+            runtimeLog("INFO", "Webhook notification flags reset.")
             if _webhook then
                 _webhook:Send("🔄 **Webhook flags reset**\nPlayer: `" .. Player.Name .. "`\nPhase1 and Phase3 notifications will be re‑sent on next completion.")
             end
@@ -848,6 +886,150 @@ function UI:Create()
     end)
 
     AutoCanvas(WebhookPage)
+
+    -- =====================
+    -- RUNTIME CONSOLE PAGE
+    -- =====================
+    MakeSection(ConsolePage, "RUNTIME CONSOLE")
+
+    local consoleStatus = Instance.new("TextLabel")
+    consoleStatus.Size = UDim2.new(1,-4,0,28)
+    consoleStatus.BackgroundColor3 = Color3.fromRGB(22,22,30)
+    consoleStatus.BorderSizePixel = 0
+    consoleStatus.TextColor3 = Color3.fromRGB(200,200,215)
+    consoleStatus.TextSize = 12
+    consoleStatus.Font = Enum.Font.Gotham
+    consoleStatus.TextXAlignment = Enum.TextXAlignment.Left
+    consoleStatus.Text = " Runtime log unavailable"
+    consoleStatus.Parent = ConsolePage
+    Instance.new("UICorner", consoleStatus).CornerRadius = UDim.new(0,6)
+
+    local consoleHolder = Instance.new("Frame")
+    consoleHolder.Size = UDim2.new(1,-4,0,150)
+    consoleHolder.BackgroundColor3 = Color3.fromRGB(12,12,17)
+    consoleHolder.BorderSizePixel = 0
+    consoleHolder.Parent = ConsolePage
+    Instance.new("UICorner", consoleHolder).CornerRadius = UDim.new(0,7)
+    local consoleStroke = Instance.new("UIStroke", consoleHolder)
+    consoleStroke.Color = Color3.fromRGB(60,55,85)
+
+    local logScroll = Instance.new("ScrollingFrame")
+    logScroll.Size = UDim2.new(1,-8,1,-8)
+    logScroll.Position = UDim2.new(0,4,0,4)
+    logScroll.BackgroundTransparency = 1
+    logScroll.BorderSizePixel = 0
+    logScroll.ScrollBarThickness = 4
+    logScroll.ScrollBarImageColor3 = Color3.fromRGB(140,90,255)
+    logScroll.CanvasSize = UDim2.new(0,0,0,0)
+    logScroll.Parent = consoleHolder
+
+    local logLabel = Instance.new("TextLabel")
+    logLabel.Size = UDim2.new(1,-8,0,20)
+    logLabel.Position = UDim2.new(0,4,0,0)
+    logLabel.BackgroundTransparency = 1
+    logLabel.TextColor3 = Color3.fromRGB(215,215,225)
+    logLabel.TextSize = 11
+    logLabel.Font = Enum.Font.Code
+    logLabel.TextXAlignment = Enum.TextXAlignment.Left
+    logLabel.TextYAlignment = Enum.TextYAlignment.Top
+    logLabel.TextWrapped = true
+    logLabel.Text = "No runtime entries yet."
+    logLabel.Parent = logScroll
+
+    local consoleButtons = Instance.new("Frame")
+    consoleButtons.Size = UDim2.new(1,-4,0,34)
+    consoleButtons.BackgroundTransparency = 1
+    consoleButtons.Parent = ConsolePage
+
+    local copyLogBtn = Instance.new("TextButton")
+    copyLogBtn.Size = UDim2.new(0.64,-2,1,0)
+    copyLogBtn.BackgroundColor3 = Color3.fromRGB(115,72,190)
+    copyLogBtn.BorderSizePixel = 0
+    copyLogBtn.Text = "Copy Log"
+    copyLogBtn.TextColor3 = Color3.fromRGB(255,255,255)
+    copyLogBtn.TextSize = 13
+    copyLogBtn.Font = Enum.Font.GothamBold
+    copyLogBtn.Parent = consoleButtons
+    Instance.new("UICorner", copyLogBtn).CornerRadius = UDim.new(0,7)
+
+    local clearLogBtn = Instance.new("TextButton")
+    clearLogBtn.Size = UDim2.new(0.36,-2,1,0)
+    clearLogBtn.Position = UDim2.new(0.64,4,0,0)
+    clearLogBtn.BackgroundColor3 = Color3.fromRGB(45,45,60)
+    clearLogBtn.BorderSizePixel = 0
+    clearLogBtn.Text = "Clear"
+    clearLogBtn.TextColor3 = Color3.fromRGB(235,235,240)
+    clearLogBtn.TextSize = 13
+    clearLogBtn.Font = Enum.Font.GothamBold
+    clearLogBtn.Parent = consoleButtons
+    Instance.new("UICorner", clearLogBtn).CornerRadius = UDim.new(0,7)
+
+    local function refreshConsole()
+        if not _runtimeLog then
+            consoleStatus.Text = " Runtime log unavailable"
+            logLabel.Text = "RuntimeLog was not provided by Main.lua."
+            return
+        end
+
+        local stats = _runtimeLog:GetStats()
+        local lastIssue = _runtimeLog:GetLastError()
+        consoleStatus.Text = (" INFO %d   WARN %d   ERROR %d"):format(stats.INFO, stats.WARN, stats.ERROR)
+        if lastIssue then
+            consoleStatus.Text = consoleStatus.Text .. "   | Last: " .. tostring(lastIssue.Module)
+        end
+
+        local text = _runtimeLog:GetText()
+        logLabel.Text = text
+
+        task.defer(function()
+            if not logScroll.Parent then return end
+            local width = math.max(120, logScroll.AbsoluteSize.X - 12)
+            local ok, bounds = pcall(function()
+                return TextService:GetTextSize(text, 11, Enum.Font.Code, Vector2.new(width, 100000))
+            end)
+            local height = ok and math.max(20, bounds.Y + 10) or math.max(20, (#text / 45) * 14)
+            logLabel.Size = UDim2.new(1,-8,0,height)
+            logScroll.CanvasSize = UDim2.new(0,0,0,height + 6)
+            logScroll.CanvasPosition = Vector2.new(0, math.max(0, height - logScroll.AbsoluteSize.Y))
+        end)
+    end
+
+    copyLogBtn.MouseButton1Click:Connect(function()
+        local text = _runtimeLog and _runtimeLog:GetText() or "WHITE HUB V3 - RuntimeLog unavailable"
+        if copyToClipboard(text) then
+            copyLogBtn.Text = "Copied!"
+            runtimeLog("INFO", "Runtime log copied to clipboard.")
+        else
+            copyLogBtn.Text = "No clipboard API"
+            runtimeLog("WARN", "Clipboard API unavailable; runtime log printed to console.")
+            print(text)
+        end
+        task.delay(2, function()
+            if copyLogBtn and copyLogBtn.Parent then copyLogBtn.Text = "Copy Log" end
+        end)
+    end)
+
+    clearLogBtn.MouseButton1Click:Connect(function()
+        if _runtimeLog then _runtimeLog:Clear() end
+        refreshConsole()
+    end)
+
+    if _runtimeLog and type(_runtimeLog.Subscribe) == "function" then
+        local consoleRefreshPending = false
+        trackConnection(_runtimeLog:Subscribe(function()
+            if consoleRefreshPending then return end
+            consoleRefreshPending = true
+            task.delay(0.15, function()
+                consoleRefreshPending = false
+                if logLabel and logLabel.Parent then
+                    refreshConsole()
+                end
+            end)
+        end))
+    end
+
+    refreshConsole()
+    AutoCanvas(ConsolePage)
 
     -- =====================
     -- CREDITS PAGE
