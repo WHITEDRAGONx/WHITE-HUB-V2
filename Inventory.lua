@@ -599,7 +599,7 @@ end
 local DIRECT_SELL_ARGS = {
     NPC = "Merchant",
     Dialogue = "Dialogue5",
-    Option = "Option2",
+    Option = "Option1",
 }
 
 local function getCharacterRemoteEvent()
@@ -818,18 +818,33 @@ function Inventory:SellAll()
             end
         end
 
-        -- If direct selling only removed part of the stack, keep using the same
-        -- direct route while it continues making progress. No UI is opened.
+        -- Xenon-style direct selling: keep equipping the next copy and fire the
+        -- Merchant EndDialogue action until the stack is gone (or the server
+        -- stops accepting the packet). This path never opens DialogueGui.
         if directWorked then
             local previous = self:Count(itemName)
             local directPasses = 0
-            while previous > 0 and directPasses < 4 and not self:IsMoneyMaxed() do
+            local maxDirectPasses = math.max(initialCount + 2, 8)
+
+            while previous > 0 and directPasses < maxDirectPasses and not self:IsMoneyMaxed() do
                 directPasses = directPasses + 1
+
                 local ok, sold = tryDirectMerchantSell(itemName)
                 local now = self:Count(itemName)
-                if not ok or sold <= 0 or now >= previous then break end
+
+                if not ok or sold <= 0 or now >= previous then
+                    break
+                end
+
                 directSold = directSold + sold
                 previous = now
+                task.wait()
+            end
+
+            if directSold > 0 then
+                moduleLog("INFO", "[Inventory][DirectSell] Xenon route sold "
+                    .. tostring(directSold) .. "x " .. itemName
+                    .. " with no Merchant UI (remaining: " .. tostring(self:Count(itemName)) .. ").")
             end
         end
 
