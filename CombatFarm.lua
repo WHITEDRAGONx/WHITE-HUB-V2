@@ -1,252 +1,55 @@
 -- =====================
--- CombatFarm.lua
--- Unified combat: NPC and Quest farming.
--- QUEST/COMBAT BUILD: R7-XENON-CHAIN-SKILL-WINDOWS-FAST-QUEST
--- Logic identical to Xenon V5 (stand positioning, attacks, death detection).
--- FIXED: player positioned underground (yOffset -35) with noclip for safety.
+-- Inventory.lua
+-- BUILD: ZERO-DELAY-2026.09.14-R3-GENERIC-FAST-DIALOGUE
+-- Handles item counting, selling, buying, and keep-item logic.
+-- Updated for YBA's new dialogue system (v1.7974+).
+-- ZERO-DELAY build: proven Merchant FINAL path (~0.70s) with safe restoration and fallbacks.
 -- =====================
 
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players             = game:GetService("Players")
 local VirtualInputManager = game:GetService("VirtualInputManager")
-local Player = Players.LocalPlayer
+local MarketplaceService  = game:GetService("MarketplaceService")
+local ReplicatedStorage   = game:GetService("ReplicatedStorage")
 
-local CombatFarm = {}
+local Player    = Players.LocalPlayer
+local Inventory = {}
 
-local _config    = nil
-local _inventory = nil
-local _movement  = nil
-local _serverHop = nil
-local _webhook   = nil
+local _config   = nil
+local _movement = nil
 
-local activeMode = nil
-local isRunning = false
-local stopRequested = false
-local runId = 0
-local questWatcherConnection = nil
-local currentQuest = nil
-local questCompleted = false
-local questOnCooldown = false
-local cooldownUntil = 0
+-- =====================
+-- CONSTANTS
+-- =====================
+local LUCKY_STOP  = 9
+local MONEY_STOP  = 1000000
+local GAMEPASS_2X = 14597778
+local _has2x      = false
 
-local SAFE_SPOT = CFrame.new(978, -42, -49)
-local lastSafeTeleportAt = 0
-local lastStandSummonLogAt = 0
-
-local questInfo = {
-    ["Officer Sam [Lvl. 1+]"] = { enemy = "Thug", autoChoose = true },
-    ["Deputy Bertrude [Lvl. 10+]"] = { enemy = "Corrupt Police", autoChoose = true },
-
-    -- The current game uses this no-dot level format. DialogueAnalyzer confirmed
-    -- its updated quest dialogue is Option1 -> Option1 -> Option1.
-    ["Abbacchio's Partner [Lvl 15+]"] = { enemy = "Alpha Thug", autoChoose = true },
-    -- Alias retained in case YBA changes only the display punctuation.
-    ["Abbacchio's Partner [Lvl. 15+]"] = { enemy = "Alpha Thug", autoChoose = true },
-
-    -- Fetch/daily quest: selectable manually, but intentionally skipped by Auto Choose.
-    ["Homeless Man Jill [Lvl. 15+]"] = { item = "Gold Coin", amount = 10, autoChoose = false },
-
-    ["Dracula [Lvl. 20+]"] = { enemy = "Zombie Henchman", autoChoose = true },
-    ["William Zeppeli [Lvl. 25+]"] = { enemy = "Vampire", autoChoose = true },
-    ["Doppio [Lvl. 30+]"] = { enemy = "Dio", autoChoose = true },
-    ["Dio [Lvl. 35+]"] = { enemy = "Jotaro", autoChoose = true },
-
-    -- Detected level quests which need their own objective/controller mapping.
-    ["Darius, The Executioner [Lvl. 20+]"] = { special = "PVP_STAND", autoChoose = false },
-    ["Kars [Lvl. 30+]"] = { special = "PVP_HAMON", autoChoose = false },
-    ["Pucci [Lvl. 40+]"] = { special = "PUCCI_CHAIN", autoChoose = false },
+-- Maximum item counts per item type (doubled if player owns 2x gamepass)
+local MaxItemAmounts = {
+    ["Gold Coin"]                      = 45,
+    ["Rokakaka"]                       = 25,
+    ["Pure Rokakaka"]                  = 10,
+    ["Mysterious Arrow"]               = 25,
+    ["Diamond"]                        = 30,
+    ["Ancient Scroll"]                 = 10,
+    ["Caesar's Headband"]              = 10,
+    ["Stone Mask"]                     = 10,
+    ["Rib Cage of The Saint's Corpse"] = 20,
+    ["Quinton's Glove"]                = 10,
+    ["Zeppeli's Hat"]                  = 10,
+    ["Lucky Arrow"]                    = 10,
+    ["Lucky Stone Mask"]               = 10,
+    ["Clackers"]                       = 10,
+    ["Steel Ball"]                     = 10,
+    ["Dio's Diary"]                    = 10,
 }
-
-
--- =============================================
--- MOBILE SKILL CATALOG / CAST PROFILES
--- =============================================
--- Keys here are intentionally limited to offensive moves. Utility moves such as
--- Time Skip / Time Stop are not auto-enabled by the UI.
-local function normalizeName(value)
-    return tostring(value or ""):lower():gsub("[^%w]", "")
-end
-
-local STAND_ALIASES = {
-    ["platinumsun"] = "starplatinum",
-    ["platinumsuntheuniverse"] = "starplatinumtheworld",
-    ["theuniverse"] = "theworld",
-    ["theuniverseoverheaven"] = "theworldoverheaven",
-    ["purplefume"] = "purplehaze",
-    ["whiteice"] = "whitealbum",
-    ["frighteningmonsters"] = "scarymonsters",
-}
-
-local STAND_SKILL_PRESETS = {
-    starplatinum = {
-        { key = "E", name = "Stand Barrage" },
-        { key = "R", name = "Barrage Finisher" },
-        { key = "T", name = "Star Finger" },
-        { key = "Y", name = "Ora Kicks" },
-        { key = "G", name = "Inhale" },
-        { key = "C", name = "Platinum Slam", closeCast = true, hold = 0.28 },
-    },
-    starplatinumtheworld = {
-        { key = "E", name = "Stand Barrage" },
-        { key = "R", name = "Barrage Finisher" },
-        { key = "T", name = "Bearing Shot" },
-        { key = "Y", name = "Ora Kicks" },
-        { key = "X", name = "Platinum Slam", closeCast = true, hold = 0.28 },
-        { key = "C", name = "Skull Crusher" },
-    },
-    theworld = {
-        { key = "E", name = "Stand Barrage" },
-        { key = "R", name = "Barrage Finisher" },
-        { key = "T", name = "Knife Throw" },
-        { key = "Y", name = "Road Sign Slam", closeCast = true, hold = 0.30 },
-        { key = "X", name = "Kick Barrage" },
-        { key = "C", name = "SHINEI" },
-    },
-    theworldoverheaven = {
-        { key = "E", name = "Stand Barrage" },
-        { key = "R", name = "Barrage Finisher" },
-        { key = "T", name = "Knife Throw" },
-        { key = "Y", name = "Reality Overwriting Punch" },
-        { key = "G", name = "Heaven Ascended Smite", closeCast = true, hold = 0.32 },
-    },
-    purplehaze = {
-        { key = "E", name = "Stand Barrage" },
-        { key = "R", name = "Barrage Finisher" },
-        { key = "T", name = "Bulb Breaker Punch" },
-        { key = "Y", name = "Bulb Breaker Ground Punch", closeCast = true, hold = 0.32 },
-        { key = "Z", name = "Bulb Throw" },
-    },
-    whitealbum = {
-        { key = "E", name = "Barrage" },
-        { key = "R", name = "Barrage Finisher" },
-        { key = "T", name = "Ice Punch" },
-        { key = "Y", name = "Ice Sweeps" },
-        { key = "X", name = "Flash Freeze", closeCast = true, hold = 0.30 },
-        { key = "C", name = "Ice Swipe" },
-    },
-    cream = {
-        { key = "E", name = "Stand Barrage" },
-        { key = "R", name = "Barrage Finisher" },
-        { key = "T", name = "Devastation" },
-        { key = "Y", name = "Dark Space" },
-        { key = "Z", name = "Void Surprise" },
-        { key = "X", name = "Madness Sorrow", closeCast = true, hold = 0.34 },
-    },
-    scarymonsters = {
-        { key = "E", name = "Claw Barrage" },
-        { key = "R", name = "Finisher" },
-        { key = "T", name = "Tail Whip" },
-        { key = "Y", name = "Fossilization" },
-        { key = "Z", name = "Dino Dash / Slam", closeCast = true, hold = 0.24 },
-        { key = "X", name = "Dino Army" },
-        { key = "C", name = "Dino Barrage" },
-    },
-    anubis = {
-        { key = "E", name = "Slice Barrage" },
-        { key = "R", name = "Finisher" },
-        { key = "T", name = "Curse Imbued Slice", closeCast = true, hold = 0.24 },
-        { key = "X", name = "Enraged Fury" },
-    },
-    silverchariot = {
-        { key = "E", name = "Stand Barrage" },
-        { key = "R", name = "Barrage Finisher" },
-        { key = "Y", name = "Cycle Slash", closeCast = true, hold = 0.24 },
-        { key = "Z", name = "Last Shot" },
-    },
-}
-
-local GENERIC_MOBILE_SKILLS = {
-    { key = "E", name = "Primary Skill" },
-    { key = "R", name = "Heavy Skill" },
-    { key = "T", name = "Skill T" },
-    { key = "Y", name = "Skill Y" },
-    { key = "G", name = "Skill G" },
-    { key = "X", name = "Skill X" },
-    { key = "C", name = "Skill C" },
-}
-
-local function getCurrentStandName()
-    local stats = Player:FindFirstChild("PlayerStats")
-    local stand = stats and stats:FindFirstChild("Stand")
-    return stand and tostring(stand.Value) or "None"
-end
-
-local function getStandPreset()
-    local rawName = getCurrentStandName()
-    local key = normalizeName(rawName)
-    key = STAND_ALIASES[key] or key
-    return rawName, key, STAND_SKILL_PRESETS[key]
-end
-
-local function getSkillProfile(keyName)
-    local _, _, preset = getStandPreset()
-    if not preset then return nil end
-    for _, entry in ipairs(preset) do
-        if entry.key == keyName then
-            return entry
-        end
-    end
-    return nil
-end
-
-
-local GUI_SKILL_KEYS = {
-    E=true, R=true, T=true, Y=true, U=true, G=true, H=true,
-    Z=true, X=true, C=true, V=true, B=true, N=true, J=true,
-}
-
-local function scanGuiSkillCatalog()
-    local found = {}
-    local playerGui = Player:FindFirstChild("PlayerGui")
-    if not playerGui then return {} end
-
-    for _, obj in ipairs(playerGui:GetDescendants()) do
-        if obj:IsA("TextLabel") or obj:IsA("TextButton") then
-            local text = tostring(obj.Text or ""):gsub("\n", " ")
-            local key, name = text:match("^%s*([A-Z])%s*[-:%|•]%s*(.+)")
-            if key and GUI_SKILL_KEYS[key] and name and #name <= 80 then
-                name = name:gsub("^%s+", ""):gsub("%s+$", "")
-                if name ~= "" and not found[key] then
-                    found[key] = { key = key, name = name }
-                end
-            end
-        end
-    end
-
-    local ordered = {}
-    local order = {"E","R","T","Y","U","G","H","Z","X","C","V","B","N","J"}
-    for _, key in ipairs(order) do
-        if found[key] then ordered[#ordered + 1] = found[key] end
-    end
-    return ordered
-end
-
-local lastStandSummonAt = 0
-local function ensureStandSummoned(character)
-    if not character then return false end
-    local summoned = character:FindFirstChild("SummonedStand")
-    if not summoned then
-        return character:FindFirstChild("StandMorph") ~= nil
-    end
-    if summoned.Value == true then return true end
-    -- Only toggle when the authoritative flag explicitly says OFF. This avoids
-    -- summon/desummon spam if StandMorph replication is late.
-    if tick() - lastStandSummonAt < 1.0 then return false end
-    local remoteFunc = character:FindFirstChild("RemoteFunction")
-    if not remoteFunc then return false end
-    lastStandSummonAt = tick()
-    lastStandSummonLogAt = tick()
-    task.spawn(function()
-        pcall(function() remoteFunc:InvokeServer("ToggleStand", "Toggle") end)
-    end)
-    return false
-end
 
 local _runtimeLog = nil
 local _rawPrint, _rawWarn = print, warn
 local function moduleLog(level, ...)
     if _runtimeLog and type(_runtimeLog.Write) == "function" then
-        pcall(_runtimeLog.Write, _runtimeLog, level, "CombatFarm", ...)
+        pcall(_runtimeLog.Write, _runtimeLog, level, "Inventory", ...)
     end
     if level == "WARN" or level == "ERROR" then
         _rawWarn(...)
@@ -255,556 +58,230 @@ local function moduleLog(level, ...)
     end
 end
 
-local function goToSafeSpot(reason)
-    if not _movement then return false end
-    local hrp = _movement:GetCharacter("HumanoidRootPart")
-    if not hrp then return false end
-    local distance = (hrp.Position - SAFE_SPOT.Position).Magnitude
-    if distance <= 6 then return true end
-    if tick() - lastSafeTeleportAt < 0.75 then return true end
-    lastSafeTeleportAt = tick()
-    _movement:SetNoclip(true)
-    _movement:ClearFocus()
-    pcall(function() _movement:Teleport(SAFE_SPOT) end)
-    pcall(function()
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-    end)
-    _movement:SetNoclip(false)
-    _movement:FixCamera()
-    moduleLog("INFO", "[CombatFarm][SafeSpot] " .. tostring(reason or "No active target") .. ".")
-    return true
-end
+-- =====================
+-- INIT
+-- =====================
+local runDialogueFingerprintCheck
 
-function CombatFarm:Init(Modules)
+function Inventory:Init(Modules)
     _runtimeLog = Modules.RuntimeLog
-    _config    = Modules.Config
-    _inventory = Modules.Inventory
-    _movement  = Modules.Movement
-    _serverHop = Modules.ServerHop
-    _webhook   = Modules.Webhook
+    _config   = Modules.Config
+    _movement = Modules.Movement
 
-    if questWatcherConnection then
-        pcall(function() questWatcherConnection:Disconnect() end)
-        questWatcherConnection = nil
-    end
-
-    -- Event-driven quest completion watcher instead of a permanent 0.5s polling loop.
-    local function hookHUD()
-        local hud = Player.PlayerGui:FindFirstChild("HUD")
-        if not hud then return end
-        local completedFrame = hud:FindFirstChild("QuestCompleted")
-        if completedFrame and completedFrame:IsA("GuiObject") then
-            questWatcherConnection = completedFrame:GetPropertyChangedSignal("Visible"):Connect(function()
-                if completedFrame.Visible then
-                    moduleLog("INFO", "[CombatFarm] Quest completion UI pulse detected; waiting for PlayerStats confirmation.")
-                end
-            end)
+    -- Detect 2x gamepass and double all item caps
+    pcall(function()
+        _has2x = MarketplaceService:UserOwnsGamePassAsync(Player.UserId, GAMEPASS_2X)
+    end)
+    if _has2x then
+        for k, v in pairs(MaxItemAmounts) do
+            MaxItemAmounts[k] = v * 2
         end
-    end
-
-    hookHUD()
-    if not questWatcherConnection then
-        task.spawn(function()
-            for _ = 1, 20 do
-                task.wait(0.5)
-                if questWatcherConnection then return end
-                hookHUD()
-            end
-        end)
-    end
-end
-
--- =============================================
--- HELPER FUNCTIONS
--- =============================================
-
-local function useMove(move)
-    local char = _movement:GetCharacter()
-    if not char then return end
-    if move == "m1" or move == "m2" then
-        local remoteFunc = char:FindFirstChild("RemoteFunction")
-        if remoteFunc then
-            remoteFunc:InvokeServer("Attack", move)
-        end
-    elseif typeof(move) == "Enum" then
-        local remoteEvent = char:FindFirstChild("RemoteEvent")
-        if remoteEvent then
-            remoteEvent:FireServer("InputBegan", { Input = move })
-        end
-    end
-end
-
-local function equipStand()
-    local char = _movement:GetCharacter()
-    if not char then return false end
-    return ensureStandSummoned(char)
-end
-
-local function getNPCHealthState(npc)
-    if not npc or not npc.Parent then
-        return nil, "despawned"
-    end
-
-    -- YBA NPCs expose their authoritative combat health through a custom Health
-    -- Value. Xenon V5 relied on this value instead of Humanoid.Health. The
-    -- Humanoid may enter a death/ragdoll state before YBA has actually credited
-    -- the kill, so prefer Health.Value whenever it exists.
-    local healthValue = npc:FindFirstChild("Health")
-    if healthValue then
-        local hp = tonumber(healthValue.Value)
-        if hp ~= nil then
-            return hp, "HealthValue"
-        end
-    end
-
-    local hum = npc:FindFirstChildWhichIsA("Humanoid")
-    if hum then
-        return tonumber(hum.Health), "Humanoid"
-    end
-
-    return nil, "unknown"
-end
-
-local function isNPCAlive(npc)
-    if not npc or not npc.Parent then return false end
-    local hp = getNPCHealthState(npc)
-    if hp ~= nil then
-        return hp > 0
-    end
-    return npc:FindFirstChild("HumanoidRootPart") ~= nil
-end
-
-local function getClosestNPC(npcName, excludeTarget)
-    local closest = nil
-    local closestDist = math.huge
-    local hrp = _movement:GetCharacter("HumanoidRootPart")
-    if not hrp then return nil end
-
-    for _, npc in pairs(workspace.Living:GetChildren()) do
-        if npc ~= excludeTarget and npc.Name == npcName and isNPCAlive(npc) then
-            local npcHRP = npc:FindFirstChild("HumanoidRootPart")
-            if npcHRP then
-                local dist = (hrp.Position - npcHRP.Position).Magnitude
-                if dist < closestDist then
-                    closestDist = dist
-                    closest = npc
-                end
-            end
-        end
-    end
-    return closest
-end
-
-local function isTokenActive(token, expectedMode)
-    if stopRequested or token ~= runId then return false end
-    if expectedMode and activeMode ~= expectedMode then return false end
-
-    -- Extra safety: even if a UI callback ever fails, the persisted toggle state
-    -- can still stop an old worker on the next frame.
-    if _config then
-        if activeMode == "NPC" and _config:Get("NPCFarmEnabled") ~= true then
-            return false
-        end
-        if activeMode == "Quest" and _config:Get("QuestFarmEnabled") ~= true then
-            return false
-        end
-    end
-    return true
-end
-
--- Forward declaration: killTarget waits for QuestProgress credit before the
--- concrete readQuestState implementation later in this module.
-local readQuestState
-
-local function waitToken(seconds, token, expectedMode)
-    local deadline = tick() + seconds
-    while tick() < deadline do
-        if not isTokenActive(token, expectedMode) then return false end
-        task.wait(math.min(0.05, math.max(0, deadline - tick())))
-    end
-    return true
-end
-
--- =============================================
--- COMBAT CORE (Xenon V5 style)
--- =============================================
-local function killTarget(targetName, token)
-    local target = getClosestNPC(targetName)
-    if not target then
-        moduleLog("INFO", "[CombatFarm] No alive target found: " .. targetName)
-        return false
-    end
-
-    local character = _movement:GetCharacter()
-    local hrp = character and character:FindFirstChild("HumanoidRootPart")
-    local remoteFunc = character and character:FindFirstChild("RemoteFunction")
-    if not character or not hrp or not remoteFunc then
-        return false
-    end
-
-    local oldPos = hrp.CFrame
-    local questProgressBefore, questMaxBefore = nil, nil
-    if activeMode == "Quest" then
-        questProgressBefore, questMaxBefore = readQuestState()
-    end
-
-    local hasStand = _inventory:HasStand()
-    if hasStand then
-        ensureStandSummoned(character)
-    end
-
-    local standMorph = hasStand and character:FindFirstChild("StandMorph") or nil
-    local standPart = standMorph and standMorph.PrimaryPart or nil
-
-    local focusCam = character:FindFirstChild("FocusCam")
-    local createdFocusCam = false
-    local previousFocusValue = focusCam and focusCam.Value or nil
-    if not focusCam then
-        focusCam = Instance.new("ObjectValue")
-        focusCam.Name = "FocusCam"
-        focusCam.Parent = character
-        createdFocusCam = true
-    end
-
-    _movement:SetNoclip(true)
-
-    local safeYOffset = (targetName == "The Idol") and 35 or -35
-    local startTime = tick()
-    local killed = false
-    local lastKnownHp, hpSource = getNPCHealthState(target)
-    local lastDamageAt = tick()
-    local previousHp = lastKnownHp
-    local missingPartsSince = nil
-    local attackBusy = false
-    local playerMeleeFallback = not hasStand
-    local nextSkillAt = 0
-    local skillIndex = 1
-    local perSkillLastUse = {}
-    local closeCastUntil = 0
-    local closeCastKey = nil
-    local nextM1At = 0
-    local suppressM1Until = 0
-    local lastSkillCastAt = -math.huge
-    local closeCastWasActive = false
-
-    moduleLog("INFO", ("[CombatFarm][XenonLock] Locked %s | hp=%s source=%s stand=%s"):format(
-        tostring(targetName), tostring(lastKnownHp), tostring(hpSource), tostring(getCurrentStandName())
-    ))
-
-    while isTokenActive(token) and tick() - startTime < 60 do
-        if not target or not target.Parent then
-            killed = true
-            break
-        end
-
-        local hp, source = getNPCHealthState(target)
-        if hp ~= nil then
-            lastKnownHp = hp
-            hpSource = source
-            if previousHp ~= nil and hp < previousHp - 0.001 then
-                lastDamageAt = tick()
-            end
-            previousHp = hp
-            if hp <= 0 then
-                task.wait(0.215)
-                killed = true
-                break
-            end
-        end
-
-        local enemyHRP = target:FindFirstChild("HumanoidRootPart")
-        local enemyHumanoid = target:FindFirstChildWhichIsA("Humanoid")
-        if not enemyHRP or not enemyHumanoid then
-            if not missingPartsSince then missingPartsSince = tick() end
-            if tick() - missingPartsSince > 1.0 then
-                local currentHp = getNPCHealthState(target)
-                if currentHp ~= nil and currentHp <= 0 then
-                    killed = true
-                    break
-                elseif not target.Parent then
-                    killed = true
-                    break
-                end
-                missingPartsSince = tick()
-            end
-            task.wait(0.03)
-            continue
-        end
-        missingPartsSince = nil
-
-        if focusCam and focusCam.Parent then
-            focusCam.Value = enemyHRP
-        end
-
-        if hasStand then
-            ensureStandSummoned(character)
-            if not standPart or not standPart.Parent then
-                standMorph = character:FindFirstChild("StandMorph")
-                standPart = standMorph and standMorph.PrimaryPart or nil
-            end
-        end
-
-        local standCF = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.1
-        if standPart and standPart.Parent then
-            standPart.CFrame = standCF
-        end
-
-        -- If there is no Stand, or Stand M1s have failed to deal damage for a
-        -- short window, the player itself moves into melee range. This also covers
-        -- stands whose normal M1 is not useful for farming.
-        if hasStand and not playerMeleeFallback
-            and tick() - lastDamageAt > 3.0
-            and tick() - lastSkillCastAt > 1.25 then
-            playerMeleeFallback = true
-            moduleLog("INFO", "[CombatFarm][MeleeFallback] No damage detected; moving player into melee range.")
-        end
-
-        local closeCasting = tick() < closeCastUntil
-        if closeCastWasActive and not closeCasting then
-            -- CLOSE AOE finished: immediately allow the normal safe-under-NPC
-            -- positioning to take over again instead of leaving the player beside the NPC.
-            closeCastKey = nil
-        end
-        closeCastWasActive = closeCasting
-        if closeCasting or playerMeleeFallback then
-            -- Player-centered hitboxes/AOE need the character itself close to the
-            -- victim. Face the NPC from just behind it so short-radius moves land.
-            local nearCF = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.0
-            hrp.CFrame = CFrame.lookAt(nearCF.Position, enemyHRP.Position)
-        elseif standPart and standPart.Parent then
-            hrp.CFrame = standCF + standCF.LookVector * -2.5 + Vector3.new(0, safeYOffset, 0)
-        else
-            -- Stand exists in PlayerStats but is temporarily not materialized.
-            -- Keep the player safe while the summon cooldown tries again.
-            hrp.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.3 + Vector3.new(0, safeYOffset, 0)
-        end
-
-        pcall(function()
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
-        end)
-
-        -- Auto Skills are checked before M1. If no skills are enabled, preserve
-        -- the original full-speed M1 spam exactly. If skills are enabled, create
-        -- tiny input windows so a skill is not starved by continuous M1 requests.
-        local skills = _config:Get("AutoSkills")
-        local hasAutoSkills = type(skills) == "table" and #skills > 0
-        local castedSkillThisFrame = false
-
-        if hasAutoSkills and tick() >= nextSkillAt then
-            if skillIndex > #skills then skillIndex = 1 end
-            local sk = tostring(skills[skillIndex])
-            skillIndex = skillIndex + 1
-            local keyCode = Enum.KeyCode[sk]
-            local since = tick() - (perSkillLastUse[sk] or 0)
-            if keyCode and since >= 2.0 then
-                local profile = getSkillProfile(sk)
-                perSkillLastUse[sk] = tick()
-                lastSkillCastAt = tick()
-                nextSkillAt = tick() + 0.28
-                castedSkillThisFrame = true
-
-                local skillWindow = 0.18
-                if profile and profile.closeCast then
-                    local hold = profile.hold or 0.28
-                    closeCastKey = sk
-                    closeCastUntil = tick() + hold
-                    closeCastWasActive = true
-                    skillWindow = math.max(skillWindow, hold)
-                    -- Prevent the generic no-damage detector from converting this
-                    -- temporary AOE reposition into permanent melee fallback.
-                    lastDamageAt = tick()
-                    local nearCF = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.8
-                    hrp.CFrame = CFrame.lookAt(nearCF.Position, enemyHRP.Position)
-                    pcall(function()
-                        hrp.AssemblyLinearVelocity = Vector3.zero
-                        hrp.AssemblyAngularVelocity = Vector3.zero
-                    end)
-                end
-
-                suppressM1Until = tick() + skillWindow
-                task.spawn(function() pcall(function() useMove(keyCode) end) end)
-            else
-                nextSkillAt = tick() + 0.08
-            end
-        end
-
-        local canM1 = (not hasAutoSkills) or (not castedSkillThisFrame and tick() >= suppressM1Until and tick() >= nextM1At)
-        if canM1 and not attackBusy then
-            attackBusy = true
-            if hasAutoSkills then
-                nextM1At = tick() + 0.075
-            end
-            task.spawn(function()
-                pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
-                attackBusy = false
-            end)
-        end
-
-        task.wait()
-    end
-
-    if killed and activeMode == "Quest" and isTokenActive(token, "Quest") then
-        local settleDeadline = tick() + 1.25
-        while tick() < settleDeadline and isTokenActive(token, "Quest") do
-            local progress, maxProgress = readQuestState()
-            if progress ~= questProgressBefore
-                or maxProgress ~= questMaxBefore
-                or ((maxProgress or 0) > 0 and (progress or 0) >= (maxProgress or 0)) then
-                moduleLog("INFO", ("[CombatFarm][XenonLock] Kill credited | progress=%s/%s"):format(
-                    tostring(progress), tostring(maxProgress)
-                ))
-                break
-            end
-            task.wait(0.05)
-        end
-    elseif killed then
-        task.wait(0.15)
-    end
-
-    local chainedToNext = false
-    local questFinishedNow = false
-    if killed and activeMode == "Quest" then
-        local progress, maxProgress = readQuestState()
-        questFinishedNow = ((maxProgress or 0) > 0 and (progress or 0) >= (maxProgress or 0))
-    end
-
-    if killed and token == runId and isTokenActive(token) and not questFinishedNow then
-        local nextTarget = getClosestNPC(targetName, target)
-        local nextHRP = nextTarget and nextTarget:FindFirstChild("HumanoidRootPart")
-        if nextTarget and nextHRP and hrp and hrp.Parent then
-            if focusCam and focusCam.Parent then
-                focusCam.Value = nextHRP
-            end
-
-            if hasStand then
-                ensureStandSummoned(character)
-                standMorph = character:FindFirstChild("StandMorph")
-                standPart = standMorph and standMorph.PrimaryPart or nil
-            end
-
-            local nextStandCF = nextHRP.CFrame - nextHRP.CFrame.LookVector * 1.1
-            if standPart and standPart.Parent then
-                standPart.CFrame = nextStandCF
-            end
-
-            if playerMeleeFallback then
-                local nearCF = nextHRP.CFrame - nextHRP.CFrame.LookVector * 2.0
-                hrp.CFrame = CFrame.lookAt(nearCF.Position, nextHRP.Position)
-            elseif standPart and standPart.Parent then
-                hrp.CFrame = nextStandCF + nextStandCF.LookVector * -2.5 + Vector3.new(0, safeYOffset, 0)
-            else
-                hrp.CFrame = nextHRP.CFrame - nextHRP.CFrame.LookVector * 2.3 + Vector3.new(0, safeYOffset, 0)
-            end
-
-            pcall(function()
-                hrp.AssemblyLinearVelocity = Vector3.zero
-                hrp.AssemblyAngularVelocity = Vector3.zero
-            end)
-
-            chainedToNext = true
-            moduleLog("INFO", ("[CombatFarm][XenonChain] Handoff %s -> next spawn"):format(tostring(targetName)))
-        end
-    end
-
-    if not chainedToNext then
-        if focusCam and focusCam.Parent then
-            pcall(function()
-                if createdFocusCam then
-                    focusCam:Destroy()
-                else
-                    focusCam.Value = previousFocusValue
-                end
-            end)
-        end
-        if token == runId then
-            _movement:SetNoclip(false)
-            if not killed and hrp and hrp.Parent then
-                pcall(function() hrp.CFrame = oldPos end)
-            end
-        end
-    end
-
-    if killed then
-        moduleLog("INFO", ("[CombatFarm][XenonLock] Confirmed death: %s | lastHp=%s source=%s"):format(
-            tostring(targetName), tostring(lastKnownHp), tostring(hpSource)
-        ))
+        moduleLog("INFO", "[Inventory] 2x gamepass detected — item caps doubled.")
     else
-        moduleLog("WARN", ("[CombatFarm][XenonLock] Target lock ended without confirmed death: %s | lastHp=%s source=%s"):format(
-            tostring(targetName), tostring(lastKnownHp), tostring(hpSource)
-        ))
+        moduleLog("INFO", "[Inventory] Initialized (no 2x gamepass).")
     end
 
-    return killed
+    -- One deferred compatibility fingerprint per runtime. This turns future YBA
+    -- dialogue recompiles into an actionable WARN instead of a silent slowdown.
+    task.spawn(function()
+        task.wait(1)
+        pcall(runDialogueFingerprintCheck)
+    end)
 end
 
--- =============================================
--- NPC FARM
--- =============================================
-local function runNPCFarm(token)
-    local npcName = _config:Get("SelectedNPC")
-    if not npcName or npcName == "" then
-        moduleLog("INFO", "[CombatFarm] No NPC selected.")
-        return false
-    end
-    return killTarget(npcName, token)
-end
+-- =====================
+-- ITEM COUNTING
+-- =====================
 
--- =============================================
--- QUEST FARM
--- =============================================
-local function questLevelFromName(name)
-    local n = tostring(name or "")
-    return tonumber(n:match("%[Lvl%.?%s*(%d+)%+%]"))
-        or tonumber(n:match("[Ll]vl%.?%s*(%d+)%+"))
-end
+-- Counts how many of a given item the player currently has
+-- (checks both Backpack and Character)
+function Inventory:Count(name)
+    local count = 0
 
-local function getBestQuest()
-    local stats = Player:FindFirstChild("PlayerStats")
-    local levelObj = stats and stats:FindFirstChild("Level")
-    local level = levelObj and tonumber(levelObj.Value) or 0
-    local best = nil
-    local bestReq = -1
-
-    for questName, data in pairs(questInfo) do
-        if data.autoChoose == true and data.enemy and not data.special then
-            local req = questLevelFromName(questName)
-            if req and req <= level and req > bestReq then
-                bestReq = req
-                best = questName
-            elseif req and req <= level and req == bestReq and best then
-                local dialogues = workspace:FindFirstChild("Dialogues")
-                if dialogues and dialogues:FindFirstChild(questName) and not dialogues:FindFirstChild(best) then
-                    best = questName
-                end
+    -- Count in backpack
+    if Player.Backpack then
+        for _, tool in pairs(Player.Backpack:GetChildren()) do
+            if tool.Name == name then
+                count = count + 1
             end
         end
     end
 
-    if best then
-        moduleLog("INFO", ("[CombatFarm] Auto Choose selected highest normal quest: %s (player level %s)"):format(
-            tostring(best), tostring(level)
-        ))
+    -- Count equipped tools in character
+    if Player.Character then
+        for _, obj in pairs(Player.Character:GetChildren()) do
+            if obj:IsA("Tool") and obj.Name == name then
+                count = count + 1
+            end
+        end
     end
-    return best
+
+    return count
 end
 
-readQuestState = function()
-    local stats = Player:FindFirstChild("PlayerStats")
-    if not stats then return nil, nil end
-
-    local progressObj = stats:FindFirstChild("QuestProgress")
-    local maxProgressObj = stats:FindFirstChild("QuestMaxProgress")
-
-    local progress = progressObj and tonumber(progressObj.Value) or 0
-    local maxProgress = maxProgressObj and tonumber(maxProgressObj.Value) or 0
-    return progress, maxProgress
+-- Returns true if the player has reached the max cap for the item
+function Inventory:HasMax(name)
+    local cap = MaxItemAmounts[name]
+    if not cap then return false end
+    return self:Count(name) >= cap
 end
 
-local function clickDialogueButton(btn)
-    if not btn or not btn:IsA("GuiButton") then return false end
+-- Returns the max cap for the given item (or 0 if unknown)
+function Inventory:GetMax(name)
+    return MaxItemAmounts[name] or 0
+end
 
+-- =====================
+-- PLAYER STATS HELPERS
+-- =====================
+
+-- Returns the player's current money (from PlayerStats)
+function Inventory:GetMoney()
+    local ok, val = pcall(function()
+        return Player.PlayerStats.Money.Value
+    end)
+    return ok and val or 0
+end
+
+-- Phase 1 thresholds
+function Inventory:GetLuckyStop()     return LUCKY_STOP end
+function Inventory:GetMoneyStop()     return MONEY_STOP end
+function Inventory:HasEnoughLucky()   return self:Count("Lucky Arrow") >= LUCKY_STOP end
+function Inventory:IsMoneyMaxed()     return self:GetMoney() >= MONEY_STOP end
+function Inventory:ShouldStopPhase1() return self:HasEnoughLucky() and self:IsMoneyMaxed() end
+
+-- =====================
+-- KEEP ITEMS LOGIC
+-- =====================
+
+-- Returns a list of items the user wants to keep (sell = false)
+-- Lucky Arrow and Lucky Stone Mask are always excluded
+function Inventory:GetKeepItems()
+    local sellItems = _config:GetSellItems()
+    local list = {}
+    for name, sell in pairs(sellItems) do
+        if not sell and name ~= "Lucky Arrow" and name ~= "Lucky Stone Mask" then
+            table.insert(list, name)
+        end
+    end
+    return list
+end
+
+-- Returns true if ALL keep-items are at max capacity
+function Inventory:AllKeepItemsFull()
+    local keepItems = self:GetKeepItems()
+    if #keepItems == 0 then return true end
+    for _, name in ipairs(keepItems) do
+        if not self:HasMax(name) then
+            return false
+        end
+    end
+    return true
+end
+
+-- =====================
+-- DIALOGUE CLICKING HELPERS
+-- YBA 1.7974+ uses the newer client-side dialogue system.
+-- The Merchant wording/options can change, so selling is intent-based
+-- instead of depending on one exact sentence sequence.
+-- =====================
+
+local function normalizeText(text)
+    text = tostring(text or ""):lower()
+    text = text:gsub("[%c%p]", " ")
+    text = text:gsub("%s+", " ")
+    return text:match("^%s*(.-)%s*$") or ""
+end
+
+local function getButtonText(btn)
+    if not btn then return "" end
+
+    if btn:IsA("TextButton") then
+        local direct = tostring(btn.Text or "")
+        if direct ~= "" then
+            return direct
+        end
+    end
+
+    -- Some dialogue versions put the visible text in a child TextLabel.
+    for _, child in ipairs(btn:GetDescendants()) do
+        if child:IsA("TextLabel") and tostring(child.Text or "") ~= "" then
+            return child.Text
+        end
+    end
+
+    return ""
+end
+
+local function isActuallyVisible(guiObject)
+    if not guiObject or not guiObject.Parent then return false end
+    if guiObject:IsA("GuiObject") and guiObject.Visible == false then return false end
+
+    local parent = guiObject.Parent
+    while parent and parent ~= Player.PlayerGui do
+        if parent:IsA("GuiObject") and parent.Visible == false then
+            return false
+        end
+        parent = parent.Parent
+    end
+
+    return true
+end
+
+local function getDialogueGui()
+    local direct = Player.PlayerGui:FindFirstChild("DialogueGui")
+    if direct then return direct end
+
+    -- Fallback for renamed/new dialogue containers.
+    for _, obj in ipairs(Player.PlayerGui:GetChildren()) do
+        local lowered = tostring(obj.Name):lower()
+        if lowered:find("dialog", 1, true) then
+            return obj
+        end
+    end
+
+    return nil
+end
+
+local function getVisibleDialogueButtons()
+    local dlg = getDialogueGui()
+    if not dlg then return {} end
+
+    local buttons = {}
+    for _, obj in ipairs(dlg:GetDescendants()) do
+        if obj:IsA("GuiButton") and isActuallyVisible(obj) then
+            local text = getButtonText(obj)
+            if normalizeText(text) ~= "" then
+                table.insert(buttons, {
+                    Button = obj,
+                    Text = text,
+                    Normalized = normalizeText(text),
+                })
+            end
+        end
+    end
+
+    return buttons
+end
+
+local function describeButtons(buttons)
+    local texts = {}
+    for _, entry in ipairs(buttons) do
+        table.insert(texts, tostring(entry.Text))
+    end
+    return table.concat(texts, " | ")
+end
+
+-- Internal click support lets Fast Sell drive dialogue without visibly clicking it.
+local function hasInternalClickSupport()
+    return type(firesignal) == "function" or type(getconnections) == "function"
+end
+
+local function fastClickButton(btn)
+    if not btn or not btn.Parent then return false end
+
+    -- Preferred path: directly fire the Roblox signal. This does not require
+    -- the button to be visible on screen.
     if type(firesignal) == "function" then
         local ok = pcall(function()
             firesignal(btn.MouseButton1Click)
@@ -812,562 +289,1654 @@ local function clickDialogueButton(btn)
         if ok then return true end
     end
 
+    -- Executor fallback: call MouseButton1Click connections directly.
+    -- MouseButton1Click carries no arguments, so this is safer than trying
+    -- to invoke Activated callbacks with fabricated InputObjects.
+    if type(getconnections) == "function" then
+        local ok, connections = pcall(function()
+            return getconnections(btn.MouseButton1Click)
+        end)
+        if ok and type(connections) == "table" then
+            local invoked = false
+            for _, connection in ipairs(connections) do
+                local enabled = true
+                pcall(function()
+                    if connection.Enabled ~= nil then
+                        enabled = connection.Enabled
+                    end
+                end)
+
+                if enabled then
+                    local fn = nil
+                    pcall(function() fn = connection.Function end)
+                    if type(fn) == "function" then
+                        if pcall(fn) then
+                            invoked = true
+                        end
+                    end
+                end
+            end
+            if invoked then return true end
+        end
+    end
+
+    return false
+end
+
+-- Attempts an internal click first, then a physical-screen click as the
+-- compatibility fallback used by the normal visible dialogue mode.
+local function clickButton(btn)
+    if fastClickButton(btn) then return true end
+    if not btn or not btn.Parent then return false end
+
     local ok = pcall(function()
-        local pos = btn.AbsolutePosition
-        local size = btn.AbsoluteSize
-        local x = pos.X + size.X * 0.5
-        local y = pos.Y + size.Y * 0.5
+        local absPos  = btn.AbsolutePosition
+        local absSize = btn.AbsoluteSize
+        local x = absPos.X + absSize.X / 2
+        local y = absPos.Y + absSize.Y / 2
+
         VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
-        task.wait(0.03)
+        task.wait(0.05)
         VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
     end)
+
     return ok
 end
 
-local function findDialogueOption(optionName)
-    local gui = Player.PlayerGui:FindFirstChild("DialogueGui")
-    if not gui then return nil end
-    local options = gui:FindFirstChild("Options", true)
-    if not options then return nil end
-    local option = options:FindFirstChild(optionName)
-    if not option then return nil end
-    return option:FindFirstChildWhichIsA("GuiButton", true)
-end
+-- Fast Sell suppresses ScreenGui rendering while leaving the dialogue tree
+-- alive. This means signals/connections can still be invoked internally.
+local suppressedDialogueGuis = {}
 
+local function suppressDialogueRendering()
+    local dlg = getDialogueGui()
+    if not dlg then return false end
 
--- New YBA dialogue callbacks (v1.7974+) store the selected option in callback U[1].
--- DialogueAnalyzer confirmed the quest NPC uses the same ClientFunctions callback shape
--- as Merchant: one MouseButton1Click callback, with U[2] pointing at the option ImageLabel.
-local function injectDialogueOption(optionName)
-    local btn = findDialogueOption(optionName)
-    if not btn or not btn.Visible then return false, "not-ready" end
-
-    local getCon = type(getconnections) == "function" and getconnections or nil
-    local setUp = type(setupvalue) == "function" and setupvalue
-        or (debug and type(debug.setupvalue) == "function" and debug.setupvalue)
-    local getUp = type(getupvalue) == "function" and getupvalue
-        or (debug and type(debug.getupvalue) == "function" and debug.getupvalue)
-
-    if not getCon or not setUp then return false, "unsupported" end
-
-    local okConnections, connections = pcall(getCon, btn.MouseButton1Click)
-    if not okConnections or type(connections) ~= "table" then
-        return false, "no-connections"
-    end
-
-    for _, connection in ipairs(connections) do
-        local fn = connection and (connection.Function or connection["function"])
-        if type(fn) == "function" then
-            local structurallyValid = true
-            if getUp then
-                local okU2, u2 = pcall(getUp, fn, 2)
-                -- On the mapped ClientFunctions:2063 callback U[2] is the option ImageLabel.
-                -- If the executor exposes U[2], reject unrelated callbacks instead of writing U[1].
-                if okU2 and u2 ~= nil then
-                    structurallyValid = typeof(u2) == "Instance" and (u2 == btn.Parent or btn:IsDescendantOf(u2))
+    if dlg:IsA("ScreenGui") then
+        if suppressedDialogueGuis[dlg] == nil then
+            local state = { Enabled = dlg.Enabled, Connection = nil }
+            state.Connection = dlg:GetPropertyChangedSignal("Enabled"):Connect(function()
+                -- YBA may try to re-enable the dialogue while opening the next
+                -- page. Keep it hidden for the duration of Fast Sell.
+                if suppressedDialogueGuis[dlg] and dlg.Enabled then
+                    dlg.Enabled = false
                 end
-            end
-
-            if structurallyValid then
-                local okSet = pcall(setUp, fn, 1, optionName)
-                if okSet then
-                    if getUp then
-                        local okVerify, selected = pcall(getUp, fn, 1)
-                        if okVerify and selected ~= nil and tostring(selected) ~= tostring(optionName) then
-                            -- The callback shape changed; do not claim success.
-                        else
-                            return true, "internal"
-                        end
-                    else
-                        return true, "internal"
-                    end
-                end
-            end
+            end)
+            suppressedDialogueGuis[dlg] = state
         end
-    end
-
-    return false, "callback-mismatch"
-end
-
-local function dialogueStageSignature()
-    local gui = Player.PlayerGui:FindFirstChild("DialogueGui")
-    if not gui then return nil end
-    local options = gui:FindFirstChild("Options", true)
-    if not options then return nil end
-
-    local parts = {}
-    for i = 1, 8 do
-        local option = options:FindFirstChild("Option" .. i)
-        if option then
-            local label = option:FindFirstChildWhichIsA("TextLabel", true)
-            local button = option:FindFirstChildWhichIsA("TextButton", true)
-            local text = (button and button.Text) or (label and label.Text) or ""
-            parts[#parts + 1] = "Option" .. i .. "=" .. tostring(text)
-        end
-    end
-    return #parts > 0 and table.concat(parts, " | ") or nil
-end
-
-local function findQuestPrompt(questName)
-    local cleanName = tostring(questName):gsub("%s*%[Lvl%.?%s*%d+%+%]%s*$", "")
-    local roots = {
-        workspace:FindFirstChild("Dialogues"),
-        ReplicatedStorage:FindFirstChild("Dialogue"),
-        ReplicatedStorage:FindFirstChild("NewDialogue"),
-    }
-
-    local best, bestScore = nil, -1
-    for _, root in ipairs(roots) do
-        if root then
-            for _, obj in ipairs(root:GetDescendants()) do
-                if obj:IsA("ProximityPrompt") then
-                    local score = 0
-                    local ancestry = obj:GetFullName():lower()
-                    local q = questName:lower()
-                    local c = cleanName:lower()
-                    if ancestry:find(q, 1, true) then score = score + 100 end
-                    if c ~= "" and ancestry:find(c, 1, true) then score = score + 60 end
-                    local objectText = tostring(obj.ObjectText or ""):lower()
-                    if objectText == q or objectText == c then score = score + 80 end
-                    if c ~= "" and objectText:find(c, 1, true) then score = score + 40 end
-                    if score > bestScore then
-                        best, bestScore = obj, score
-                    end
-                end
-            end
-        end
-    end
-    return bestScore > 0 and best or nil
-end
-
-local function acceptQuest(questName, token)
-    if questOnCooldown and tick() < cooldownUntil then
-        local remaining = math.ceil(cooldownUntil - tick())
-        moduleLog("INFO", "[CombatFarm] Quest on cooldown, waiting " .. remaining .. " seconds.")
-        return false
-    end
-    questOnCooldown = false
-
-    local beforeProgress, beforeMax = readQuestState()
-    local activeIncomplete = (beforeMax or 0) > 0 and (beforeProgress or 0) < (beforeMax or 0)
-    local previousCompleted = (beforeMax or 0) > 0 and (beforeProgress or 0) >= (beforeMax or 0)
-
-    if activeIncomplete then
-        questCompleted = false
+        dlg.Enabled = false
         return true
     end
 
-    -- A completed quest is NOT an active quest. Re-open the NPC immediately so
-    -- normal leveling quests can be taken again. Only quests with a real mapped
-    -- cooldown are allowed to enter the cooldown state.
-    if previousCompleted then
-        questCompleted = false
-        moduleLog("INFO", ("[CombatFarm] Previous quest finished (%s/%s). Re-taking %s...")
-            :format(tostring(beforeProgress), tostring(beforeMax), tostring(questName)))
-    end
+    -- If YBA changes DialogueGui into a non-ScreenGui container, do not hide
+    -- it here because Visible=false would also make our option scanner ignore it.
+    return false
+end
 
-    local prompt = findQuestPrompt(questName)
-    if not prompt then
-        moduleLog("WARN", "[CombatFarm] New quest ProximityPrompt not found: " .. questName)
-        return false
-    end
-
-    moduleLog("INFO", "[CombatFarm] Opening updated quest dialogue: " .. questName)
-
-    -- Reuse the exact fast dialogue engine proven by Merchant when available.
-    -- Normal leveling quests use affirmative Option1 pages; the loop stops the
-    -- moment PlayerStats confirms an active quest, so quests with fewer pages do
-    -- not receive extra selections.
-    if _inventory and type(_inventory.RunFastDialogueOptionLoop) == "function" then
-        local okFast, fastInfo = _inventory:RunFastDialogueOptionLoop(prompt, "Option1", function()
-            local p, m = readQuestState()
-            local active = (m or 0) > 0 and (p or 0) < (m or 0)
-            local changed = p ~= beforeProgress or m ~= beforeMax
-            return active and (changed or previousCompleted or (beforeMax or 0) == 0)
-        end, 8, 3.0)
-        if okFast then
-            local p, m = readQuestState()
-            questCompleted = false
-            moduleLog("INFO", ("[CombatFarm][FastDialogue] Quest accepted automatically: %s | progress=%s/%s | %s")
-                :format(tostring(questName), tostring(p), tostring(m), tostring(fastInfo or "fast")))
-            return true
-        else
-            moduleLog("INFO", "[CombatFarm][FastDialogue] Fast route did not confirm quest; using visible compatibility route. " .. tostring(fastInfo or ""))
+local function restoreDialogueRendering()
+    for dlg, state in pairs(suppressedDialogueGuis) do
+        if state and state.Connection then
+            pcall(function() state.Connection:Disconnect() end)
         end
+        if dlg and dlg.Parent and dlg:IsA("ScreenGui") then
+            pcall(function() dlg.Enabled = state and state.Enabled ~= false end)
+        end
+        suppressedDialogueGuis[dlg] = nil
     end
+end
 
-    local opened = pcall(function() fireproximityprompt(prompt) end)
-    if not opened then
-        moduleLog("WARN", "[CombatFarm] Could not trigger quest prompt: " .. questName)
-        return false
-    end
+local NEGATIVE_WORDS = {
+    "buy", "leave", "cancel", "nevermind", "never mind",
+    "no thanks", "no thank", "goodbye", "exit", "nothing",
+}
 
-    local deadline = tick() + 8
-    local lastStageSignature = nil
-    local lastAdvanceAt = 0
-    local internalStages = 0
-    local fallbackClicks = 0
-
-    while tick() < deadline and isTokenActive(token, "Quest") do
-        local progress, maxProgress = readQuestState()
-        local nowActive = (maxProgress or 0) > 0 and (progress or 0) < (maxProgress or 0)
-        local stateChanged = progress ~= beforeProgress or maxProgress ~= beforeMax
-
-        if nowActive and (stateChanged or previousCompleted or (beforeMax or 0) == 0) then
-            questCompleted = false
-            moduleLog("INFO", ("[CombatFarm] Quest accepted: %s | progress=%s/%s internalStages=%d fallbackClicks=%d")
-                :format(questName, tostring(progress), tostring(maxProgress), internalStages, fallbackClicks))
+local function containsAny(text, words)
+    for _, word in ipairs(words) do
+        if text:find(word, 1, true) then
             return true
         end
-
-        local btn = findDialogueOption("Option1")
-        local signature = dialogueStageSignature()
-        if btn and btn.Visible and signature then
-            local isNewStage = signature ~= lastStageSignature
-            local retryExpired = (tick() - lastAdvanceAt) >= 0.45
-            if isNewStage or retryExpired then
-                local okInject = injectDialogueOption("Option1")
-                if okInject then
-                    internalStages = internalStages + 1
-                    lastStageSignature = signature
-                    lastAdvanceAt = tick()
-                    task.wait(0.04)
-                else
-                    if clickDialogueButton(btn) then
-                        fallbackClicks = fallbackClicks + 1
-                        lastStageSignature = signature
-                        lastAdvanceAt = tick()
-                    end
-                    task.wait(0.08)
-                end
-            else
-                task.wait(0.03)
-            end
-        else
-            task.wait(0.04)
-        end
-    end
-
-    local progress, maxProgress = readQuestState()
-    local nowActive = (maxProgress or 0) > 0 and (progress or 0) < (maxProgress or 0)
-    if nowActive and (progress ~= beforeProgress or maxProgress ~= beforeMax or previousCompleted) then
-        questCompleted = false
-        moduleLog("INFO", "[CombatFarm] Quest accepted after dialogue settle: " .. questName)
-        return true
-    end
-
-    local data = questInfo[questName]
-    local mappedCooldown = data and tonumber(data.cooldownSeconds) or 0
-    if mappedCooldown and mappedCooldown > 0 then
-        questOnCooldown = true
-        cooldownUntil = tick() + mappedCooldown
-        moduleLog("INFO", ("[CombatFarm] Quest appears unavailable; mapped cooldown %ss: %s")
-            :format(tostring(mappedCooldown), tostring(questName)))
-    else
-        questOnCooldown = false
-        moduleLog("WARN", "[CombatFarm] Quest acceptance failed; no cooldown is mapped for this normal quest, so it will retry.")
     end
     return false
 end
 
-local function collectItem(itemName, requiredAmount, token)
-    local inventory = _inventory
-    local movement  = _movement
-    local startTime = tick()
-    while isTokenActive(token, "Quest") and inventory:Count(itemName) < requiredAmount and (tick() - startTime) < 120 do
-        local itemModel = nil
-        local itemsFolder = workspace.Item_Spawns and workspace.Item_Spawns.Items
-        if itemsFolder then
-            for _, model in pairs(itemsFolder:GetChildren()) do
-                if model:IsA("Model") then
-                    local prompt = model:FindFirstChildWhichIsA("ProximityPrompt")
-                    if prompt and prompt.ObjectText == itemName and prompt.MaxActivationDistance == 8 then
-                        itemModel = model
-                        break
-                    end
+-- Scores an option by SELL intent. This intentionally does not require
+-- exact English sentences so wording/format changes are less likely to break it.
+local function scoreSellOption(entry)
+    local text = entry.Normalized
+    if text == "" then return -math.huge end
+    if containsAny(text, NEGATIVE_WORDS) then return -1000 end
+
+    local score = 0
+    local hasSell = text:find("sell", 1, true) ~= nil
+    local hasAll = text:find("all", 1, true) ~= nil
+    local hasEverything = text:find("everything", 1, true) ~= nil
+    local hasMax = text:find("max", 1, true) ~= nil
+
+    -- Quantity selection: strongly prefer ALL/MAX/EVERYTHING.
+    if hasSell and (hasAll or hasEverything or hasMax) then score = score + 220 end
+    if hasAll or hasEverything or hasMax then score = score + 150 end
+
+    -- General sell route / currently equipped item route.
+    if hasSell then score = score + 100 end
+    if text:find("this", 1, true) and hasSell then score = score + 30 end
+    if text:find("item", 1, true) and hasSell then score = score + 20 end
+
+    -- Confirmation pages in the new dialogue system.
+    if text:find("deal", 1, true) then score = score + 90 end
+    if text:find("confirm", 1, true) then score = score + 80 end
+    if text == "yes" or text:find("yes ", 1, true) == 1 then score = score + 70 end
+    if text == "ok" or text == "okay" or text:find("sure", 1, true) then score = score + 55 end
+
+    -- If quantity choices are numbers only, prefer the largest-looking option
+    -- only as a weak fallback; explicit ALL/MAX always wins above.
+    local quantity = tonumber(text:match("(%d+)%s*x")) or tonumber(text:match("sell%s+(%d+)"))
+    if quantity then
+        score = score + math.min(quantity, 50)
+    end
+
+    return score
+end
+
+local function waitForDialogueButtons(timeout, fastMode)
+    timeout = timeout or 3
+    local started = tick()
+
+    while tick() - started < timeout do
+        local buttons = getVisibleDialogueButtons()
+        if #buttons > 0 then
+            return buttons
+        end
+        task.wait(fastMode and 0.02 or 0.1)
+    end
+
+    return {}
+end
+
+local function chooseBestSellButton(buttons)
+    local bestEntry = nil
+    local bestScore = -math.huge
+
+    for _, entry in ipairs(buttons) do
+        local score = scoreSellOption(entry)
+        if score > bestScore then
+            bestScore = score
+            bestEntry = entry
+        end
+    end
+
+    if bestScore <= 0 then
+        return nil, bestScore
+    end
+
+    return bestEntry, bestScore
+end
+
+local function findMerchantPrompt()
+    -- Known/new dialogue storage path first.
+    local dlgFolder = ReplicatedStorage:FindFirstChild("Dialogue")
+    if dlgFolder then
+        local merchant = dlgFolder:FindFirstChild("Merchant", true)
+        if merchant then
+            local prompt = merchant:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt then return prompt end
+        end
+    end
+
+    -- Search models/folders whose ancestry identifies the Merchant.
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("ProximityPrompt") then
+            local parent = obj.Parent
+            local matchedMerchant = false
+            local depth = 0
+            while parent and parent ~= workspace and depth < 6 do
+                if tostring(parent.Name):lower():find("merchant", 1, true) then
+                    matchedMerchant = true
+                    break
                 end
+                parent = parent.Parent
+                depth = depth + 1
+            end
+
+            local objectText = normalizeText(obj.ObjectText)
+            local actionText = normalizeText(obj.ActionText)
+            if matchedMerchant or objectText:find("merchant", 1, true) or actionText:find("merchant", 1, true) then
+                return obj
             end
         end
-        if itemModel and itemModel.PrimaryPart then
-            local hrp = movement:GetCharacter("HumanoidRootPart")
-            if hrp then
-                local oldCF = hrp.CFrame
-                local bv = movement:Freeze()
-                movement:SetNoclip(true)
-                movement:Teleport(itemModel.PrimaryPart.CFrame - Vector3.new(0, 10, 0))
-                task.wait(0.3)
-                local prompt = itemModel:FindFirstChildWhichIsA("ProximityPrompt")
-                if prompt then fireproximityprompt(prompt) end
-                task.wait(0.6)
-                movement:Unfreeze(bv)
-                movement:Teleport(oldCF)
-                movement:SetNoclip(false)
-            end
+    end
+
+    return nil
+end
+
+local function closeDialogueIfOpen()
+    local dlg = getDialogueGui()
+    if not dlg then return end
+
+    -- Prefer a harmless close/cancel button after a failed attempt.
+    local buttons = getVisibleDialogueButtons()
+    for _, entry in ipairs(buttons) do
+        local t = entry.Normalized
+        if t:find("leave", 1, true) or t:find("cancel", 1, true)
+            or t:find("nevermind", 1, true) or t:find("never mind", 1, true)
+            or t:find("goodbye", 1, true) or t:find("exit", 1, true) then
+            clickButton(entry.Button)
+            task.wait(0.2)
+            return
         end
-        task.wait(1)
     end
-    return inventory:Count(itemName) >= requiredAmount
 end
 
--- Some normal leveling quests open an automatic final DialogueGui after the
--- objective is complete. DialogueAnalyzer mapped Dio/Jotaro's final page as
--- Option1 = "Very well." using the same ClientFunctions:2063 callback used by
--- Merchant and quest acceptance. Hide and clear it before re-taking the quest.
-local function finishQuestDialogueFast(token)
-    if not _inventory or type(_inventory.RunFastExistingDialogueOptionLoop) ~= "function" then
-        return false
-    end
+-- Drives the current Merchant dialogue dynamically until the item count drops.
+-- Returns true if at least one item was sold.
+local function runMerchantSellDialogue(itemName, beforeCount, fastMode)
+    local lastOptions = ""
+    local repeatedSameState = 0
+    local stepDelay = fastMode and 0.06 or 0.5
 
-    local waitDeadline = tick() + 1.50
-    local gui = nil
-    while tick() < waitDeadline and isTokenActive(token, "Quest") do
-        gui = Player.PlayerGui:FindFirstChild("DialogueGui")
-        if gui then break end
-        task.wait(0.01)
-    end
-    if not gui or not isTokenActive(token, "Quest") then
-        return false
-    end
+    for step = 1, 7 do
+        if Inventory:Count(itemName) < beforeCount then
+            return true
+        end
 
-    local originalGui = gui
-    local okFast, info = _inventory:RunFastExistingDialogueOptionLoop("Option1", function()
-        local current = Player.PlayerGui:FindFirstChild("DialogueGui")
-        return current == nil or current ~= originalGui
-    end, 3, 1.60)
+        local timeout
+        if fastMode then
+            timeout = step == 1 and 0.9 or 0.65
+        else
+            timeout = step == 1 and 3 or 2
+        end
 
-    if okFast then
-        moduleLog("INFO", "[CombatFarm][FastDialogue] Quest completion dialogue cleared invisibly: " .. tostring(info or "fast"))
-        return true
-    end
-
-    moduleLog("INFO", "[CombatFarm][FastDialogue] Quest completion dialogue fast-clear was not confirmed: " .. tostring(info or "unknown"))
-    return false
-end
-
-local function runQuestFarm(token)
-    local autoChoose = _config:Get("AutoChooseQuest")
-    if autoChoose then
-        currentQuest = getBestQuest()
-    else
-        currentQuest = _config:Get("SelectedQuest")
-    end
-
-    if not currentQuest or currentQuest == "" then
-        moduleLog("INFO", "[CombatFarm] No quest selected or found.")
-        return false
-    end
-
-    local data = questInfo[currentQuest]
-    if not data then
-        moduleLog("WARN", "[CombatFarm] Quest was detected by the UI but its objective is not mapped yet: " .. tostring(currentQuest))
-        return false
-    end
-    if data.special then
-        moduleLog("WARN", "[CombatFarm] Special quest is visible but not automated yet: " .. tostring(currentQuest) .. " (" .. tostring(data.special) .. ").")
-        return false
-    end
-
-    if not acceptQuest(currentQuest, token) then
-        return false
-    end
-    if not waitToken(0.10, token, "Quest") then return false end
-
-    local progress, maxProgress = readQuestState()
-    if (maxProgress or 0) <= 0 then
-        moduleLog("WARN", "[CombatFarm] Quest dialogue finished but no active QuestMaxProgress was detected.")
-        return false
-    end
-
-    if data.enemy then
-        while isTokenActive(token, "Quest") do
-            progress, maxProgress = readQuestState()
-            if (maxProgress or 0) > 0 and (progress or 0) >= (maxProgress or 0) then
-                questCompleted = true
-                moduleLog("INFO", ("[CombatFarm] Quest objective complete: %s | %s/%s")
-                    :format(tostring(currentQuest), tostring(progress), tostring(maxProgress)))
-                -- The game may automatically open a quest-completion page here.
-                -- Clear it before the farm loop re-opens the quest NPC so the
-                -- player never has to wait for/render the final dialogue.
-                finishQuestDialogueFast(token)
+        local buttons = waitForDialogueButtons(timeout, fastMode)
+        if #buttons == 0 then
+            task.wait(fastMode and 0.08 or 0.35)
+            if Inventory:Count(itemName) < beforeCount then
                 return true
             end
+            moduleLog("WARN", "[Inventory][Dialogue] No visible dialogue options at step " .. tostring(step) .. ".")
+            return false
+        end
 
-            local ok = killTarget(data.enemy, token)
-            if not isTokenActive(token, "Quest") then return false end
-            if ok then
-                if not waitToken(0.02, token, "Quest") then return false end
-            else
-                if not waitToken(0.50, token, "Quest") then return false end
-            end
+        if fastMode then
+            suppressDialogueRendering()
         end
-        return false
-    elseif data.item then
-        local ok = collectItem(data.item, data.amount, token)
-        if ok then
-            local p, m = readQuestState()
-            if (m or 0) > 0 and (p or 0) >= (m or 0) then
-                questCompleted = true
-            end
+
+        local description = describeButtons(buttons)
+        moduleLog("INFO", "[Inventory][Dialogue] Step " .. tostring(step) .. " options: " .. description)
+
+        if description == lastOptions then
+            repeatedSameState = repeatedSameState + 1
+        else
+            repeatedSameState = 0
+            lastOptions = description
         end
-        return ok
+
+        if repeatedSameState >= 2 then
+            moduleLog("WARN", "[Inventory][Dialogue] Dialogue did not advance. Options: " .. description)
+            return false
+        end
+
+        local chosen, score = chooseBestSellButton(buttons)
+        if not chosen then
+            moduleLog("WARN", "[Inventory][Dialogue] Could not identify a sell option. Options: " .. description)
+            return false
+        end
+
+        moduleLog("INFO", "[Inventory][Dialogue] " .. (fastMode and "Fast-clicking: " or "Clicking: ")
+            .. tostring(chosen.Text) .. " (score " .. tostring(score) .. ")")
+
+        local clicked
+        if fastMode then
+            clicked = fastClickButton(chosen.Button)
+        else
+            clicked = clickButton(chosen.Button)
+        end
+
+        if not clicked then
+            moduleLog("WARN", "[Inventory][Dialogue] Failed to activate option: " .. tostring(chosen.Text))
+            return false
+        end
+
+        task.wait(stepDelay)
+    end
+
+    return Inventory:Count(itemName) < beforeCount
+end
+
+local equipSellTool
+
+-- =====================
+-- INTERNAL / FALLBACK SELLING
+-- YBA 1.7974+ Merchant option callbacks (ClientFunctions:2063) only write
+-- the selected option name into callback upvalue #1.  Writing that upvalue
+-- directly advances the dialogue without firesignal/VIM clicks.
+-- =====================
+
+local _env = (getgenv and getgenv()) or _G
+local _rawGetConnections = rawget(_env, "getconnections") or getconnections
+local _rawSetupvalue = rawget(_env, "setupvalue") or setupvalue
+local _rawGetUpvalue = rawget(_env, "getupvalue") or getupvalue
+local _rawGetGC = rawget(_env, "getgc") or getgc
+local _rawGetConstants = rawget(_env, "getconstants") or getconstants
+local _rawSetConstant = rawget(_env, "setconstant") or setconstant
+local _rawFireSignal = rawget(_env, "firesignal") or firesignal
+
+if debug then
+    if type(_rawSetupvalue) ~= "function" then _rawSetupvalue = debug.setupvalue end
+    if type(_rawGetUpvalue) ~= "function" then _rawGetUpvalue = debug.getupvalue end
+    if type(_rawGetConstants) ~= "function" then _rawGetConstants = debug.getconstants end
+    if type(_rawSetConstant) ~= "function" then _rawSetConstant = debug.setconstant end
+end
+
+local _cachedDialogueType = nil
+local FINAL_SMALL_CONSTANT_MAX = 2.0
+-- Performance guardrails for Delta/mobile. The FINAL route stays fast, but avoids
+-- full getgc scans and deep patch work every rendered frame.
+local FINAL_FORCE_INTERVAL = 0.02
+local FINAL_GC_RESCAN_INTERVAL = 0.035
+
+local function getIndexedUpvalue(fn, index)
+    if type(_rawGetUpvalue) ~= "function" or type(fn) ~= "function" then
+        return false, nil, nil
+    end
+
+    local packed = table.pack(pcall(_rawGetUpvalue, fn, index))
+    if not packed[1] then return false, nil, nil end
+
+    local returned = packed.n - 1
+    if returned >= 2 and type(packed[2]) == "string" then
+        return packed[2] ~= nil, packed[3], packed[2]
+    elseif returned >= 1 then
+        return packed[2] ~= nil, packed[2], nil
+    end
+    return false, nil, nil
+end
+
+local function functionSourceLine(fn)
+    local source, line = nil, nil
+    if debug and type(debug.info) == "function" and type(fn) == "function" then
+        pcall(function()
+            source = debug.info(fn, "s")
+            line = debug.info(fn, "l")
+        end)
+    end
+    return source, tonumber(line)
+end
+
+local function isClientFunctionsLine(fn, wantedLine)
+    local source, line = functionSourceLine(fn)
+    return line == wantedLine and type(source) == "string" and source:find("ClientFunctions", 1, true) ~= nil
+end
+
+-- Structural fingerprints are intentionally preferred over hard-coded line numbers.
+-- YBA can recompile ClientFunctions and move 1982/2035/2063 without changing the
+-- actual callback layout. Lines remain useful diagnostics, but no longer the only key.
+local _fingerprint = {
+    checked = false,
+    dialogueType = false,
+    dialogueTypeLine = nil,
+    optionCallbackLine = nil,
+    advanceClosureLine = nil,
+    warnedOptionMismatch = false,
+    warnedAdvanceMismatch = false,
+}
+
+local function isClientFunctionsSource(fn)
+    local source = select(1, functionSourceLine(fn))
+    return type(source) == "string" and source:find("ClientFunctions", 1, true) ~= nil
+end
+
+local function constantsContain(fn, wanted)
+    if type(_rawGetConstants) ~= "function" or type(fn) ~= "function" then return false end
+    local ok, constants = pcall(_rawGetConstants, fn)
+    if not ok or type(constants) ~= "table" then return false end
+    for _, value in pairs(constants) do
+        if value == wanted then return true end
     end
     return false
 end
 
--- =============================================
--- MAIN LOOP
--- =============================================
-local function waitCancelable(seconds, token)
-    local deadline = tick() + seconds
-    while tick() < deadline do
-        if not isTokenActive(token) then return false end
-        task.wait(math.min(0.10, math.max(0, deadline - tick())))
+local function looksLikeOptionCallback(fn)
+    if type(fn) ~= "function" or not isClientFunctionsSource(fn) then return false end
+    local _, line = functionSourceLine(fn)
+    if line == 2063 then return true end
+    return constantsContain(fn, "Name")
+end
+
+local function looksLikeAdvanceClosure(fn)
+    if type(fn) ~= "function" or not isClientFunctionsSource(fn) then return false end
+    local _, line = functionSourceLine(fn)
+    if line == 1982 then return true end
+
+    local hasTimestamp, timestamp = getIndexedUpvalue(fn, 1)
+    local hasRich, richObject = getIndexedUpvalue(fn, 4)
+    if not hasTimestamp or type(timestamp) ~= "number" or not hasRich or type(richObject) ~= "table" then
+        return false
     end
+    return type(richObject.Animate) == "function" or richObject.Text ~= nil
+end
+
+local function fingerprintSummary()
+    local caps = {
+        getconnections = type(_rawGetConnections) == "function",
+        setupvalue = type(_rawSetupvalue) == "function",
+        getupvalue = type(_rawGetUpvalue) == "function",
+        getgc = type(_rawGetGC) == "function",
+        getconstants = type(_rawGetConstants) == "function",
+        setconstant = type(_rawSetConstant) == "function",
+        firesignal = type(_rawFireSignal) == "function",
+    }
+    return string.format(
+        "getconnections=%s setupvalue=%s getupvalue=%s getgc=%s getconstants=%s setconstant=%s firesignal=%s",
+        tostring(caps.getconnections), tostring(caps.setupvalue), tostring(caps.getupvalue),
+        tostring(caps.getgc), tostring(caps.getconstants), tostring(caps.setconstant), tostring(caps.firesignal)
+    )
+end
+
+local function findLiveDialogueType()
+    if _cachedDialogueType and isClientFunctionsSource(_cachedDialogueType) then
+        local exists, functionTable = getIndexedUpvalue(_cachedDialogueType, 1)
+        if isClientFunctionsLine(_cachedDialogueType, 2035)
+            or (exists and type(functionTable) == "table" and functionTable.DialogueType == _cachedDialogueType) then
+            return _cachedDialogueType
+        end
+    end
+    if type(_rawGetGC) ~= "function" then return nil end
+
+    local ok, objects = pcall(_rawGetGC, true)
+    if not ok or type(objects) ~= "table" then return nil end
+
+    local fallback = nil
+    for _, obj in pairs(objects) do
+        if type(obj) == "function" and isClientFunctionsSource(obj) then
+            local _, line = functionSourceLine(obj)
+            local exists, functionTable = getIndexedUpvalue(obj, 1)
+            local structuralMatch = exists and type(functionTable) == "table" and functionTable.DialogueType == obj
+            if line == 2035 or structuralMatch then
+                fallback = fallback or obj
+                if structuralMatch then
+                    _cachedDialogueType = obj
+                    _fingerprint.dialogueType = true
+                    _fingerprint.dialogueTypeLine = line
+                    return obj
+                end
+            end
+        end
+    end
+
+    _cachedDialogueType = fallback
+    if fallback then
+        _fingerprint.dialogueType = true
+        _fingerprint.dialogueTypeLine = select(2, functionSourceLine(fallback))
+    end
+    return fallback
+end
+
+runDialogueFingerprintCheck = function()
+    if _fingerprint.checked then return _fingerprint.dialogueType end
+    _fingerprint.checked = true
+
+    moduleLog("INFO", "[Inventory][Fingerprint] Executor capabilities: " .. fingerprintSummary())
+    if type(_rawGetGC) ~= "function" or type(_rawGetUpvalue) ~= "function" then
+        moduleLog("WARN", "[Inventory][Fingerprint] Deep dialogue fingerprint unavailable; FINAL route will use compatibility fallbacks.")
+        return false
+    end
+
+    local dialogueType = findLiveDialogueType()
+    if dialogueType then
+        local _, line = functionSourceLine(dialogueType)
+        moduleLog("INFO", "[Inventory][Fingerprint] ClientFunctions DialogueType detected at line " .. tostring(line or "unknown") .. ".")
+        if line and line ~= 2035 then
+            moduleLog("WARN", "[Inventory][Fingerprint] YBA ClientFunctions line layout changed (DialogueType was 2035, now " .. tostring(line) .. "). Structural fingerprint still matches; fast route remains enabled.")
+        end
+        return true
+    end
+
+    moduleLog("WARN", "[Inventory][Fingerprint] ClientFunctions dialogue layout was not recognized. FINAL route may be disabled/fall back; copy WARN/ERROR if Merchant speed breaks after a YBA update.")
+    return false
+end
+
+local function hasInternalDialogueStateSupport()
+    return type(_rawGetConnections) == "function" and type(_rawSetupvalue) == "function"
+end
+
+local function hasFinalZeroDelaySupport()
+    -- getgc is now optional for the first attempt: ClickContinue connections can
+    -- expose the live advance closure directly. If they do not, getgc remains
+    -- the compatibility discovery fallback.
+    return hasInternalDialogueStateSupport()
+        and type(_rawGetUpvalue) == "function"
+end
+
+local function optionNameForButton(btn)
+    local node = btn
+    for _ = 1, 5 do
+        if not node then break end
+        local name = tostring(node.Name or "")
+        if name:match("^Option%d+$") then
+            return name
+        end
+        node = node.Parent
+    end
+    return nil
+end
+
+local function getDialogueStateSignature()
+    local buttons = getVisibleDialogueButtons()
+    if #buttons == 0 then return "", buttons end
+
+    local parts = {}
+    for _, entry in ipairs(buttons) do
+        local name = optionNameForButton(entry.Button) or "?"
+        table.insert(parts, name .. "=" .. tostring(entry.Text))
+    end
+    table.sort(parts)
+    return table.concat(parts, " | "), buttons
+end
+
+local function findDialogueButtonByOptionName(wantedName)
+    for _, entry in ipairs(getVisibleDialogueButtons()) do
+        if optionNameForButton(entry.Button) == wantedName then
+            return entry.Button, entry
+        end
+    end
+    return nil, nil
+end
+
+local function getMouseClickCallback(btn)
+    if not btn or type(_rawGetConnections) ~= "function" then return nil end
+    local ok, conns = pcall(_rawGetConnections, btn.MouseButton1Click)
+    if not ok or type(conns) ~= "table" then return nil end
+
+    for _, conn in pairs(conns) do
+        local enabled = true
+        pcall(function()
+            if conn.Enabled ~= nil then enabled = conn.Enabled end
+        end)
+        if enabled then
+            local fn = nil
+            pcall(function() fn = conn.Function end)
+            if type(fn) == "function" then return fn end
+        end
+    end
+    return nil
+end
+
+local function injectDialogueOption(wantedName)
+    local btn = findDialogueButtonByOptionName(wantedName)
+    if not btn then
+        return false, "option " .. tostring(wantedName) .. " not found"
+    end
+
+    local fn = getMouseClickCallback(btn)
+    if type(fn) ~= "function" then
+        return false, "MouseButton1Click callback unavailable"
+    end
+
+    local _, callbackLine = functionSourceLine(fn)
+    _fingerprint.optionCallbackLine = callbackLine
+    if not looksLikeOptionCallback(fn) then
+        if not _fingerprint.warnedOptionMismatch then
+            _fingerprint.warnedOptionMismatch = true
+            moduleLog("WARN", "[Inventory][Fingerprint] Dialogue option callback no longer matches the proven ClientFunctions fingerprint (line=" .. tostring(callbackLine or "unknown") .. "). Internal injection disabled for this screen.")
+        end
+        return false, "dialogue option callback fingerprint mismatch"
+    elseif callbackLine and callbackLine ~= 2063 and not _fingerprint.warnedOptionMismatch then
+        _fingerprint.warnedOptionMismatch = true
+        moduleLog("WARN", "[Inventory][Fingerprint] Dialogue option callback moved from line 2063 to " .. tostring(callbackLine) .. "; structural fingerprint still matches.")
+    end
+
+    local ok, err = pcall(_rawSetupvalue, fn, 1, wantedName)
+    if not ok then return false, tostring(err) end
+    task.wait()
     return true
 end
 
-local function farmLoop(token)
-    while isTokenActive(token) do
-        if activeMode == "NPC" then
-            local ok = runNPCFarm(token)
-            if token ~= runId or stopRequested then break end
-            if ok then
-                moduleLog("INFO", "[CombatFarm] NPC killed. Looking for another alive spawn...")
-                local selectedNPC = _config:Get("SelectedNPC")
-                if not selectedNPC or selectedNPC == "" or not getClosestNPC(selectedNPC) then
-                    goToSafeSpot("All selected NPC spawns are currently dead")
-                end
-                if not waitCancelable(0.02, token) then break end
-            else
-                goToSafeSpot("Waiting for selected NPC to respawn")
-                moduleLog("INFO", "[CombatFarm] No alive NPC found. Retrying shortly...")
-                if not waitCancelable(0.75, token) then break end
-            end
-
-        elseif activeMode == "Quest" then
-            local ok = runQuestFarm(token)
-            if token ~= runId or stopRequested then break end
-
-            if ok then
-                moduleLog("INFO", "[CombatFarm] Quest completed. Re-taking highest/selected quest...")
-                questCompleted = false
-                questOnCooldown = false
-                if not waitCancelable(0.45, token) then break end
-            else
-                if questOnCooldown then
-                    local remaining = math.max(1, math.ceil(cooldownUntil - tick()))
-                    moduleLog("INFO", "[CombatFarm] Quest on cooldown, waiting " .. remaining .. " seconds...")
-                    if not waitCancelable(remaining, token) then break end
-                else
-                    moduleLog("INFO", "[CombatFarm] Quest failed. Retrying in 5 seconds...")
-                    if not waitCancelable(5, token) then break end
-                end
-            end
-        else
-            break
+local function waitForDialogueGuiHidden(timeout)
+    local deadline = tick() + (timeout or 1.5)
+    while tick() < deadline do
+        local dlg = getDialogueGui()
+        if dlg then
+            suppressDialogueRendering()
+            return dlg
         end
-
-        if not waitCancelable(0.25, token) then break end
+        task.wait()
     end
-
-    if token == runId then
-        isRunning = false
-        activeMode = nil
-    end
+    return nil
 end
 
--- =============================================
--- PUBLIC API
--- =============================================
-local function startMode(mode)
-    if isRunning and activeMode == mode then return end
+-- ---------------------
+-- FINAL ZERO-DELAY PATH
+-- Proven in MerchantAnalyzer_FINAL at ~0.70s after Merchant opens.
+-- ---------------------
+local FINAL_DELAY_KEYS = {
+    AnimateStepTime = true,
+    AnimateYield = true,
+    AnimateDelay = true,
+    StepTime = true,
+    TextDelay = true,
+    CharacterDelay = true,
+    TypeDelay = true,
+}
 
-    -- Invalidate any previous worker before starting a new one.
-    runId = runId + 1
-    stopRequested = false
-    activeMode = mode
-    isRunning = true
-
-    local token = runId
-    if mode == "Quest" then
-        questCompleted = false
-        questOnCooldown = false
-    end
-
-    moduleLog("INFO", "[CombatFarm] Starting " .. mode .. " farming (single-worker mode).")
-    task.spawn(function()
-        farmLoop(token)
-    end)
-end
-
-
-function CombatFarm:GetSkillCatalog()
-    local standName, _, preset = getStandPreset()
-    local source = "generic"
-    local sourceSkills = preset
-
-    if preset then
-        source = "stand-preset"
-    else
-        local guiDetected = scanGuiSkillCatalog()
-        if #guiDetected > 0 then
-            source = "gui-detected"
-            sourceSkills = guiDetected
-        else
-            sourceSkills = GENERIC_MOBILE_SKILLS
-        end
-    end
-
-    local skills = {}
-    for _, entry in ipairs(sourceSkills) do
-        local profile = getSkillProfile(entry.key)
-        skills[#skills + 1] = {
-            key = entry.key,
-            name = entry.name,
-            closeCast = (entry.closeCast == true) or (profile and profile.closeCast == true) or false,
-        }
-    end
+local function newFinalState()
     return {
-        stand = standName,
-        source = source,
-        skills = skills,
+        fieldPatches = {}, fieldSeen = setmetatable({}, {__mode = "k"}),
+        animatePatches = {}, animateSeen = setmetatable({}, {__mode = "k"}),
+        upvaluePatches = {}, upvalueSeen = setmetatable({}, {__mode = "k"}),
+        constantPatches = {}, constantSeen = setmetatable({}, {__mode = "k"}),
+        richSeen = setmetatable({}, {__mode = "k"}),
+        constantScanned = setmetatable({}, {__mode = "k"}),
+        waitPatch = nil,
+        active1982 = nil,
+        lastGCScan = 0,
+        clickContinue = nil,
+        signalFires = 0,
+        direct1982Calls = 0,
+        connectionClosureHits = 0,
+        richObjects = 0,
+        constantsZeroed = 0,
+        gcScans = 0,
     }
 end
 
-function CombatFarm:StartNPC()
-    startMode("NPC")
+local function rememberField(state, tbl, key, originalValue)
+    if type(tbl) ~= "table" then return end
+    state.fieldSeen[tbl] = state.fieldSeen[tbl] or {}
+    if state.fieldSeen[tbl][key] then return end
+    state.fieldSeen[tbl][key] = true
+    table.insert(state.fieldPatches, {tbl = tbl, key = key, value = originalValue})
 end
 
-function CombatFarm:StartQuest()
-    startMode("Quest")
+local function rememberUpvalue(state, fn, index, originalValue)
+    state.upvalueSeen[fn] = state.upvalueSeen[fn] or {}
+    if state.upvalueSeen[fn][index] then return end
+    state.upvalueSeen[fn][index] = true
+    table.insert(state.upvaluePatches, {fn = fn, index = index, value = originalValue})
 end
 
-function CombatFarm:Stop()
-    local previousMode = activeMode
-    runId = runId + 1
-    stopRequested = true
-    isRunning = false
-    activeMode = nil
-    questCompleted = false
-    _movement:SetNoclip(false)
-    _movement:ClearFocus()
-    _movement:FixCamera()
-    if previousMode == "NPC" then
-        goToSafeSpot("NPC Farm disabled")
+local function rememberConstant(state, fn, index, originalValue)
+    state.constantSeen[fn] = state.constantSeen[fn] or {}
+    if state.constantSeen[fn][index] then return end
+    state.constantSeen[fn][index] = true
+    table.insert(state.constantPatches, {fn = fn, index = index, value = originalValue})
+end
+
+local function zeroDelayFields(state, tbl, depth, seen)
+    if type(tbl) ~= "table" then return end
+    depth = depth or 0
+    if depth > 2 then return end
+    seen = seen or {}
+    if seen[tbl] then return end
+    seen[tbl] = true
+
+    for key, value in pairs(tbl) do
+        if FINAL_DELAY_KEYS[tostring(key)] and type(value) == "number" then
+            rememberField(state, tbl, key, value)
+            pcall(function() tbl[key] = 0 end)
+        elseif type(value) == "table" then
+            zeroDelayFields(state, value, depth + 1, seen)
+        end
     end
-    moduleLog("INFO", "[CombatFarm] Stopped immediately and cleaned combat state.")
 end
 
-function CombatFarm:IsRunning()
-    return isRunning, activeMode
-end
+local function patchRichObject(state, richObject)
+    if type(richObject) ~= "table" then return end
+    -- A RichText result is immutable enough for this dialogue stage. Re-walking
+    -- the same nested table every force tick wastes CPU and causes mobile FPS drops.
+    if state.richSeen[richObject] then return end
+    state.richSeen[richObject] = true
+    state.richObjects = state.richObjects + 1
 
-function CombatFarm:Destroy()
-    self:Stop()
-    if questWatcherConnection then
-        pcall(function() questWatcherConnection:Disconnect() end)
-        questWatcherConnection = nil
+    zeroDelayFields(state, richObject, 0, {})
+
+    if richObject.Overflown ~= nil then
+        rememberField(state, richObject, "Overflown", richObject.Overflown)
+        pcall(function() richObject.Overflown = true end)
+    end
+
+    if richObject.OverflowPickupIndex ~= nil then
+        local old = richObject.OverflowPickupIndex
+        rememberField(state, richObject, "OverflowPickupIndex", old)
+        local len = 9999
+        pcall(function() len = math.max(9999, #(tostring(richObject.Text or "")) + 8) end)
+        pcall(function() richObject.OverflowPickupIndex = len end)
+    end
+
+    if type(richObject.Animate) == "function" and not state.animateSeen[richObject] then
+        state.animateSeen[richObject] = true
+        table.insert(state.animatePatches, {tbl = richObject, value = richObject.Animate})
+        pcall(function()
+            richObject.Animate = function(...) return true end
+        end)
     end
 end
 
-return CombatFarm
+local function patchSmallConstants(state, fn)
+    if type(_rawSetConstant) ~= "function" or type(_rawGetConstants) ~= "function" then return end
+    if state.constantScanned[fn] then return end
+    state.constantScanned[fn] = true
+    local ok, constants = pcall(_rawGetConstants, fn)
+    if not ok or type(constants) ~= "table" then return end
+
+    for index, value in pairs(constants) do
+        if type(index) == "number" and type(value) == "number"
+            and value > 0 and value <= FINAL_SMALL_CONSTANT_MAX then
+            rememberConstant(state, fn, index, value)
+            if pcall(_rawSetConstant, fn, index, 0) then
+                state.constantsZeroed = state.constantsZeroed + 1
+            end
+        end
+    end
+end
+
+local function installFastDialogueWait(state)
+    local fn = findLiveDialogueType()
+    if type(fn) ~= "function" then return false end
+
+    local exists, originalWait = getIndexedUpvalue(fn, 2)
+    if not exists or type(originalWait) ~= "function" then return false end
+
+    local fastWait = function(_)
+        return task.wait()
+    end
+    local ok = pcall(_rawSetupvalue, fn, 2, fastWait)
+    if not ok then return false end
+
+    state.waitPatch = {fn = fn, value = originalWait}
+    return true
+end
+
+local function findClickContinue(dialogueGui)
+    if not dialogueGui then return nil end
+    local frame = dialogueGui:FindFirstChild("Frame") or dialogueGui:FindFirstChildWhichIsA("Frame")
+    if not frame then return nil end
+
+    local direct = frame:FindFirstChild("ClickContinue", true)
+    if direct and direct:IsA("GuiButton") then return direct end
+
+    for _, obj in ipairs(frame:GetDescendants()) do
+        if obj:IsA("GuiButton") then
+            local lowered = tostring(obj.Name):lower()
+            if lowered:find("continue", 1, true) then return obj end
+        end
+    end
+    return nil
+end
+
+local function fireButtonSignal(button, state)
+    if not button then return false end
+    local signal = nil
+    pcall(function() signal = button.MouseButton1Click end)
+    if not signal then pcall(function() signal = button.Activated end) end
+    if not signal then return false end
+
+    if type(_rawFireSignal) == "function" and pcall(_rawFireSignal, signal) then
+        state.signalFires = state.signalFires + 1
+        return true
+    end
+
+    if type(_rawGetConnections) == "function" then
+        local ok, conns = pcall(_rawGetConnections, signal)
+        if ok and type(conns) == "table" then
+            for _, conn in pairs(conns) do
+                local fn = nil
+                pcall(function() fn = conn.Function end)
+                if type(fn) == "function" and pcall(fn) then return true end
+            end
+        end
+    end
+    return false
+end
+
+local function findAdvanceClosureFromClickContinue(state)
+    local button = state and state.clickContinue
+    if not button or type(_rawGetConnections) ~= "function" then return nil end
+
+    local signals = {}
+    pcall(function() signals[#signals + 1] = button.MouseButton1Click end)
+    pcall(function() signals[#signals + 1] = button.Activated end)
+
+    for _, signal in ipairs(signals) do
+        if signal then
+            local ok, conns = pcall(_rawGetConnections, signal)
+            if ok and type(conns) == "table" then
+                for _, conn in pairs(conns) do
+                    local fn = nil
+                    pcall(function() fn = conn.Function end)
+                    if looksLikeAdvanceClosure(fn) then
+                        state.connectionClosureHits = (state.connectionClosureHits or 0) + 1
+                        local _, line = functionSourceLine(fn)
+                        _fingerprint.advanceClosureLine = line
+                        return fn
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function findFresh1982Closure(state)
+    -- Reuse the active closure for this stage first.
+    if state and type(state.active1982) == "function" and looksLikeAdvanceClosure(state.active1982) then
+        return state.active1982
+    end
+
+    -- Preferred path: ask ClickContinue for its live callback. If the executor
+    -- exposes the active closure here, this avoids an expensive getgc(true) scan.
+    if state then
+        local direct = findAdvanceClosureFromClickContinue(state)
+        if direct then
+            state.active1982 = direct
+            return direct
+        end
+    end
+
+    if type(_rawGetGC) ~= "function" then return nil end
+
+    local now = tick()
+    if state and (now - (state.lastGCScan or 0)) < FINAL_GC_RESCAN_INTERVAL then
+        return nil
+    end
+    if state then
+        state.lastGCScan = now
+        state.gcScans = (state.gcScans or 0) + 1
+    end
+
+    local ok, objects = pcall(_rawGetGC, true)
+    if not ok or type(objects) ~= "table" then return nil end
+
+    local best, fallback = nil, nil
+    local bestTimestamp = -math.huge
+
+    for _, obj in pairs(objects) do
+        if type(obj) == "function" and looksLikeAdvanceClosure(obj) then
+            fallback = fallback or obj
+            local exists, timestamp = getIndexedUpvalue(obj, 1)
+            if exists and type(timestamp) == "number" and timestamp > bestTimestamp then
+                bestTimestamp = timestamp
+                best = obj
+            end
+        end
+    end
+
+    local found = best or fallback
+    if found then
+        local _, line = functionSourceLine(found)
+        _fingerprint.advanceClosureLine = line
+        if line and line ~= 1982 and not _fingerprint.warnedAdvanceMismatch then
+            _fingerprint.warnedAdvanceMismatch = true
+            moduleLog("WARN", "[Inventory][Fingerprint] Dialogue advance closure moved from line 1982 to " .. tostring(line) .. "; structural fingerprint still matches.")
+        end
+    end
+    if state then state.active1982 = found end
+    return found
+end
+
+local function patchAndInvoke1982(state)
+    local fn = findFresh1982Closure(state)
+    if type(fn) ~= "function" then return false end
+
+    local hasTimestamp, timestamp = getIndexedUpvalue(fn, 1)
+    if hasTimestamp and type(timestamp) == "number" then
+        rememberUpvalue(state, fn, 1, timestamp)
+        pcall(_rawSetupvalue, fn, 1, -1e9)
+    end
+
+    local hasRich, richObject = getIndexedUpvalue(fn, 4)
+    if hasRich and type(richObject) == "table" then
+        patchRichObject(state, richObject)
+    end
+
+    patchSmallConstants(state, fn)
+    pcall(fn)
+    state.direct1982Calls = state.direct1982Calls + 1
+    return true
+end
+
+local function forceDialogueAdvance(dialogueGui, state)
+    if not dialogueGui then return end
+    suppressDialogueRendering()
+
+    local clickContinue = state.clickContinue
+    if not clickContinue or not clickContinue.Parent then
+        clickContinue = findClickContinue(dialogueGui)
+        state.clickContinue = clickContinue
+    end
+    if clickContinue then fireButtonSignal(clickContinue, state) end
+    patchAndInvoke1982(state)
+end
+
+local function waitForFinalStage(previousSignature, timeout, state)
+    local deadline = tick() + (timeout or 1.35)
+    local loops = 0
+
+    while tick() < deadline do
+        loops = loops + 1
+        local gui = getDialogueGui()
+        if gui then
+            suppressDialogueRendering()
+            local sig = select(1, getDialogueStateSignature())
+            if sig ~= "" and sig ~= previousSignature then
+                return gui, sig, loops
+            end
+            forceDialogueAdvance(gui, state)
+        end
+        task.wait(FINAL_FORCE_INTERVAL)
+    end
+    return nil, nil, loops
+end
+
+local function restoreFinalState(state)
+    for i = #state.animatePatches, 1, -1 do
+        local patch = state.animatePatches[i]
+        pcall(function() patch.tbl.Animate = patch.value end)
+    end
+    for i = #state.fieldPatches, 1, -1 do
+        local patch = state.fieldPatches[i]
+        pcall(function() patch.tbl[patch.key] = patch.value end)
+    end
+    if type(_rawSetConstant) == "function" then
+        for i = #state.constantPatches, 1, -1 do
+            local patch = state.constantPatches[i]
+            pcall(_rawSetConstant, patch.fn, patch.index, patch.value)
+        end
+    end
+    for i = #state.upvaluePatches, 1, -1 do
+        local patch = state.upvaluePatches[i]
+        pcall(_rawSetupvalue, patch.fn, patch.index, patch.value)
+    end
+    if state.waitPatch then
+        pcall(_rawSetupvalue, state.waitPatch.fn, 2, state.waitPatch.value)
+    end
+end
+
+-- Proven current route:
+--   Merchant prompt -> force ClickContinue/1982 -> Option1 -> Option1 -> Option6.
+-- The visible GUI stays hidden. On Delta this completed in ~0.70s in testing.
+local function tryFinalMerchantSell(itemName, merchantPrompt)
+    if not hasFinalZeroDelaySupport() then
+        return false, 0, "FINAL APIs unsupported"
+    end
+
+    local before = Inventory:Count(itemName)
+    if before <= 0 then return true, 0 end
+
+    local tool = equipSellTool(itemName)
+    if not tool then return false, 0, "could not equip item" end
+
+    -- Important: the Merchant validates that the Tool is actually held.
+    local char = Player.Character
+    local equipDeadline = tick() + 0.35
+    while tick() < equipDeadline and tool.Parent ~= char do
+        task.wait()
+    end
+    if tool.Parent ~= char then
+        return false, 0, "item was not held by character"
+    end
+    task.wait(0.08)
+
+    closeDialogueIfOpen()
+    restoreDialogueRendering()
+
+    local state = newFinalState()
+    local startedAt = tick()
+    installFastDialogueWait(state)
+
+    local okRun, soldAmount, reason = xpcall(function()
+        local opened = pcall(function() fireproximityprompt(merchantPrompt) end)
+        if not opened then return 0, "Merchant prompt failed" end
+
+        if not waitForDialogueGuiHidden(1.0) then
+            return 0, "DialogueGui did not appear"
+        end
+
+        local desired = {"Option1", "Option1", "Option6"}
+        local previousSignature = nil
+
+        for stage, optionName in ipairs(desired) do
+            local _, signature, loops = waitForFinalStage(previousSignature, 1.35, state)
+            if not signature then
+                return 0, "stage " .. tostring(stage) .. " timed out"
+            end
+
+            local selected, selectReason = injectDialogueOption(optionName)
+            if not selected then
+                return 0, "stage " .. tostring(stage) .. " injection failed: " .. tostring(selectReason)
+            end
+            previousSignature = signature
+
+            -- The next dialogue page creates a new line-1982 closure. Drop only
+            -- this tiny cache so the next stage performs one fresh GC discovery.
+            state.active1982 = nil
+            state.lastGCScan = 0
+        end
+
+        local verifyDeadline = tick() + 0.55
+        while tick() < verifyDeadline do
+            local now = Inventory:Count(itemName)
+            if now < before then
+                task.wait(0.03)
+                return before - Inventory:Count(itemName), nil
+            end
+            task.wait(0.02)
+        end
+
+        return 0, "dialogue completed but inventory did not change"
+    end, function(err)
+        return tostring(err)
+    end)
+
+    restoreFinalState(state)
+    closeDialogueIfOpen()
+    restoreDialogueRendering()
+
+    if not okRun then
+        return false, 0, soldAmount
+    end
+
+    if soldAmount and soldAmount > 0 then
+        moduleLog("INFO", string.format(
+            "[Inventory][ZeroDelay] ✅ Sold %dx %s in %.3fs | signals=%d direct1982=%d connClosure=%d rich=%d constants=%d gcScans=%d",
+            soldAmount, itemName, tick() - startedAt, state.signalFires, state.direct1982Calls,
+            state.connectionClosureHits or 0, state.richObjects, state.constantsZeroed, state.gcScans or 0
+        ))
+        return true, soldAmount
+    end
+
+    return false, 0, reason or "no progress"
+end
+
+-- Original internal state route retained as the first compatibility fallback.
+local function tryInternalMerchantSell(itemName, merchantPrompt)
+    if not hasInternalDialogueStateSupport() then
+        return false, 0, "setupvalue/getconnections unsupported"
+    end
+
+    local before = Inventory:Count(itemName)
+    if before <= 0 then return true, 0 end
+
+    local tool = equipSellTool(itemName)
+    if not tool then return false, 0, "could not equip item" end
+
+    closeDialogueIfOpen()
+    restoreDialogueRendering()
+
+    local opened = pcall(function() fireproximityprompt(merchantPrompt) end)
+    if not opened then return false, 0, "Merchant prompt failed" end
+
+    if not waitForDialogueGuiHidden(1.8) then
+        return false, 0, "DialogueGui did not appear"
+    end
+
+    local desired = {"Option1", "Option1", "Option6"}
+    local previousSignature = nil
+
+    for stage, optionName in ipairs(desired) do
+        local deadline = tick() + (stage == 1 and 3.0 or 1.2)
+        local sig = nil
+        while tick() < deadline do
+            suppressDialogueRendering()
+            local current = select(1, getDialogueStateSignature())
+            if current ~= "" and current ~= previousSignature then
+                sig = current
+                break
+            end
+            task.wait(0.01)
+        end
+
+        if not sig then
+            restoreDialogueRendering()
+            return false, 0, "stage " .. tostring(stage) .. " timed out"
+        end
+
+        local ok, reason = injectDialogueOption(optionName)
+        if not ok then
+            restoreDialogueRendering()
+            return false, 0, "stage " .. tostring(stage) .. " injection failed: " .. tostring(reason)
+        end
+        previousSignature = sig
+    end
+
+    local deadline = tick() + 0.8
+    while tick() < deadline do
+        local now = Inventory:Count(itemName)
+        if now < before then
+            task.wait(0.05)
+            local final = Inventory:Count(itemName)
+            closeDialogueIfOpen()
+            restoreDialogueRendering()
+            return true, before - final
+        end
+        task.wait(0.02)
+    end
+
+    closeDialogueIfOpen()
+    restoreDialogueRendering()
+    return false, 0, "dialogue advanced but inventory did not change"
+end
+
+local DIRECT_SELL_ARGS = {
+    NPC = "Merchant",
+    Dialogue = "Dialogue5",
+    Option = "Option1",
+}
+
+local function getCharacterRemoteEvent()
+    local char = Player.Character
+    return char and char:FindFirstChild("RemoteEvent") or nil
+end
+
+equipSellTool = function(itemName)
+    local char = Player.Character
+    local hum = char and char:FindFirstChildWhichIsA("Humanoid")
+    if not hum then return nil end
+
+    local tool = Player.Backpack:FindFirstChild(itemName)
+    if not tool and char then
+        tool = char:FindFirstChild(itemName)
+    end
+    if not tool then return nil end
+
+    if tool.Parent == Player.Backpack then
+        local ok = pcall(function() hum:EquipTool(tool) end)
+        if not ok then return nil end
+        task.wait(0.08)
+    end
+
+    local deadline = tick() + 0.35
+    while tool.Parent ~= char and tick() < deadline do
+        task.wait()
+    end
+    if tool.Parent ~= char then return nil end
+
+    return tool
+end
+
+-- Attempts to sell the equipped item without ever opening Merchant UI.
+-- Returns:
+--   true, soldAmount   -> direct server call worked
+--   false, 0           -> no inventory progress; caller should use UI fallback
+local function tryDirectMerchantSell(itemName)
+    local before = Inventory:Count(itemName)
+    if before <= 0 then return true, 0 end
+
+    local tool = equipSellTool(itemName)
+    if not tool then
+        return false, 0
+    end
+
+    local remoteEvent = getCharacterRemoteEvent()
+    if not remoteEvent then
+        moduleLog("WARN", "[Inventory][DirectSell] Character RemoteEvent not found.")
+        return false, 0
+    end
+
+    -- The pre-1.7974 Merchant used this exact action. Some current YBA systems
+    -- still keep server compatibility even though the visible dialogue changed.
+    -- Try twice only when the first packet makes no progress, then stop and let
+    -- the new dialogue fallback handle it.
+    for attempt = 1, 2 do
+        local fired = pcall(function()
+            remoteEvent:FireServer("EndDialogue", {
+                NPC = DIRECT_SELL_ARGS.NPC,
+                Dialogue = DIRECT_SELL_ARGS.Dialogue,
+                Option = DIRECT_SELL_ARGS.Option,
+            })
+        end)
+
+        if not fired then
+            return false, 0
+        end
+
+        local deadline = tick() + 0.35
+        while tick() < deadline do
+            local now = Inventory:Count(itemName)
+            if now < before then
+                -- Give the server one tiny replication window; on the old route
+                -- a single call normally removes the whole stack immediately.
+                task.wait(0.04)
+                local final = Inventory:Count(itemName)
+                return true, before - final
+            end
+            task.wait(0.025)
+        end
+    end
+
+    return false, 0
+end
+
+local function sellItemViaDialogueFallback(itemName, merchantPrompt, fastMode)
+    local initialCount = Inventory:Count(itemName)
+    local currentCount = initialCount
+    local attempts = 0
+
+    while currentCount > 0 and attempts < 4 and not Inventory:IsMoneyMaxed() do
+        attempts = attempts + 1
+
+        local tool = equipSellTool(itemName)
+        if not tool then break end
+
+        closeDialogueIfOpen()
+        restoreDialogueRendering()
+
+        if fastMode then
+            suppressDialogueRendering()
+        end
+
+        local opened = pcall(function()
+            fireproximityprompt(merchantPrompt)
+        end)
+        if not opened then
+            moduleLog("WARN", "[Inventory] Could not trigger Merchant prompt for " .. itemName)
+            break
+        end
+
+        task.wait(fastMode and 0.06 or 0.45)
+
+        local beforeAttempt = Inventory:Count(itemName)
+        local dialogueWorked = runMerchantSellDialogue(itemName, beforeAttempt, fastMode)
+        task.wait(fastMode and 0.12 or 0.75)
+
+        local afterAttempt = Inventory:Count(itemName)
+
+        if fastMode and afterAttempt >= beforeAttempt then
+            moduleLog("WARN", "[Inventory] Hidden dialogue made no progress for " .. itemName
+                .. " — retrying with visible dialogue fallback.")
+            restoreDialogueRendering()
+            closeDialogueIfOpen()
+            task.wait(0.15)
+
+            local reopened = pcall(function()
+                fireproximityprompt(merchantPrompt)
+            end)
+            if reopened then
+                task.wait(0.4)
+                dialogueWorked = runMerchantSellDialogue(itemName, beforeAttempt, false)
+                task.wait(0.65)
+                afterAttempt = Inventory:Count(itemName)
+            end
+        end
+
+        if afterAttempt < beforeAttempt then
+            moduleLog("INFO", "[Inventory] Sold " .. tostring(beforeAttempt - afterAttempt) .. "x " .. itemName
+                .. " through dialogue fallback (remaining: " .. tostring(afterAttempt) .. ")")
+        elseif dialogueWorked then
+            local deadline = tick() + 1.5
+            while tick() < deadline and Inventory:Count(itemName) >= beforeAttempt do
+                task.wait(0.1)
+            end
+            afterAttempt = Inventory:Count(itemName)
+        end
+
+        currentCount = Inventory:Count(itemName)
+        if currentCount >= beforeAttempt then
+            moduleLog("WARN", "[Inventory] Merchant dialogue made no inventory progress for: " .. itemName)
+            closeDialogueIfOpen()
+            restoreDialogueRendering()
+            break
+        end
+
+        closeDialogueIfOpen()
+        restoreDialogueRendering()
+        task.wait(fastMode and 0.06 or 0.25)
+    end
+
+    return Inventory:Count(itemName) < initialCount, initialCount - Inventory:Count(itemName)
+end
+
+-- =====================
+-- SELL ALL
+-- 1) Internal Merchant state injection: hidden Option1 > Option1 > Option6.
+-- 2) If unsupported/failed, use adaptive DialogueGui fallback.
+-- =====================
+function Inventory:SellAll()
+    if not _config:Get("FarmEnabled") then return end
+    if self:IsMoneyMaxed() then
+        moduleLog("INFO", "[Inventory] Money already maxed — skipping sell.")
+        return
+    end
+    if not _config:Get("AutoSell") then
+        moduleLog("INFO", "[Inventory] AutoSell disabled — skipping sell.")
+        return
+    end
+
+    local sellItems = _config:GetSellItems()
+    local toSell = {}
+
+    for name, sell in pairs(sellItems) do
+        if sell and self:Count(name) > 0 then
+            table.insert(toSell, name)
+        end
+    end
+
+    if #toSell == 0 then
+        moduleLog("INFO", "[Inventory] No items to sell.")
+        return
+    end
+
+    table.sort(toSell)
+    moduleLog("INFO", "[Inventory] Selling " .. #toSell .. " item type(s)...")
+
+    local soldTypes = 0
+    local failedTypes = 0
+    local merchantPrompt = findMerchantPrompt()
+    local zeroDelaySupported = hasFinalZeroDelaySupport()
+    local internalSupported = hasInternalDialogueStateSupport()
+    local fallbackFastMode = hasInternalClickSupport()
+
+    if zeroDelaySupported then
+        moduleLog("INFO", "[Inventory][ZeroDelay] FINAL Merchant route available — target is sub-1s hidden selling.")
+    elseif internalSupported then
+        moduleLog("WARN", "[Inventory][ZeroDelay] FINAL APIs unavailable — using proven hidden internal Option1 > Option1 > Option6 fallback.")
+    else
+        moduleLog("WARN", "[Inventory][ZeroDelay] Internal APIs unavailable — using adaptive dialogue fallback.")
+    end
+
+    for _, itemName in ipairs(toSell) do
+        if self:IsMoneyMaxed() then
+            moduleLog("INFO", "[Inventory] Money reached max while selling — stopping.")
+            break
+        end
+
+        local initialCount = self:Count(itemName)
+        local finalCount = initialCount
+
+        -- 1) FINAL zero-delay route discovered by MerchantAnalyzer_FINAL.
+        if zeroDelaySupported and merchantPrompt then
+            local ok, sold, reason = tryFinalMerchantSell(itemName, merchantPrompt)
+            finalCount = self:Count(itemName)
+            if ok and sold > 0 then
+                moduleLog("INFO", "[Inventory][ZeroDelay] Sold " .. tostring(sold) .. "x " .. itemName
+                    .. " with FINAL route (remaining: " .. tostring(finalCount) .. ").")
+            else
+                moduleLog("WARN", "[Inventory][ZeroDelay] FINAL route made no confirmed progress for " .. itemName
+                    .. " — " .. tostring(reason or "unknown reason") .. ". Falling back.")
+            end
+        end
+
+        -- 2) Proven internal Option1 -> Option1 -> Option6 route.
+        if finalCount >= initialCount and internalSupported and merchantPrompt then
+            local ok, sold, reason = tryInternalMerchantSell(itemName, merchantPrompt)
+            finalCount = self:Count(itemName)
+            if ok and sold > 0 then
+                moduleLog("INFO", "[Inventory][InternalSell] Sold " .. tostring(sold) .. "x " .. itemName
+                    .. " through hidden internal state fallback.")
+            else
+                moduleLog("WARN", "[Inventory][InternalSell] Fallback made no progress for " .. itemName
+                    .. " — " .. tostring(reason or "unknown reason") .. ".")
+            end
+        end
+
+        -- 3) Adaptive DialogueGui driver as final compatibility fallback.
+        if finalCount >= initialCount then
+            if merchantPrompt then
+                local ok, sold = sellItemViaDialogueFallback(itemName, merchantPrompt, fallbackFastMode)
+                finalCount = self:Count(itemName)
+                if ok and sold > 0 then
+                    moduleLog("INFO", "[Inventory] Dialogue fallback sold " .. tostring(sold) .. "x " .. itemName .. ".")
+                end
+            else
+                moduleLog("WARN", "[Inventory] Merchant ProximityPrompt not found — cannot sell " .. itemName .. ".")
+            end
+        end
+
+        finalCount = self:Count(itemName)
+        if finalCount < initialCount then
+            soldTypes = soldTypes + 1
+            moduleLog("INFO", "[Inventory] ✅ Sold " .. tostring(initialCount - finalCount) .. "/" .. tostring(initialCount)
+                .. " of " .. itemName)
+        else
+            failedTypes = failedTypes + 1
+            moduleLog("WARN", "[Inventory] ❌ Failed to sell: " .. itemName)
+        end
+
+        task.wait(0.03)
+    end
+
+    closeDialogueIfOpen()
+    restoreDialogueRendering()
+    moduleLog("INFO", "[Inventory] SellAll done — Types sold: " .. soldTypes .. " | Failed: " .. failedTypes)
+end
+
+-- =====================
+-- BUY LUCKY ARROWS
+-- =====================
+function Inventory:BuyLucky()
+    if not _config:Get("FarmEnabled") then return end
+    if not _config:Get("BuyLucky")     then return end
+    if self:Count("Lucky Arrow") >= LUCKY_STOP then return end
+
+    local money = self:GetMoney()
+    if money < 75000 then return end
+
+    moduleLog("INFO", "[Inventory] Buying Lucky Arrows... ($" .. money .. ")")
+    local attempts = 0
+
+    while self:GetMoney() >= 75000 and attempts < 15 do
+        pcall(function()
+            local char = Player.Character
+            if not char then return end
+            local re = char:FindFirstChild("RemoteEvent")
+            if not re then return end
+            re:FireServer("PurchaseShopItem", { ItemName = "1x Lucky Arrow" })
+        end)
+        task.wait(1)
+        attempts = attempts + 1
+
+        local count = self:Count("Lucky Arrow")
+        moduleLog("INFO", "[Inventory] Lucky Arrows: " .. count .. "/" .. LUCKY_STOP)
+
+        if count >= LUCKY_STOP then
+            moduleLog("INFO", "[Inventory] Reached " .. LUCKY_STOP .. " Lucky Arrows — stopping purchase (YBA bug).")
+            break
+        end
+    end
+end
+
+-- =====================
+-- STAND UTILITIES (used by CombatFarm)
+-- =====================
+
+-- Returns the name of the player's currently equipped stand
+function Inventory:GetCurrentStand()
+    if Player and Player.PlayerStats and Player.PlayerStats.Stand then
+        return Player.PlayerStats.Stand.Value
+    end
+    return "None"
+end
+
+-- Returns true if the player has any stand equipped
+-- Generic fast dialogue controller used by CombatFarm and future dialogue-driven modules.
+-- It reuses the same FINAL engine proven by Merchant instead of duplicating RE logic.
+-- The completion callback is checked continuously and ends the loop as soon as the
+-- caller observes its server/client state change. All temporary patches are restored.
+function Inventory:RunFastDialogueOptionLoop(prompt, optionName, isComplete, maxStages, timeout)
+    if not prompt or type(isComplete) ~= "function" then
+        return false, "invalid fast-dialogue arguments"
+    end
+    if not hasFinalZeroDelaySupport() then
+        return false, "FINAL dialogue APIs unsupported"
+    end
+
+    maxStages = math.max(1, tonumber(maxStages) or 8)
+    timeout = math.max(0.5, tonumber(timeout) or 3.0)
+    optionName = tostring(optionName or "Option1")
+
+    closeDialogueIfOpen()
+    restoreDialogueRendering()
+
+    local state = newFinalState()
+    local startedAt = tick()
+    installFastDialogueWait(state)
+
+    local okRun, success, info = xpcall(function()
+        local opened = pcall(function() fireproximityprompt(prompt) end)
+        if not opened then return false, "prompt failed" end
+        if not waitForDialogueGuiHidden(math.min(1.0, timeout)) then
+            return false, "DialogueGui did not appear"
+        end
+
+        local previousSignature = nil
+        local stages = 0
+        local deadline = tick() + timeout
+
+        while tick() < deadline and stages < maxStages do
+            local completeOk, complete = pcall(isComplete)
+            if completeOk and complete then
+                return true, string.format("%.3fs stages=%d gcScans=%d", tick() - startedAt, stages, state.gcScans or 0)
+            end
+
+            local remaining = math.max(0.15, deadline - tick())
+            local _, signature = waitForFinalStage(previousSignature, math.min(0.75, remaining), state)
+            if not signature then
+                local completeOk2, complete2 = pcall(isComplete)
+                if completeOk2 and complete2 then
+                    return true, string.format("%.3fs stages=%d gcScans=%d", tick() - startedAt, stages, state.gcScans or 0)
+                end
+                task.wait(0.02)
+                continue
+            end
+
+            local selected, reason = injectDialogueOption(optionName)
+            if not selected then
+                return false, "option injection failed: " .. tostring(reason)
+            end
+            stages = stages + 1
+            previousSignature = signature
+            state.active1982 = nil
+            state.lastGCScan = 0
+            task.wait(0.01)
+        end
+
+        local completeOk, complete = pcall(isComplete)
+        if completeOk and complete then
+            return true, string.format("%.3fs stages=%d gcScans=%d", tick() - startedAt, stages, state.gcScans or 0)
+        end
+        return false, "completion state not confirmed"
+    end, function(err)
+        return tostring(err)
+    end)
+
+    restoreFinalState(state)
+    closeDialogueIfOpen()
+    restoreDialogueRendering()
+
+    if not okRun then return false, tostring(success) end
+    return success == true, info
+end
+
+-- Fast controller for a DialogueGui that was opened by the game itself (for
+-- example the automatic dialogue shown after finishing a quest). Unlike
+-- RunFastDialogueOptionLoop this does NOT fire a ProximityPrompt and does NOT
+-- close the current DialogueGui before starting. Rendering is suppressed as
+-- soon as the GUI is detected, so the user should not have to watch the page.
+function Inventory:RunFastExistingDialogueOptionLoop(optionName, isComplete, maxStages, timeout)
+    if type(isComplete) ~= "function" then
+        isComplete = function()
+            return getDialogueGui() == nil
+        end
+    end
+    if not hasFinalZeroDelaySupport() then
+        return false, "FINAL dialogue APIs unsupported"
+    end
+
+    maxStages = math.max(1, tonumber(maxStages) or 4)
+    timeout = math.max(0.35, tonumber(timeout) or 1.8)
+    optionName = tostring(optionName or "Option1")
+
+    restoreDialogueRendering()
+
+    local state = newFinalState()
+    local startedAt = tick()
+    installFastDialogueWait(state)
+
+    local okRun, success, info = xpcall(function()
+        if not waitForDialogueGuiHidden(math.min(0.75, timeout)) then
+            return false, "DialogueGui did not appear"
+        end
+
+        local previousSignature = nil
+        local stages = 0
+        local deadline = tick() + timeout
+
+        while tick() < deadline and stages < maxStages do
+            local completeOk, complete = pcall(isComplete)
+            if completeOk and complete then
+                return true, string.format("%.3fs stages=%d gcScans=%d", tick() - startedAt, stages, state.gcScans or 0)
+            end
+
+            local remaining = math.max(0.10, deadline - tick())
+            local _, signature = waitForFinalStage(previousSignature, math.min(0.55, remaining), state)
+            if not signature then
+                local completeOk2, complete2 = pcall(isComplete)
+                if completeOk2 and complete2 then
+                    return true, string.format("%.3fs stages=%d gcScans=%d", tick() - startedAt, stages, state.gcScans or 0)
+                end
+                task.wait(0.01)
+                continue
+            end
+
+            local selected, reason = injectDialogueOption(optionName)
+            if not selected then
+                return false, "option injection failed: " .. tostring(reason)
+            end
+
+            stages = stages + 1
+            previousSignature = signature
+            state.active1982 = nil
+            state.lastGCScan = 0
+            task.wait(0.01)
+        end
+
+        local completeOk, complete = pcall(isComplete)
+        if completeOk and complete then
+            return true, string.format("%.3fs stages=%d gcScans=%d", tick() - startedAt, stages, state.gcScans or 0)
+        end
+        return false, "completion state not confirmed"
+    end, function(err)
+        return tostring(err)
+    end)
+
+    restoreFinalState(state)
+    closeDialogueIfOpen()
+    restoreDialogueRendering()
+
+    if not okRun then return false, tostring(success) end
+    return success == true, info
+end
+
+function Inventory:HasStand()
+    return self:GetCurrentStand() ~= "None"
+end
+
+-- Attempts to summon the stand if it is currently unsummoned.
+-- Returns true if the stand was summoned by this call.
+function Inventory:SummonStand()
+    local char = Player.Character
+    if not char then return false end
+
+    local remoteFunc = char:FindFirstChild("RemoteFunction")
+    if not remoteFunc then return false end
+
+    local summoned = char:FindFirstChild("SummonedStand")
+    if summoned and summoned.Value == false then
+        remoteFunc:InvokeServer("ToggleStand", "Toggle")
+        task.wait(0.3)
+        return true
+    end
+
+    return false
+end
+
+function Inventory:GetDialogueDiagnostics()
+    return {
+        Build = "ZERO-DELAY-2026.09.14-R4-QUEST-FINISH-DIALOGUE",
+        FingerprintChecked = _fingerprint.checked,
+        DialogueTypeDetected = _fingerprint.dialogueType,
+        DialogueTypeLine = _fingerprint.dialogueTypeLine,
+        OptionCallbackLine = _fingerprint.optionCallbackLine,
+        AdvanceClosureLine = _fingerprint.advanceClosureLine,
+        Capabilities = fingerprintSummary(),
+    }
+end
+
+return Inventory
