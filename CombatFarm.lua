@@ -1,7 +1,7 @@
 -- =====================
 -- CombatFarm.lua
 -- Unified combat: NPC and Quest farming.
--- QUEST DIALOGUE BUILD: INTERNAL-OPTION-2026.09.14-R1
+-- QUEST DIALOGUE BUILD: INTERNAL-OPTION-2026.09.14-R2-DYNAMIC-QUESTS
 -- Logic identical to Xenon V5 (stand positioning, attacks, death detection).
 -- FIXED: player positioned underground (yOffset -35) with noclip for safety.
 -- =====================
@@ -30,13 +30,27 @@ local questOnCooldown = false
 local cooldownUntil = 0
 
 local questInfo = {
-    ["Officer Sam [Lvl. 1+]"] = { enemy = "Thug" },
-    ["Deputy Bertrude [Lvl. 10+]"] = { enemy = "Corrupt Police" },
-    ["Homeless Man Jill [Lvl. 15+]"] = { item = "Gold Coin", amount = 10 },
-    ["Dracula [Lvl. 20+]"] = { enemy = "Zombie Henchman" },
-    ["William Zeppeli [Lvl. 25+]"] = { enemy = "Vampire" },
-    ["Doppio [Lvl. 30+]"] = { enemy = "Dio" },
-    ["Dio [Lvl. 35+]"] = { enemy = "Jotaro" },
+    ["Officer Sam [Lvl. 1+]"] = { enemy = "Thug", autoChoose = true },
+    ["Deputy Bertrude [Lvl. 10+]"] = { enemy = "Corrupt Police", autoChoose = true },
+
+    -- The current game uses this no-dot level format. DialogueAnalyzer confirmed
+    -- its updated quest dialogue is Option1 -> Option1 -> Option1.
+    ["Abbacchio's Partner [Lvl 15+]"] = { enemy = "Alpha Thug", autoChoose = true },
+    -- Alias retained in case YBA changes only the display punctuation.
+    ["Abbacchio's Partner [Lvl. 15+]"] = { enemy = "Alpha Thug", autoChoose = true },
+
+    -- Fetch/daily quest: selectable manually, but intentionally skipped by Auto Choose.
+    ["Homeless Man Jill [Lvl. 15+]"] = { item = "Gold Coin", amount = 10, autoChoose = false },
+
+    ["Dracula [Lvl. 20+]"] = { enemy = "Zombie Henchman", autoChoose = true },
+    ["William Zeppeli [Lvl. 25+]"] = { enemy = "Vampire", autoChoose = true },
+    ["Doppio [Lvl. 30+]"] = { enemy = "Dio", autoChoose = true },
+    ["Dio [Lvl. 35+]"] = { enemy = "Jotaro", autoChoose = true },
+
+    -- Detected level quests which need their own objective/controller mapping.
+    ["Darius, The Executioner [Lvl. 20+]"] = { special = "PVP_STAND", autoChoose = false },
+    ["Kars [Lvl. 30+]"] = { special = "PVP_HAMON", autoChoose = false },
+    ["Pucci [Lvl. 40+]"] = { special = "PUCCI_CHAIN", autoChoose = false },
 }
 
 local _runtimeLog = nil
@@ -421,17 +435,29 @@ end
 -- =============================================
 -- QUEST FARM
 -- =============================================
+local function questLevelFromName(name)
+    local n = tostring(name or "")
+    return tonumber(n:match("%[Lvl%.?%s*(%d+)%+%]"))
+        or tonumber(n:match("[Ll]vl%.?%s*(%d+)%+"))
+end
+
 local function getBestQuest()
     local level = Player.PlayerStats.Level.Value
     local best = nil
-    local bestReq = 0
-    for questName, _ in pairs(questInfo) do
-        local lvlStr = string.match(questName, "Lvl%. (%d+)%+")
-        if lvlStr then
-            local req = tonumber(lvlStr)
+    local bestReq = -1
+
+    for questName, data in pairs(questInfo) do
+        if data.autoChoose == true then
+            local req = questLevelFromName(questName)
             if req and req <= level and req > bestReq then
                 bestReq = req
                 best = questName
+            elseif req and req <= level and req == bestReq and best then
+                -- Prefer a quest whose exact dialogue object exists in the current server.
+                local dialogues = workspace:FindFirstChild("Dialogues")
+                if dialogues and dialogues:FindFirstChild(questName) and not dialogues:FindFirstChild(best) then
+                    best = questName
+                end
             end
         end
     end
@@ -747,7 +773,11 @@ local function runQuestFarm(token)
 
     local data = questInfo[currentQuest]
     if not data then
-        moduleLog("WARN", "[CombatFarm] Unknown quest configuration: " .. tostring(currentQuest))
+        moduleLog("WARN", "[CombatFarm] Quest was detected by the UI but its objective is not mapped yet: " .. tostring(currentQuest) .. ". Run DialogueAnalyzer and send the quest log.")
+        return false
+    end
+    if data.special then
+        moduleLog("WARN", "[CombatFarm] Special quest is visible but not automated yet: " .. tostring(currentQuest) .. " (" .. tostring(data.special) .. "). It is excluded from Auto Choose.")
         return false
     end
     if data.enemy then
