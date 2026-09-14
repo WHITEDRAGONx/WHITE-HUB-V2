@@ -1,7 +1,7 @@
 -- =====================
 -- CombatFarm.lua
 -- Unified combat: NPC and Quest farming.
--- QUEST/COMBAT BUILD: R9-FAST-FINISH-CONTINUE-INSTANT-STAND
+-- QUEST/COMBAT BUILD: R12-POST-KILL-DIALOGUE-TRIGGER
 -- Logic identical to Xenon V5 (stand positioning, attacks, death detection).
 -- FIXED: player positioned underground (yOffset -35) with noclip for safety.
 -- =====================
@@ -418,6 +418,7 @@ end
 -- Forward declaration: killTarget waits for QuestProgress credit before the
 -- concrete readQuestState implementation later in this module.
 local readQuestState
+local finishQuestDialogueFast
 
 local function waitToken(seconds, token, expectedMode)
     local deadline = tick() + seconds
@@ -668,8 +669,23 @@ local function killTarget(targetName, token)
     end
 
     if killed and activeMode == "Quest" and isTokenActive(token, "Quest") then
-        local settleDeadline = tick() + 1.25
+        -- IMPORTANT: some leveling quests (notably Dio -> Jotaro) do not update
+        -- QuestProgress until their automatic completion DialogueGui is consumed.
+        -- The old flow waited for PlayerStats first, so RunFastExistingDialogueOptionLoop
+        -- was never reached and the farm deadlocked on "Click to Continue".
+        -- Watch for that GUI immediately after the confirmed kill and clear it using
+        -- the exact ClientFunctions:2088 connection:Fire() path proven by Analyzer R2.
+        local settleDeadline = tick() + 1.50
+        local completionDialogueAttempted = false
         while tick() < settleDeadline and isTokenActive(token, "Quest") do
+            if not completionDialogueAttempted
+                and type(finishQuestDialogueFast) == "function"
+                and Player.PlayerGui:FindFirstChild("DialogueGui") then
+                completionDialogueAttempted = true
+                moduleLog("INFO", "[CombatFarm][FastDialogue] Post-kill DialogueGui detected before QuestProgress update; clearing immediately.")
+                finishQuestDialogueFast(token)
+            end
+
             local progress, maxProgress = readQuestState()
             if progress ~= questProgressBefore
                 or maxProgress ~= questMaxBefore
@@ -679,7 +695,7 @@ local function killTarget(targetName, token)
                 ))
                 break
             end
-            task.wait(0.05)
+            task.wait(0.01)
         end
     elseif killed then
         task.wait(0.15)
@@ -1139,7 +1155,7 @@ end
 -- objective is complete. DialogueAnalyzer mapped Dio/Jotaro's final page as
 -- Option1 = "Very well." using the same ClientFunctions:2063 callback used by
 -- Merchant and quest acceptance. Hide and clear it before re-taking the quest.
-local function finishQuestDialogueFast(token)
+finishQuestDialogueFast = function(token)
     if not _inventory or type(_inventory.RunFastExistingDialogueOptionLoop) ~= "function" then
         return false
     end
