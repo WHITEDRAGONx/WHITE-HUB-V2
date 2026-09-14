@@ -1,130 +1,153 @@
 -- =====================
--- ServerHop.lua
+-- ServerHop.lua (WHITE HUB V3)
 -- Handles server hopping and auto rejoin.
--- Credit: https://github.com/Vcsk/RobloxScripts/blob/main/ServerHop.lua
 -- =====================
 
-local HttpService     = game:GetService("HttpService")
-local TeleportService = game:GetService("TeleportService")
-local CoreGui         = game:GetService("CoreGui")
-local Players         = game:GetService("Players")
+local HttpService      = game:GetService("HttpService")
+local TeleportService  = game:GetService("TeleportService")
+local CoreGui          = game:GetService("CoreGui")
+local Players          = game:GetService("Players")
 
 local Player  = Players.LocalPlayer
 local PlaceID = game.PlaceId
 
 local ServerHop = {}
 local _movement = nil
-local _config   = nil
+local _config = nil
+local _kickConnection = nil
 
-local AllIDs        = {}
+local AllIDs = {}
 local foundAnything = ""
-local actualHour    = os.date("!*t").hour
+local actualHour = os.date("!*t").hour
 
 local fileOk = pcall(function()
-    AllIDs = HttpService:JSONDecode(readfile("NotSameServers.json"))
+    if type(readfile) == "function" then
+        AllIDs = HttpService:JSONDecode(readfile("NotSameServers.json"))
+    end
 end)
-if not fileOk then
-    table.insert(AllIDs, actualHour)
+if not fileOk or type(AllIDs) ~= "table" then
+    AllIDs = { actualHour }
     pcall(function()
-        writefile("NotSameServers.json", HttpService:JSONEncode(AllIDs))
+        if type(writefile) == "function" then
+            writefile("NotSameServers.json", HttpService:JSONEncode(AllIDs))
+        end
     end)
 end
 
+local function saveIds()
+    pcall(function()
+        if type(writefile) == "function" then
+            writefile("NotSameServers.json", HttpService:JSONEncode(AllIDs))
+        end
+    end)
+end
+
+local function resetHourlyCacheIfNeeded()
+    if tonumber(AllIDs[1]) ~= tonumber(actualHour) then
+        AllIDs = { actualHour }
+        pcall(function()
+            if type(delfile) == "function" then delfile("NotSameServers.json") end
+        end)
+        saveIds()
+    end
+end
+
 local function TPReturner()
-    local Site
-    if foundAnything == "" then
-        Site = HttpService:JSONDecode(game:HttpGet(
-            "https://games.roblox.com/v1/games/" .. PlaceID .. "/servers/Public?sortOrder=Asc&limit=100"
-        ))
-    else
-        Site = HttpService:JSONDecode(game:HttpGet(
-            "https://games.roblox.com/v1/games/" .. PlaceID .. "/servers/Public?sortOrder=Asc&limit=100&cursor=" .. foundAnything
-        ))
+    resetHourlyCacheIfNeeded()
+
+    local url = "https://games.roblox.com/v1/games/" .. PlaceID .. "/servers/Public?sortOrder=Asc&limit=100"
+    if foundAnything ~= "" then
+        url = url .. "&cursor=" .. foundAnything
     end
 
-    if Site.nextPageCursor and Site.nextPageCursor ~= "null" and Site.nextPageCursor ~= nil then
+    local Site = HttpService:JSONDecode(game:HttpGet(url))
+    if Site.nextPageCursor and Site.nextPageCursor ~= "null" then
         foundAnything = Site.nextPageCursor
     end
 
-    local ID  = ""
-    local num = 0
-
-    for _, v in pairs(Site.data) do
-        local Possible = true
-        ID = tostring(v.id)
-
-        if tonumber(v.maxPlayers) > tonumber(v.playing) then
-            for _, Existing in pairs(AllIDs) do
-                if num ~= 0 then
-                    if ID == tostring(Existing) then Possible = false end
-                else
-                    if tonumber(actualHour) ~= tonumber(Existing) then
-                        pcall(function()
-                            delfile("NotSameServers.json")
-                            AllIDs = {}
-                            table.insert(AllIDs, actualHour)
-                        end)
-                    end
+    for _, server in ipairs(Site.data or {}) do
+        local id = tostring(server.id)
+        if tonumber(server.maxPlayers) > tonumber(server.playing) then
+            local seen = false
+            for i = 2, #AllIDs do
+                if tostring(AllIDs[i]) == id then
+                    seen = true
+                    break
                 end
-                num = num + 1
             end
 
-            if Possible == true then
-                table.insert(AllIDs, ID)
-                task.wait()
-                pcall(function()
-                    writefile("NotSameServers.json", HttpService:JSONEncode(AllIDs))
-                    task.wait()
-                    TeleportService:TeleportToPlaceInstance(PlaceID, ID, Player)
-                end)
-                task.wait(4)
+            if not seen then
+                table.insert(AllIDs, id)
+                saveIds()
+                TeleportService:TeleportToPlaceInstance(PlaceID, id, Player)
+                return true
             end
         end
     end
+    return false
 end
 
 function ServerHop:Init(Modules)
     _movement = Modules.Movement
-    _config   = Modules.Config
+    _config = Modules.Config
+
+    if _kickConnection then
+        pcall(function() _kickConnection:Disconnect() end)
+    end
+
+    _kickConnection = CoreGui.DescendantAdded:Connect(function(child)
+        if child.Name ~= "ErrorPrompt" then return end
+        local grabError = child:FindFirstChild("ErrorMessage", true)
+        if not grabError then return end
+
+        task.spawn(function()
+            local deadline = tick() + 5
+            while grabError.Parent and grabError.Text == "Label" and tick() < deadline do
+                task.wait(0.1)
+            end
+            if not grabError.Parent then return end
+            print("[ServerHop] Kick detected: " .. tostring(grabError.Text) .. " — Rejoining...")
+            task.wait(1)
+            ServerHop:Rejoin()
+        end)
+    end)
 end
 
 function ServerHop:Hop()
-    -- If StayInPrivateServer is ON, skip hopping completely
     if _config and _config:Get("StayInPrivateServer") then
-        print("[ServerHop] StayInPrivateServer is ON – skipping hop.")
-        return
+        print("[ServerHop] StayInPrivateServer is ON — skipping hop.")
+        return false
     end
 
     print("[ServerHop] Hopping to a new server...")
-    pcall(function()
-        TPReturner()
-        if foundAnything ~= "" then
-            TPReturner()
-        end
+    local ok, result = pcall(function()
+        if TPReturner() then return true end
+        if foundAnything ~= "" then return TPReturner() end
+        return false
     end)
+
     if _movement then
-        task.wait(3)
-        _movement:FixCamera()
+        task.delay(3, function() _movement:FixCamera() end)
     end
+
+    if not ok then warn("[ServerHop] Hop failed: " .. tostring(result)) end
+    return ok and result == true
 end
 
 function ServerHop:Rejoin()
     print("[ServerHop] Rejoining game...")
-    pcall(function()
+    local ok, err = pcall(function()
         TeleportService:Teleport(PlaceID, Player)
     end)
+    if not ok then warn("[ServerHop] Rejoin failed: " .. tostring(err)) end
+    return ok
 end
 
-CoreGui.DescendantAdded:Connect(function(child)
-    if child.Name == "ErrorPrompt" then
-        local grabError = child:FindFirstChild("ErrorMessage", true)
-        if grabError then
-            repeat task.wait() until grabError.Text ~= "Label"
-            print("[ServerHop] Kick detected: " .. grabError.Text .. " — Rejoining...")
-            task.wait(1)
-            ServerHop:Rejoin()
-        end
+function ServerHop:Destroy()
+    if _kickConnection then
+        pcall(function() _kickConnection:Disconnect() end)
+        _kickConnection = nil
     end
-end)
+end
 
 return ServerHop
