@@ -1,7 +1,7 @@
 -- =====================
 -- CombatFarm.lua
 -- Unified combat: NPC and Quest farming.
--- QUEST/COMBAT BUILD: R14-TURNIN-PROMPT
+-- QUEST/COMBAT BUILD: R15-EXACT-TEST-ALL
 -- Logic identical to Xenon V5 (stand positioning, attacks, death detection).
 -- FIXED: player positioned underground (yOffset -35) with noclip for safety.
 -- =====================
@@ -1183,7 +1183,7 @@ end
 -- Merchant and quest acceptance. Hide and clear it before re-taking the quest.
 runPromptDialogueFast = function(prompt, token, isComplete, waitTimeout, label)
     if not prompt then return false, "missing ProximityPrompt" end
-    if not _inventory or type(_inventory.RunFastExistingDialogueOptionLoop) ~= "function" then
+    if not _inventory or (type(_inventory.RunDialogueTestAll) ~= "function" and type(_inventory.RunFastExistingDialogueOptionLoop) ~= "function") then
         return false, "fast existing-dialogue controller unavailable"
     end
 
@@ -1200,10 +1200,16 @@ runPromptDialogueFast = function(prompt, token, isComplete, waitTimeout, label)
             if stale:IsA("ScreenGui") then stale.Enabled = false end
         end)
         local staleRef = stale
-        local staleOk = _inventory:RunFastExistingDialogueOptionLoop("Option1", function()
+        local staleComplete = function()
             local current = playerGui:FindFirstChild("DialogueGui")
             return current == nil or current ~= staleRef
-        end, 10, 2.50)
+        end
+        local staleOk
+        if type(_inventory.RunDialogueTestAll) == "function" then
+            staleOk = select(1, _inventory:RunDialogueTestAll("Option1", staleComplete, 2.50))
+        else
+            staleOk = select(1, _inventory:RunFastExistingDialogueOptionLoop("Option1", staleComplete, 10, 2.50))
+        end
         if not staleOk then
             return false, "stale DialogueGui could not be cleared"
         end
@@ -1271,12 +1277,22 @@ runPromptDialogueFast = function(prompt, token, isComplete, waitTimeout, label)
         end
     end
 
-    local okFast, info = _inventory:RunFastExistingDialogueOptionLoop(
-        "Option1",
-        completionCheck,
-        12,
-        math.max(1.25, waitTimeout)
-    )
+    local okFast, info
+    if type(_inventory.RunDialogueTestAll) == "function" then
+        moduleLog("INFO", ("[CombatFarm][FastDialogue] %s: using exact DialogueAnalyzer TEST ALL engine."):format(label))
+        okFast, info = _inventory:RunDialogueTestAll(
+            "Option1",
+            completionCheck,
+            math.max(1.25, waitTimeout)
+        )
+    else
+        okFast, info = _inventory:RunFastExistingDialogueOptionLoop(
+            "Option1",
+            completionCheck,
+            12,
+            math.max(1.25, waitTimeout)
+        )
+    end
 
     if okFast then
         moduleLog("INFO", ("[CombatFarm][FastDialogue] %s cleared invisibly: %s"):format(label, tostring(info or "fast")))
