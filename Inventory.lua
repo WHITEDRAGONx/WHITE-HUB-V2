@@ -1,7 +1,6 @@
--- Build patch: R11-CONTINUE-SETTLE
 -- =====================
 -- Inventory.lua
--- BUILD: ZERO-DELAY-2026.09.14-R6-DIRECT-CONTINUE
+-- BUILD: ZERO-DELAY-2026.09.14-R2-FINGERPRINT-CACHE
 -- Handles item counting, selling, buying, and keep-item logic.
 -- Updated for YBA's new dialogue system (v1.7974+).
 -- ZERO-DELAY build: proven Merchant FINAL path (~0.70s) with safe restoration and fallbacks.
@@ -1063,79 +1062,28 @@ local function findClickContinue(dialogueGui)
 end
 
 local function fireButtonSignal(button, state)
-    if not button then return false, "no-button" end
+    if not button then return false end
     local signal = nil
     pcall(function() signal = button.MouseButton1Click end)
     if not signal then pcall(function() signal = button.Activated end) end
-    if not signal then return false, "no-signal" end
+    if not signal then return false end
 
-    -- Delta exposes the real ClientFunctions:2088 ClickContinue connection.
-    -- Prefer firing/calling that connection directly.  In testing, firesignal can
-    -- return successfully even when the dialogue controller does not consume it,
-    -- which produced a false-positive and left the final quest page open.
+    if type(_rawFireSignal) == "function" and pcall(_rawFireSignal, signal) then
+        state.signalFires = state.signalFires + 1
+        return true
+    end
+
     if type(_rawGetConnections) == "function" then
         local ok, conns = pcall(_rawGetConnections, signal)
         if ok and type(conns) == "table" then
             for _, conn in pairs(conns) do
-                local enabled = true
-                pcall(function()
-                    if conn.Enabled ~= nil then enabled = conn.Enabled end
-                end)
-                if enabled then
-                    local fn = nil
-                    pcall(function() fn = conn.Function end)
-                    local source, line = functionSourceLine(fn)
-                    local isDialogueContinue = type(fn) == "function"
-                        and type(source) == "string"
-                        and source:find("ClientFunctions", 1, true) ~= nil
-                        and (line == 2088 or line ~= nil)
-
-                    if isDialogueContinue then
-                        local fired = false
-                        local connectionFire = nil
-                        pcall(function() connectionFire = conn.Fire end)
-                        if type(connectionFire) == "function" then
-                            fired = pcall(function() conn:Fire() end)
-                            if fired then
-                                state.signalFires = state.signalFires + 1
-                                return true, "connection:Fire line=" .. tostring(line)
-                            end
-                        end
-                        if type(fn) == "function" and pcall(fn) then
-                            state.signalFires = state.signalFires + 1
-                            return true, "connection.Function line=" .. tostring(line)
-                        end
-                    end
-                end
+                local fn = nil
+                pcall(function() fn = conn.Function end)
+                if type(fn) == "function" and pcall(fn) then return true end
             end
         end
     end
-
-    -- Generic executor fallback after the direct connection path.
-    if type(_rawFireSignal) == "function" and pcall(_rawFireSignal, signal) then
-        state.signalFires = state.signalFires + 1
-        return true, "firesignal"
-    end
-
-    return false, "no-working-connection"
-end
-
-local function clickContinueConnectionCount(button)
-    if not button or type(_rawGetConnections) ~= "function" then return 0 end
-    local signal = nil
-    pcall(function() signal = button.MouseButton1Click end)
-    if not signal then return 0 end
-    local ok, conns = pcall(_rawGetConnections, signal)
-    if not ok or type(conns) ~= "table" then return 0 end
-    local count = 0
-    for _, conn in pairs(conns) do
-        local enabled = true
-        pcall(function()
-            if conn.Enabled ~= nil then enabled = conn.Enabled end
-        end)
-        if enabled then count = count + 1 end
-    end
-    return count
+    return false
 end
 
 local function findAdvanceClosureFromClickContinue(state)
@@ -1327,10 +1275,7 @@ local function tryFinalMerchantSell(itemName, merchantPrompt)
     task.wait(0.08)
 
     closeDialogueIfOpen()
-    -- Do not restore rendering here: this controller is specifically for a GUI
-    -- that is already open. Hide it immediately and keep it hidden until the
-    -- dialogue has actually been consumed.
-    suppressDialogueRendering()
+    restoreDialogueRendering()
 
     local state = newFinalState()
     local startedAt = tick()
@@ -1800,220 +1745,6 @@ function Inventory:GetCurrentStand()
 end
 
 -- Returns true if the player has any stand equipped
--- Generic fast dialogue controller used by CombatFarm and future dialogue-driven modules.
--- It reuses the same FINAL engine proven by Merchant instead of duplicating RE logic.
--- The completion callback is checked continuously and ends the loop as soon as the
--- caller observes its server/client state change. All temporary patches are restored.
-function Inventory:RunFastDialogueOptionLoop(prompt, optionName, isComplete, maxStages, timeout)
-    if not prompt or type(isComplete) ~= "function" then
-        return false, "invalid fast-dialogue arguments"
-    end
-    if not hasFinalZeroDelaySupport() then
-        return false, "FINAL dialogue APIs unsupported"
-    end
-
-    maxStages = math.max(1, tonumber(maxStages) or 8)
-    timeout = math.max(0.5, tonumber(timeout) or 3.0)
-    optionName = tostring(optionName or "Option1")
-
-    closeDialogueIfOpen()
-    restoreDialogueRendering()
-
-    local state = newFinalState()
-    local startedAt = tick()
-    installFastDialogueWait(state)
-
-    local okRun, success, info = xpcall(function()
-        local opened = pcall(function() fireproximityprompt(prompt) end)
-        if not opened then return false, "prompt failed" end
-        if not waitForDialogueGuiHidden(math.min(1.0, timeout)) then
-            return false, "DialogueGui did not appear"
-        end
-
-        local previousSignature = nil
-        local stages = 0
-        local deadline = tick() + timeout
-
-        while tick() < deadline and stages < maxStages do
-            local completeOk, complete = pcall(isComplete)
-            if completeOk and complete then
-                return true, string.format("%.3fs stages=%d gcScans=%d", tick() - startedAt, stages, state.gcScans or 0)
-            end
-
-            local remaining = math.max(0.15, deadline - tick())
-            local _, signature = waitForFinalStage(previousSignature, math.min(0.75, remaining), state)
-            if not signature then
-                local completeOk2, complete2 = pcall(isComplete)
-                if completeOk2 and complete2 then
-                    return true, string.format("%.3fs stages=%d gcScans=%d", tick() - startedAt, stages, state.gcScans or 0)
-                end
-                task.wait(0.02)
-                continue
-            end
-
-            local selected, reason = injectDialogueOption(optionName)
-            if not selected then
-                return false, "option injection failed: " .. tostring(reason)
-            end
-            stages = stages + 1
-            previousSignature = signature
-            state.active1982 = nil
-            state.lastGCScan = 0
-            task.wait(0.01)
-        end
-
-        local completeOk, complete = pcall(isComplete)
-        if completeOk and complete then
-            return true, string.format("%.3fs stages=%d gcScans=%d", tick() - startedAt, stages, state.gcScans or 0)
-        end
-        return false, "completion state not confirmed"
-    end, function(err)
-        return tostring(err)
-    end)
-
-    restoreFinalState(state)
-    closeDialogueIfOpen()
-    restoreDialogueRendering()
-
-    if not okRun then return false, tostring(success) end
-    return success == true, info
-end
-
--- Fast controller for a DialogueGui that was opened by the game itself (for
--- example the automatic dialogue shown after finishing a quest). Unlike
--- RunFastDialogueOptionLoop this does NOT fire a ProximityPrompt and does NOT
--- close the current DialogueGui before starting. Rendering is suppressed as
--- soon as the GUI is detected, so the user should not have to watch the page.
-function Inventory:RunFastExistingDialogueOptionLoop(optionName, isComplete, maxStages, timeout)
-    if type(isComplete) ~= "function" then
-        isComplete = function()
-            return getDialogueGui() == nil
-        end
-    end
-    if not hasFinalZeroDelaySupport() then
-        return false, "FINAL dialogue APIs unsupported"
-    end
-
-    maxStages = math.max(1, tonumber(maxStages) or 4)
-    timeout = math.max(0.35, tonumber(timeout) or 1.8)
-    optionName = tostring(optionName or "Option1")
-
-    -- This path starts with a dialogue that is already on screen. Do not
-    -- restore any prior suppressed GUI here; hide the current DialogueGui
-    -- immediately and keep it hidden until the callback chain has finished.
-    suppressDialogueRendering()
-
-    local state = newFinalState()
-    local startedAt = tick()
-    installFastDialogueWait(state)
-
-    local okRun, success, info = xpcall(function()
-        if not waitForDialogueGuiHidden(math.min(0.75, timeout)) then
-            return false, "DialogueGui did not appear"
-        end
-
-        local previousSignature = nil
-        local stages = 0
-        local continueFires = 0
-        local lastContinueFireAt = 0
-        local deadline = tick() + timeout
-
-        while tick() < deadline and stages < maxStages do
-            local completeOk, complete = pcall(isComplete)
-            if completeOk and complete then
-                return true, string.format("%.3fs stages=%d continues=%d method=%s gcScans=%d", tick() - startedAt, stages, continueFires, tostring(state.lastContinueMethod or "n/a"), state.gcScans or 0)
-            end
-
-            local gui = getDialogueGui()
-            if not gui then
-                task.wait(0.005)
-                continue
-            end
-            suppressDialogueRendering()
-
-            local signature = select(1, getDialogueStateSignature())
-            if signature ~= "" and signature ~= previousSignature then
-                local selected, reason = injectDialogueOption(optionName)
-                if not selected then
-                    return false, "option injection failed: " .. tostring(reason)
-                end
-                stages = stages + 1
-                previousSignature = signature
-
-                -- The next page may reuse DialogueGui/ClickContinue but replace
-                -- its callback. Drop stage-local caches so the new line-2088
-                -- continuation callback is discovered immediately.
-                state.active1982 = nil
-                state.clickContinue = nil
-                state.lastGCScan = 0
-                task.wait(0.005)
-            elseif signature == "" then
-                -- DialogueAnalyzer confirmed that Dio/Jotaro completion has a
-                -- second, option-less stage whose ClickContinue callback lives at
-                -- ClientFunctions:2088. Fire that live signal directly instead
-                -- of waiting for the visible text animation.
-                local clickContinue = findClickContinue(gui)
-                state.clickContinue = clickContinue
-                local connCount = clickContinueConnectionCount(clickContinue)
-                local now = tick()
-                local fired, fireMethod = false, nil
-                if clickContinue and (connCount > 0 or now - lastContinueFireAt >= 0.01) then
-                    fired, fireMethod = fireButtonSignal(clickContinue, state)
-                    if fired then
-                        continueFires = continueFires + 1
-                        lastContinueFireAt = now
-                        state.lastContinueMethod = fireMethod
-
-                        -- DialogueAnalyzer R2 proved that Delta's
-                        -- ClientFunctions:2088 connection:Fire() is the real
-                        -- continuation path. The callback may remove DialogueGui
-                        -- asynchronously a few milliseconds later, so give it a
-                        -- tiny settle window before trying fallback signals again.
-                        if type(fireMethod) == "string" and fireMethod:find("connection:Fire", 1, true) then
-                            local settleUntil = tick() + 0.06
-                            while tick() < settleUntil do
-                                local doneOk, done = pcall(isComplete)
-                                if doneOk and done then
-                                    return true, string.format("%.3fs stages=%d continues=%d method=%s gcScans=%d", tick() - startedAt, stages, continueFires, tostring(state.lastContinueMethod or "n/a"), state.gcScans or 0)
-                                end
-                                if not getDialogueGui() then
-                                    return true, string.format("%.3fs stages=%d continues=%d method=%s gcScans=%d", tick() - startedAt, stages, continueFires, tostring(state.lastContinueMethod or "n/a"), state.gcScans or 0)
-                                end
-                                task.wait(0.002)
-                            end
-                        end
-                    end
-                end
-
-                -- Keep the proven RichText/advance-closure accelerator running as
-                -- a fallback while the line-2088 callback is being installed.
-                patchAndInvoke1982(state)
-                task.wait(0.003)
-            else
-                -- Same option page is still animating/processing. Force the text
-                -- engine forward but do not inject the option twice.
-                forceDialogueAdvance(gui, state)
-                task.wait(0.005)
-            end
-        end
-
-        local completeOk, complete = pcall(isComplete)
-        if completeOk and complete then
-            return true, string.format("%.3fs stages=%d continues=%d method=%s gcScans=%d", tick() - startedAt, stages, continueFires, tostring(state.lastContinueMethod or "n/a"), state.gcScans or 0)
-        end
-        return false, "completion state not confirmed"
-    end, function(err)
-        return tostring(err)
-    end)
-
-    restoreFinalState(state)
-    closeDialogueIfOpen()
-    restoreDialogueRendering()
-
-    if not okRun then return false, tostring(success) end
-    return success == true, info
-end
-
 function Inventory:HasStand()
     return self:GetCurrentStand() ~= "None"
 end
@@ -2039,7 +1770,7 @@ end
 
 function Inventory:GetDialogueDiagnostics()
     return {
-        Build = "ZERO-DELAY-2026.09.14-R6-DIRECT-CONTINUE",
+        Build = "ZERO-DELAY-2026.09.14-R2-FINGERPRINT-CACHE",
         FingerprintChecked = _fingerprint.checked,
         DialogueTypeDetected = _fingerprint.dialogueType,
         DialogueTypeLine = _fingerprint.dialogueTypeLine,
