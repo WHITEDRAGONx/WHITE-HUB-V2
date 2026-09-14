@@ -44,10 +44,24 @@ local MaxItemAmounts = {
     ["Dio's Diary"]                    = 10,
 }
 
+local _runtimeLog = nil
+local _rawPrint, _rawWarn = print, warn
+local function moduleLog(level, ...)
+    if _runtimeLog and type(_runtimeLog.Write) == "function" then
+        pcall(_runtimeLog.Write, _runtimeLog, level, "Inventory", ...)
+    end
+    if level == "WARN" or level == "ERROR" then
+        _rawWarn(...)
+    else
+        _rawPrint(...)
+    end
+end
+
 -- =====================
 -- INIT
 -- =====================
 function Inventory:Init(Modules)
+    _runtimeLog = Modules.RuntimeLog
     _config   = Modules.Config
     _movement = Modules.Movement
 
@@ -59,9 +73,9 @@ function Inventory:Init(Modules)
         for k, v in pairs(MaxItemAmounts) do
             MaxItemAmounts[k] = v * 2
         end
-        print("[Inventory] 2x gamepass detected — item caps doubled.")
+        moduleLog("INFO", "[Inventory] 2x gamepass detected — item caps doubled.")
     else
-        print("[Inventory] Initialized (no 2x gamepass).")
+        moduleLog("INFO", "[Inventory] Initialized (no 2x gamepass).")
     end
 end
 
@@ -431,12 +445,12 @@ local function runMerchantSellDialogue(itemName, beforeCount)
             if Inventory:Count(itemName) < beforeCount then
                 return true
             end
-            warn("[Inventory][Dialogue] No visible dialogue options at step " .. tostring(step) .. ".")
+            moduleLog("WARN", "[Inventory][Dialogue] No visible dialogue options at step " .. tostring(step) .. ".")
             return false
         end
 
         local description = describeButtons(buttons)
-        print("[Inventory][Dialogue] Step " .. tostring(step) .. " options: " .. description)
+        moduleLog("INFO", "[Inventory][Dialogue] Step " .. tostring(step) .. " options: " .. description)
 
         if description == lastOptions then
             repeatedSameState = repeatedSameState + 1
@@ -446,19 +460,19 @@ local function runMerchantSellDialogue(itemName, beforeCount)
         end
 
         if repeatedSameState >= 2 then
-            warn("[Inventory][Dialogue] Dialogue did not advance. Options: " .. description)
+            moduleLog("WARN", "[Inventory][Dialogue] Dialogue did not advance. Options: " .. description)
             return false
         end
 
         local chosen, score = chooseBestSellButton(buttons)
         if not chosen then
-            warn("[Inventory][Dialogue] Could not identify a sell option. Options: " .. description)
+            moduleLog("WARN", "[Inventory][Dialogue] Could not identify a sell option. Options: " .. description)
             return false
         end
 
-        print("[Inventory][Dialogue] Clicking: " .. tostring(chosen.Text) .. " (score " .. tostring(score) .. ")")
+        moduleLog("INFO", "[Inventory][Dialogue] Clicking: " .. tostring(chosen.Text) .. " (score " .. tostring(score) .. ")")
         if not clickButton(chosen.Button) then
-            warn("[Inventory][Dialogue] Failed to click option: " .. tostring(chosen.Text))
+            moduleLog("WARN", "[Inventory][Dialogue] Failed to click option: " .. tostring(chosen.Text))
             return false
         end
 
@@ -476,11 +490,11 @@ end
 function Inventory:SellAll()
     if not _config:Get("FarmEnabled") then return end
     if self:IsMoneyMaxed() then
-        print("[Inventory] Money already maxed — skipping sell.")
+        moduleLog("INFO", "[Inventory] Money already maxed — skipping sell.")
         return
     end
     if not _config:Get("AutoSell") then
-        print("[Inventory] AutoSell disabled — skipping sell.")
+        moduleLog("INFO", "[Inventory] AutoSell disabled — skipping sell.")
         return
     end
 
@@ -494,16 +508,16 @@ function Inventory:SellAll()
     end
 
     if #toSell == 0 then
-        print("[Inventory] No items to sell.")
+        moduleLog("INFO", "[Inventory] No items to sell.")
         return
     end
 
     table.sort(toSell)
-    print("[Inventory] Selling " .. #toSell .. " item type(s) with dynamic Merchant dialogue...")
+    moduleLog("INFO", "[Inventory] Selling " .. #toSell .. " item type(s) with dynamic Merchant dialogue...")
 
     local merchantPrompt = findMerchantPrompt()
     if not merchantPrompt then
-        warn("[Inventory] Merchant ProximityPrompt not found — cannot sell.")
+        moduleLog("WARN", "[Inventory] Merchant ProximityPrompt not found — cannot sell.")
         return
     end
 
@@ -512,7 +526,7 @@ function Inventory:SellAll()
 
     for _, itemName in ipairs(toSell) do
         if self:IsMoneyMaxed() then
-            print("[Inventory] Money reached max while selling — stopping.")
+            moduleLog("INFO", "[Inventory] Money reached max while selling — stopping.")
             break
         end
 
@@ -548,7 +562,7 @@ function Inventory:SellAll()
                 fireproximityprompt(merchantPrompt)
             end)
             if not opened then
-                warn("[Inventory] Could not trigger Merchant prompt for " .. itemName)
+                moduleLog("WARN", "[Inventory] Could not trigger Merchant prompt for " .. itemName)
                 break
             end
 
@@ -561,7 +575,7 @@ function Inventory:SellAll()
             local afterAttempt = self:Count(itemName)
             if afterAttempt < beforeAttempt then
                 madeProgress = true
-                print("[Inventory] Sold " .. tostring(beforeAttempt - afterAttempt) .. "x " .. itemName
+                moduleLog("INFO", "[Inventory] Sold " .. tostring(beforeAttempt - afterAttempt) .. "x " .. itemName
                     .. " (remaining: " .. tostring(afterAttempt) .. ")")
             elseif dialogueWorked then
                 -- Give replication one extra short window before declaring failure.
@@ -577,7 +591,7 @@ function Inventory:SellAll()
 
             currentCount = self:Count(itemName)
             if currentCount >= beforeAttempt then
-                warn("[Inventory] Merchant dialogue made no inventory progress for: " .. itemName)
+                moduleLog("WARN", "[Inventory] Merchant dialogue made no inventory progress for: " .. itemName)
                 closeDialogueIfOpen()
                 break
             end
@@ -589,17 +603,17 @@ function Inventory:SellAll()
         local finalCount = self:Count(itemName)
         if finalCount < initialCount then
             soldTypes = soldTypes + 1
-            print("[Inventory] ✅ Sold " .. tostring(initialCount - finalCount) .. "/" .. tostring(initialCount)
+            moduleLog("INFO", "[Inventory] ✅ Sold " .. tostring(initialCount - finalCount) .. "/" .. tostring(initialCount)
                 .. " of " .. itemName)
         else
             failedTypes = failedTypes + 1
-            warn("[Inventory] ❌ Failed to sell: " .. itemName
+            moduleLog("WARN", "[Inventory] ❌ Failed to sell: " .. itemName
                 .. ". Check the [Inventory][Dialogue] option dump above.")
         end
     end
 
     closeDialogueIfOpen()
-    print("[Inventory] SellAll done — Types sold: " .. soldTypes .. " | Failed: " .. failedTypes)
+    moduleLog("INFO", "[Inventory] SellAll done — Types sold: " .. soldTypes .. " | Failed: " .. failedTypes)
 end
 
 -- =====================
@@ -613,7 +627,7 @@ function Inventory:BuyLucky()
     local money = self:GetMoney()
     if money < 75000 then return end
 
-    print("[Inventory] Buying Lucky Arrows... ($" .. money .. ")")
+    moduleLog("INFO", "[Inventory] Buying Lucky Arrows... ($" .. money .. ")")
     local attempts = 0
 
     while self:GetMoney() >= 75000 and attempts < 15 do
@@ -628,10 +642,10 @@ function Inventory:BuyLucky()
         attempts = attempts + 1
 
         local count = self:Count("Lucky Arrow")
-        print("[Inventory] Lucky Arrows: " .. count .. "/" .. LUCKY_STOP)
+        moduleLog("INFO", "[Inventory] Lucky Arrows: " .. count .. "/" .. LUCKY_STOP)
 
         if count >= LUCKY_STOP then
-            print("[Inventory] Reached " .. LUCKY_STOP .. " Lucky Arrows — stopping purchase (YBA bug).")
+            moduleLog("INFO", "[Inventory] Reached " .. LUCKY_STOP .. " Lucky Arrows — stopping purchase (YBA bug).")
             break
         end
     end
