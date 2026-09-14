@@ -27,7 +27,21 @@ local stopRequested = false
 local runtimeSetup = false
 local runtimeConnections = {}
 
+local _runtimeLog = nil
+local _rawPrint, _rawWarn = print, warn
+local function moduleLog(level, ...)
+    if _runtimeLog and type(_runtimeLog.Write) == "function" then
+        pcall(_runtimeLog.Write, _runtimeLog, level, "Farm", ...)
+    end
+    if level == "WARN" or level == "ERROR" then
+        _rawWarn(...)
+    else
+        _rawPrint(...)
+    end
+end
+
 function Farm:Init(Modules)
+    _runtimeLog = Modules.RuntimeLog
     _config    = Modules.Config
     _inventory = Modules.Inventory
     _movement  = Modules.Movement
@@ -152,10 +166,10 @@ local function InitItemDetection()
         end)
     end
     if not ItemSpawnFolder then
-        warn("[Farm] ERROR: Item_Spawns/Items folder not found.")
+        moduleLog("WARN", "[Farm] ERROR: Item_Spawns/Items folder not found.")
         return
     end
-    print("[Farm] Item_Spawns/Items folder found.")
+    moduleLog("INFO", "[Farm] Item_Spawns/Items folder found.")
     for _, model in pairs(ItemSpawnFolder:GetChildren()) do
         pcall(function()
             if model:IsA("Model") then
@@ -171,7 +185,7 @@ local function InitItemDetection()
                 local info = GetItemInfo(model)
                 if info then
                     SpawnedItems[model] = info
-                    print("[Farm] Item detected: " .. info.Name)
+                    moduleLog("INFO", "[Farm] Item detected: " .. info.Name)
                 end
             end
         end)
@@ -229,7 +243,7 @@ local function CollectItem(itemInfo, index)
     if collected and fired then
         SpawnedItems[index] = nil
         lastItemTime = tick()
-        print("[Farm] Collected: " .. itemInfo.Name)
+        moduleLog("INFO", "[Farm] Collected: " .. itemInfo.Name)
         return true
     end
 
@@ -240,7 +254,7 @@ local function CollectItem(itemInfo, index)
     else
         SpawnedItems[index] = nil
     end
-    warn("[Farm] Collection was not confirmed: " .. tostring(itemInfo.Name))
+    moduleLog("WARN", "[Farm] Collection was not confirmed: " .. tostring(itemInfo.Name))
     return false
 end
 
@@ -248,7 +262,7 @@ end
 local function shouldSkipHop()
     local stay = _config:Get("StayInPrivateServer")
     if stay then
-        print("[Farm] StayInPrivateServer is ON – skipping all hops.")
+        moduleLog("INFO", "[Farm] StayInPrivateServer is ON – skipping all hops.")
         return true
     end
     return false
@@ -258,11 +272,11 @@ local function DoHop()
     if not _config:Get("FarmEnabled") then return end
 
     if shouldSkipHop() then
-        print("[Farm] DoHop aborted – skipping hop.")
+        moduleLog("INFO", "[Farm] DoHop aborted – skipping hop.")
         return
     end
 
-    print("[Farm] Server dry — selling, buying, then hopping...")
+    moduleLog("INFO", "[Farm] Server dry — selling, buying, then hopping...")
     _inventory:SellAll()
     _inventory:BuyLucky()
     _serverHop:Hop()
@@ -290,26 +304,26 @@ local function Startup()
         task.wait(0.5)
         waitTime = waitTime + 0.5
         if waitTime > 30 then
-            warn("[Farm] Timeout waiting for RemoteEvent — continuing anyway.")
+            moduleLog("WARN", "[Farm] Timeout waiting for RemoteEvent — continuing anyway.")
             break
         end
     until _movement:GetCharacter("RemoteEvent")
 
-    print("[Farm] Character loaded.")
+    moduleLog("INFO", "[Farm] Character loaded.")
     pcall(function()
         _movement:GetCharacter("RemoteEvent"):FireServer("PressedPlay")
     end)
 
-    print("[Farm] Teleporting to safe spot...")
+    moduleLog("INFO", "[Farm] Teleporting to safe spot...")
     _movement:Teleport(SAFE_SPOT)
     task.wait(1)
     _movement:FixCamera()
 
     local hrp = _movement:GetCharacter("HumanoidRootPart")
-    if hrp then print("[Farm] Position: " .. tostring(hrp.Position))
-    else warn("[Farm] HumanoidRootPart not found.") end
+    if hrp then moduleLog("INFO", "[Farm] Position: " .. tostring(hrp.Position))
+    else moduleLog("WARN", "[Farm] HumanoidRootPart not found.") end
 
-    print("[Farm] Waiting 5 seconds before starting farm loop...")
+    moduleLog("INFO", "[Farm] Waiting 5 seconds before starting farm loop...")
     task.wait(5)
 end
 
@@ -322,7 +336,7 @@ local function runCycle()
     _config:SetMany({ Phase1Notified = false, Phase3Notified = false })
 
     -- ===== PHASE 1 =====
-    print("[Farm] >>> Phase 1 started — farming normally.")
+    moduleLog("INFO", "[Farm] >>> Phase 1 started — farming normally.")
     while not stopRequested and _config:Get("FarmEnabled") and not _config:Get("AutoPrestige")
       and not _inventory:ShouldStopPhase1() do
         local snapshot = {}
@@ -341,7 +355,7 @@ local function runCycle()
         if elapsed > NO_ITEM_TIMEOUT then
             if not _inventory:ShouldStopPhase1() then DoHop() end
         elseif #snapshot == 0 then
-            print("[Farm] Waiting for items... (" .. math.max(0, math.floor(NO_ITEM_TIMEOUT - elapsed)) .. "s until hop)")
+            moduleLog("INFO", "[Farm] Waiting for items... (" .. math.max(0, math.floor(NO_ITEM_TIMEOUT - elapsed)) .. "s until hop)")
         end
         task.wait(1)
     end
@@ -353,7 +367,7 @@ local function runCycle()
     if shouldPauseCycle() then return end
     _inventory:BuyLucky()
     if shouldPauseCycle() then return end
-    print("[Farm] >>> Phase 1 complete.")
+    moduleLog("INFO", "[Farm] >>> Phase 1 complete.")
 
     -- ===== PHASE 2 =====
     local keepItems = _inventory:GetKeepItems()
@@ -363,7 +377,7 @@ local function runCycle()
             _config:Set("Phase1Notified", true)
         end
 
-        print("[Farm] >>> Phase 2 started — farming keep-items: " .. table.concat(keepItems, ", "))
+        moduleLog("INFO", "[Farm] >>> Phase 2 started — farming keep-items: " .. table.concat(keepItems, ", "))
         while not stopRequested and _config:Get("FarmEnabled") and not _config:Get("AutoPrestige")
           and not _inventory:AllKeepItemsFull() do
             local snapshot = {}
@@ -386,43 +400,43 @@ local function runCycle()
             local elapsed = tick() - lastItemTime
             if elapsed > NO_ITEM_TIMEOUT then
                 if not _inventory:AllKeepItemsFull() then
-                    print("[Farm] Phase 2 — server dry, hopping...")
+                    moduleLog("INFO", "[Farm] Phase 2 — server dry, hopping...")
                     DoHop()
                 end
             elseif #snapshot == 0 then
-                print("[Farm] Waiting for keep-items... (" .. math.max(0, math.floor(NO_ITEM_TIMEOUT - elapsed)) .. "s until hop)")
+                moduleLog("INFO", "[Farm] Waiting for keep-items... (" .. math.max(0, math.floor(NO_ITEM_TIMEOUT - elapsed)) .. "s until hop)")
             end
             task.wait(1)
         end
 
         if shouldPauseCycle() then return end
-        print("[Farm] >>> Phase 2 complete — all keep-items maxed.")
+        moduleLog("INFO", "[Farm] >>> Phase 2 complete — all keep-items maxed.")
     else
-        print("[Farm] >>> No keep-items configured — skipping Phase 2.")
+        moduleLog("INFO", "[Farm] >>> No keep-items configured — skipping Phase 2.")
     end
 
     if shouldPauseCycle() then return end
 
     -- ===== PHASE 3 =====
     if not _config:Get("Phase3Notified") then
-        print("[Farm] Sending 'All farming complete' webhook...")
+        moduleLog("INFO", "[Farm] Sending 'All farming complete' webhook...")
         _webhook:SendAllComplete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
         _config:Set("Phase3Notified", true)
     end
 
-    print("[Farm] >>> Phase 3 — idle; collecting Lucky Arrow / Lucky Stone Mask only.")
+    moduleLog("INFO", "[Farm] >>> Phase 3 — idle; collecting Lucky Arrow / Lucky Stone Mask only.")
     updateConfigSnapshot()
 
     while not stopRequested and _config:Get("FarmEnabled") and not _config:Get("AutoPrestige") do
         if not _inventory:ShouldStopPhase1() then
-            print("[Farm] >>> Lucky count or money dropped below minimum — returning to Phase 1.")
+            moduleLog("INFO", "[Farm] >>> Lucky count or money dropped below minimum — returning to Phase 1.")
             _config:SetMany({ Phase1Notified = false, Phase3Notified = false })
             lastItemTime = tick()
             return
         end
 
         if hasConfigChanged() then
-            print("[Farm] >>> Item configuration changed — returning to Phase 1.")
+            moduleLog("INFO", "[Farm] >>> Item configuration changed — returning to Phase 1.")
             updateConfigSnapshot()
             _config:SetMany({ Phase1Notified = false, Phase3Notified = false })
             lastItemTime = tick()
@@ -447,7 +461,7 @@ end
 
 function Farm:Start()
     if isRunning then
-        print("[Farm] Start ignored — already running.")
+        moduleLog("INFO", "[Farm] Start ignored — already running.")
         return
     end
 
@@ -464,7 +478,7 @@ function Farm:Start()
         Startup()
     end
 
-    print("[Farm] Farm loop started.")
+    moduleLog("INFO", "[Farm] Farm loop started.")
 
     while not stopRequested do
         while not stopRequested and not _config:Get("FarmEnabled") do
@@ -477,20 +491,20 @@ function Farm:Start()
 
         local ok, err = pcall(runCycle)
         if not ok then
-            warn("[Farm] Cycle error: " .. tostring(err))
+            moduleLog("WARN", "[Farm] Cycle error: " .. tostring(err))
             task.wait(2)
         end
     end
 
     isRunning = false
     _movement:SetNoclip(false)
-    print("[Farm] Farm loop stopped.")
+    moduleLog("INFO", "[Farm] Farm loop stopped.")
 end
 
 function Farm:Stop()
     stopRequested = true
     _movement:SetNoclip(false)
-    print("[Farm] Stop requested.")
+    moduleLog("INFO", "[Farm] Stop requested.")
 end
 
 function Farm:IsRunning()
