@@ -168,7 +168,8 @@ local function showBootErrorUI(failure)
         Shade.Name = "Shade"
         Shade.Size = UDim2.new(1, 0, 1, 0)
         Shade.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-        Shade.BackgroundTransparency = 0.35
+        -- Keep the diagnostic readable without covering the entire mobile screen.
+        Shade.BackgroundTransparency = 0.65
         Shade.BorderSizePixel = 0
         Shade.Parent = ScreenGui
 
@@ -176,7 +177,10 @@ local function showBootErrorUI(failure)
         Main.Name = "ErrorWindow"
         Main.AnchorPoint = Vector2.new(0.5, 0.5)
         Main.Position = UDim2.new(0.5, 0, 0.5, 0)
-        Main.Size = UDim2.new(0, 620, 0, 470)
+        local viewport = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize) or Vector2.new(800, 600)
+        local compactWidth = math.clamp(viewport.X - 28, 300, 430)
+        local compactHeight = math.clamp(viewport.Y - 90, 260, 340)
+        Main.Size = UDim2.fromOffset(compactWidth, compactHeight)
         Main.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
         Main.BorderSizePixel = 0
         Main.Parent = Shade
@@ -186,11 +190,11 @@ local function showBootErrorUI(failure)
         mainStroke.Thickness = 1.5
 
         local sizeConstraint = Instance.new("UISizeConstraint", Main)
-        sizeConstraint.MinSize = Vector2.new(430, 360)
-        sizeConstraint.MaxSize = Vector2.new(700, 560)
+        sizeConstraint.MinSize = Vector2.new(300, 260)
+        sizeConstraint.MaxSize = Vector2.new(430, 340)
 
         local Top = Instance.new("Frame")
-        Top.Size = UDim2.new(1, 0, 0, 52)
+        Top.Size = UDim2.new(1, 0, 0, 40)
         Top.BackgroundColor3 = Color3.fromRGB(34, 20, 24)
         Top.BorderSizePixel = 0
         Top.Parent = Main
@@ -204,32 +208,32 @@ local function showBootErrorUI(failure)
         topFix.Parent = Top
 
         local Title = Instance.new("TextLabel")
-        Title.Position = UDim2.new(0, 16, 0, 0)
-        Title.Size = UDim2.new(1, -70, 1, 0)
+        Title.Position = UDim2.new(0, 12, 0, 0)
+        Title.Size = UDim2.new(1, -58, 1, 0)
         Title.BackgroundTransparency = 1
-        Title.Text = "WHITE HUB — STARTUP FAILED"
+        Title.Text = "WHITE HUB — BOOT FAILED"
         Title.TextColor3 = Color3.fromRGB(255, 225, 225)
-        Title.TextSize = 20
+        Title.TextSize = 15
         Title.Font = Enum.Font.GothamBold
         Title.TextXAlignment = Enum.TextXAlignment.Left
         Title.Parent = Top
 
         local Close = Instance.new("TextButton")
         Close.AnchorPoint = Vector2.new(1, 0.5)
-        Close.Position = UDim2.new(1, -12, 0.5, 0)
-        Close.Size = UDim2.new(0, 30, 0, 30)
+        Close.Position = UDim2.new(1, -8, 0.5, 0)
+        Close.Size = UDim2.new(0, 26, 0, 26)
         Close.BackgroundColor3 = Color3.fromRGB(130, 45, 52)
         Close.BorderSizePixel = 0
         Close.Text = "×"
         Close.TextColor3 = Color3.fromRGB(255,255,255)
-        Close.TextSize = 22
+        Close.TextSize = 18
         Close.Font = Enum.Font.GothamBold
         Close.Parent = Top
         Instance.new("UICorner", Close).CornerRadius = UDim.new(0, 7)
 
         local Summary = Instance.new("Frame")
-        Summary.Position = UDim2.new(0, 14, 0, 66)
-        Summary.Size = UDim2.new(1, -28, 0, 110)
+        Summary.Position = UDim2.new(0, 10, 0, 48)
+        Summary.Size = UDim2.new(1, -20, 0, 78)
         Summary.BackgroundColor3 = Color3.fromRGB(25, 25, 34)
         Summary.BorderSizePixel = 0
         Summary.Parent = Main
@@ -238,34 +242,34 @@ local function showBootErrorUI(failure)
         summaryStroke.Color = Color3.fromRGB(74, 58, 68)
 
         local ModuleLabel = Instance.new("TextLabel")
-        ModuleLabel.Position = UDim2.new(0, 12, 0, 8)
-        ModuleLabel.Size = UDim2.new(1, -24, 0, 24)
+        ModuleLabel.Position = UDim2.new(0, 9, 0, 5)
+        ModuleLabel.Size = UDim2.new(1, -18, 0, 19)
         ModuleLabel.BackgroundTransparency = 1
         ModuleLabel.Text = "Module: " .. tostring(failure.module or "Unknown")
         ModuleLabel.TextColor3 = Color3.fromRGB(255, 205, 205)
-        ModuleLabel.TextSize = 16
+        ModuleLabel.TextSize = 13
         ModuleLabel.Font = Enum.Font.GothamBold
         ModuleLabel.TextXAlignment = Enum.TextXAlignment.Left
         ModuleLabel.Parent = Summary
 
         local StageLabel = Instance.new("TextLabel")
-        StageLabel.Position = UDim2.new(0, 12, 0, 34)
-        StageLabel.Size = UDim2.new(1, -24, 0, 22)
+        StageLabel.Position = UDim2.new(0, 9, 0, 24)
+        StageLabel.Size = UDim2.new(1, -18, 0, 17)
         StageLabel.BackgroundTransparency = 1
         StageLabel.Text = "Stage: " .. tostring(failure.stage or "Unknown")
         StageLabel.TextColor3 = Color3.fromRGB(220, 190, 190)
-        StageLabel.TextSize = 14
+        StageLabel.TextSize = 11
         StageLabel.Font = Enum.Font.Gotham
         StageLabel.TextXAlignment = Enum.TextXAlignment.Left
         StageLabel.Parent = Summary
 
         local ReasonLabel = Instance.new("TextLabel")
-        ReasonLabel.Position = UDim2.new(0, 12, 0, 58)
-        ReasonLabel.Size = UDim2.new(1, -24, 0, 44)
+        ReasonLabel.Position = UDim2.new(0, 9, 0, 42)
+        ReasonLabel.Size = UDim2.new(1, -18, 0, 31)
         ReasonLabel.BackgroundTransparency = 1
         ReasonLabel.Text = "Reason: " .. tostring(failure.reason or "Unknown")
         ReasonLabel.TextColor3 = Color3.fromRGB(235, 235, 240)
-        ReasonLabel.TextSize = 13
+        ReasonLabel.TextSize = 10
         ReasonLabel.Font = Enum.Font.Code
         ReasonLabel.TextWrapped = true
         ReasonLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -273,34 +277,34 @@ local function showBootErrorUI(failure)
         ReasonLabel.Parent = Summary
 
         local LogTitle = Instance.new("TextLabel")
-        LogTitle.Position = UDim2.new(0, 16, 0, 186)
-        LogTitle.Size = UDim2.new(1, -32, 0, 22)
+        LogTitle.Position = UDim2.new(0, 12, 0, 132)
+        LogTitle.Size = UDim2.new(1, -24, 0, 16)
         LogTitle.BackgroundTransparency = 1
-        LogTitle.Text = "Detailed diagnostic log"
+        LogTitle.Text = "Diagnostic log"
         LogTitle.TextColor3 = Color3.fromRGB(190, 190, 205)
-        LogTitle.TextSize = 13
+        LogTitle.TextSize = 10
         LogTitle.Font = Enum.Font.GothamBold
         LogTitle.TextXAlignment = Enum.TextXAlignment.Left
         LogTitle.Parent = Main
 
         local LogBox = Instance.new("ScrollingFrame")
-        LogBox.Position = UDim2.new(0, 14, 0, 210)
-        LogBox.Size = UDim2.new(1, -28, 1, -278)
+        LogBox.Position = UDim2.new(0, 10, 0, 151)
+        LogBox.Size = UDim2.new(1, -20, 1, -198)
         LogBox.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
         LogBox.BorderSizePixel = 0
-        LogBox.ScrollBarThickness = 7
+        LogBox.ScrollBarThickness = 4
         LogBox.ScrollBarImageColor3 = Color3.fromRGB(130, 80, 95)
         LogBox.CanvasSize = UDim2.new(0, 0, 0, 0)
         LogBox.Parent = Main
         Instance.new("UICorner", LogBox).CornerRadius = UDim.new(0, 8)
 
         local LogText = Instance.new("TextLabel")
-        LogText.Position = UDim2.new(0, 10, 0, 8)
-        LogText.Size = UDim2.new(1, -20, 0, 10)
+        LogText.Position = UDim2.new(0, 7, 0, 6)
+        LogText.Size = UDim2.new(1, -14, 0, 10)
         LogText.BackgroundTransparency = 1
         LogText.Text = detailedLog
         LogText.TextColor3 = Color3.fromRGB(215, 215, 225)
-        LogText.TextSize = 12
+        LogText.TextSize = 9
         LogText.Font = Enum.Font.Code
         LogText.TextWrapped = true
         LogText.TextXAlignment = Enum.TextXAlignment.Left
@@ -308,35 +312,35 @@ local function showBootErrorUI(failure)
         LogText.Parent = LogBox
 
         local function resizeLog()
-            local width = math.max(300, LogBox.AbsoluteSize.X - 30)
+            local width = math.max(240, LogBox.AbsoluteSize.X - 22)
             local bounds = TextService:GetTextSize(detailedLog, LogText.TextSize, LogText.Font, Vector2.new(width, 100000))
-            LogText.Size = UDim2.new(1, -20, 0, bounds.Y + 14)
-            LogBox.CanvasSize = UDim2.new(0, 0, 0, bounds.Y + 30)
+            LogText.Size = UDim2.new(1, -14, 0, bounds.Y + 10)
+            LogBox.CanvasSize = UDim2.new(0, 0, 0, bounds.Y + 20)
         end
         task.defer(resizeLog)
         LogBox:GetPropertyChangedSignal("AbsoluteSize"):Connect(resizeLog)
 
         local Copy = Instance.new("TextButton")
-        Copy.Position = UDim2.new(0, 14, 1, -54)
-        Copy.Size = UDim2.new(0.64, -18, 0, 40)
+        Copy.Position = UDim2.new(0, 10, 1, -39)
+        Copy.Size = UDim2.new(0.66, -14, 0, 30)
         Copy.BackgroundColor3 = Color3.fromRGB(115, 72, 190)
         Copy.BorderSizePixel = 0
-        Copy.Text = "Copy Detailed Log"
+        Copy.Text = "Copy Log"
         Copy.TextColor3 = Color3.fromRGB(255,255,255)
-        Copy.TextSize = 14
+        Copy.TextSize = 11
         Copy.Font = Enum.Font.GothamBold
         Copy.Parent = Main
         Instance.new("UICorner", Copy).CornerRadius = UDim.new(0, 8)
 
         local AbortLabel = Instance.new("TextLabel")
         AbortLabel.AnchorPoint = Vector2.new(1, 0)
-        AbortLabel.Position = UDim2.new(1, -14, 1, -54)
-        AbortLabel.Size = UDim2.new(0.36, -4, 0, 40)
+        AbortLabel.Position = UDim2.new(1, -10, 1, -39)
+        AbortLabel.Size = UDim2.new(0.34, -2, 0, 30)
         AbortLabel.BackgroundColor3 = Color3.fromRGB(42, 42, 52)
         AbortLabel.BorderSizePixel = 0
-        AbortLabel.Text = "Script aborted safely"
+        AbortLabel.Text = "Aborted safely"
         AbortLabel.TextColor3 = Color3.fromRGB(190, 190, 200)
-        AbortLabel.TextSize = 12
+        AbortLabel.TextSize = 9
         AbortLabel.Font = Enum.Font.Gotham
         AbortLabel.Parent = Main
         Instance.new("UICorner", AbortLabel).CornerRadius = UDim.new(0, 8)
@@ -353,11 +357,11 @@ local function showBootErrorUI(failure)
                     end
                 end)
             else
-                Copy.Text = "Clipboard API unavailable"
+                Copy.Text = "No clipboard API"
                 Copy.BackgroundColor3 = Color3.fromRGB(120, 72, 72)
                 task.delay(3, function()
                     if Copy and Copy.Parent then
-                        Copy.Text = "Copy Detailed Log"
+                        Copy.Text = "Copy Log"
                         Copy.BackgroundColor3 = Color3.fromRGB(115, 72, 190)
                     end
                 end)
