@@ -1,7 +1,7 @@
 -- =====================
 -- CombatFarm.lua
 -- Unified combat: NPC and Quest farming.
--- QUEST/COMBAT BUILD: INTERNAL-OPTION-R3-XENON-LOCK
+-- QUEST/COMBAT BUILD: R4-QUEST-LOOP-MOBILE-SKILLS
 -- Logic identical to Xenon V5 (stand positioning, attacks, death detection).
 -- FIXED: player positioned underground (yOffset -35) with noclip for safety.
 -- =====================
@@ -53,6 +53,192 @@ local questInfo = {
     ["Pucci [Lvl. 40+]"] = { special = "PUCCI_CHAIN", autoChoose = false },
 }
 
+
+-- =============================================
+-- MOBILE SKILL CATALOG / CAST PROFILES
+-- =============================================
+-- Keys here are intentionally limited to offensive moves. Utility moves such as
+-- Time Skip / Time Stop are not auto-enabled by the UI.
+local function normalizeName(value)
+    return tostring(value or ""):lower():gsub("[^%w]", "")
+end
+
+local STAND_ALIASES = {
+    ["platinumsun"] = "starplatinum",
+    ["platinumsuntheuniverse"] = "starplatinumtheworld",
+    ["theuniverse"] = "theworld",
+    ["theuniverseoverheaven"] = "theworldoverheaven",
+    ["purplefume"] = "purplehaze",
+    ["whiteice"] = "whitealbum",
+    ["frighteningmonsters"] = "scarymonsters",
+}
+
+local STAND_SKILL_PRESETS = {
+    starplatinum = {
+        { key = "E", name = "Stand Barrage" },
+        { key = "R", name = "Barrage Finisher" },
+        { key = "T", name = "Star Finger" },
+        { key = "Y", name = "Ora Kicks" },
+        { key = "G", name = "Inhale" },
+        { key = "C", name = "Platinum Slam", closeCast = true, hold = 0.28 },
+    },
+    starplatinumtheworld = {
+        { key = "E", name = "Stand Barrage" },
+        { key = "R", name = "Barrage Finisher" },
+        { key = "T", name = "Bearing Shot" },
+        { key = "Y", name = "Ora Kicks" },
+        { key = "X", name = "Platinum Slam", closeCast = true, hold = 0.28 },
+        { key = "C", name = "Skull Crusher" },
+    },
+    theworld = {
+        { key = "E", name = "Stand Barrage" },
+        { key = "R", name = "Barrage Finisher" },
+        { key = "T", name = "Knife Throw" },
+        { key = "Y", name = "Road Sign Slam", closeCast = true, hold = 0.30 },
+        { key = "X", name = "Kick Barrage" },
+        { key = "C", name = "SHINEI" },
+    },
+    theworldoverheaven = {
+        { key = "E", name = "Stand Barrage" },
+        { key = "R", name = "Barrage Finisher" },
+        { key = "T", name = "Knife Throw" },
+        { key = "Y", name = "Reality Overwriting Punch" },
+        { key = "G", name = "Heaven Ascended Smite", closeCast = true, hold = 0.32 },
+    },
+    purplehaze = {
+        { key = "E", name = "Stand Barrage" },
+        { key = "R", name = "Barrage Finisher" },
+        { key = "T", name = "Bulb Breaker Punch" },
+        { key = "Y", name = "Bulb Breaker Ground Punch", closeCast = true, hold = 0.32 },
+        { key = "Z", name = "Bulb Throw" },
+    },
+    whitealbum = {
+        { key = "E", name = "Barrage" },
+        { key = "R", name = "Barrage Finisher" },
+        { key = "T", name = "Ice Punch" },
+        { key = "Y", name = "Ice Sweeps" },
+        { key = "X", name = "Flash Freeze", closeCast = true, hold = 0.30 },
+        { key = "C", name = "Ice Swipe" },
+    },
+    cream = {
+        { key = "E", name = "Stand Barrage" },
+        { key = "R", name = "Barrage Finisher" },
+        { key = "T", name = "Devastation" },
+        { key = "Y", name = "Dark Space" },
+        { key = "Z", name = "Void Surprise" },
+        { key = "X", name = "Madness Sorrow", closeCast = true, hold = 0.34 },
+    },
+    scarymonsters = {
+        { key = "E", name = "Claw Barrage" },
+        { key = "R", name = "Finisher" },
+        { key = "T", name = "Tail Whip" },
+        { key = "Y", name = "Fossilization" },
+        { key = "Z", name = "Dino Dash / Slam", closeCast = true, hold = 0.24 },
+        { key = "X", name = "Dino Army" },
+        { key = "C", name = "Dino Barrage" },
+    },
+    anubis = {
+        { key = "E", name = "Slice Barrage" },
+        { key = "R", name = "Finisher" },
+        { key = "T", name = "Curse Imbued Slice", closeCast = true, hold = 0.24 },
+        { key = "X", name = "Enraged Fury" },
+    },
+    silverchariot = {
+        { key = "E", name = "Stand Barrage" },
+        { key = "R", name = "Barrage Finisher" },
+        { key = "Y", name = "Cycle Slash", closeCast = true, hold = 0.24 },
+        { key = "Z", name = "Last Shot" },
+    },
+}
+
+local GENERIC_MOBILE_SKILLS = {
+    { key = "E", name = "Primary Skill" },
+    { key = "R", name = "Heavy Skill" },
+    { key = "T", name = "Skill T" },
+    { key = "Y", name = "Skill Y" },
+    { key = "G", name = "Skill G" },
+    { key = "X", name = "Skill X" },
+    { key = "C", name = "Skill C" },
+}
+
+local function getCurrentStandName()
+    local stats = Player:FindFirstChild("PlayerStats")
+    local stand = stats and stats:FindFirstChild("Stand")
+    return stand and tostring(stand.Value) or "None"
+end
+
+local function getStandPreset()
+    local rawName = getCurrentStandName()
+    local key = normalizeName(rawName)
+    key = STAND_ALIASES[key] or key
+    return rawName, key, STAND_SKILL_PRESETS[key]
+end
+
+local function getSkillProfile(keyName)
+    local _, _, preset = getStandPreset()
+    if not preset then return nil end
+    for _, entry in ipairs(preset) do
+        if entry.key == keyName then
+            return entry
+        end
+    end
+    return nil
+end
+
+
+local GUI_SKILL_KEYS = {
+    E=true, R=true, T=true, Y=true, U=true, G=true, H=true,
+    Z=true, X=true, C=true, V=true, B=true, N=true, J=true,
+}
+
+local function scanGuiSkillCatalog()
+    local found = {}
+    local playerGui = Player:FindFirstChild("PlayerGui")
+    if not playerGui then return {} end
+
+    for _, obj in ipairs(playerGui:GetDescendants()) do
+        if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+            local text = tostring(obj.Text or ""):gsub("\n", " ")
+            local key, name = text:match("^%s*([A-Z])%s*[-:%|•]%s*(.+)")
+            if key and GUI_SKILL_KEYS[key] and name and #name <= 80 then
+                name = name:gsub("^%s+", ""):gsub("%s+$", "")
+                if name ~= "" and not found[key] then
+                    found[key] = { key = key, name = name }
+                end
+            end
+        end
+    end
+
+    local ordered = {}
+    local order = {"E","R","T","Y","U","G","H","Z","X","C","V","B","N","J"}
+    for _, key in ipairs(order) do
+        if found[key] then ordered[#ordered + 1] = found[key] end
+    end
+    return ordered
+end
+
+local lastStandSummonAt = 0
+local function ensureStandSummoned(character)
+    if not character then return false end
+    local summoned = character:FindFirstChild("SummonedStand")
+    if not summoned then
+        return character:FindFirstChild("StandMorph") ~= nil
+    end
+    if summoned.Value == true then
+        return true
+    end
+    if tick() - lastStandSummonAt < 1.5 then
+        return false
+    end
+    local remoteFunc = character:FindFirstChild("RemoteFunction")
+    if not remoteFunc then return false end
+    lastStandSummonAt = tick()
+    pcall(function()
+        remoteFunc:InvokeServer("ToggleStand", "Toggle")
+    end)
+    return false
+end
+
 local _runtimeLog = nil
 local _rawPrint, _rawWarn = print, warn
 local function moduleLog(level, ...)
@@ -87,11 +273,9 @@ function CombatFarm:Init(Modules)
         if completedFrame and completedFrame:IsA("GuiObject") then
             questWatcherConnection = completedFrame:GetPropertyChangedSignal("Visible"):Connect(function()
                 if completedFrame.Visible then
-                    questCompleted = true
-                    moduleLog("INFO", "[CombatFarm] Quest completed.")
+                    moduleLog("INFO", "[CombatFarm] Quest completion UI pulse detected; waiting for PlayerStats confirmation.")
                 end
             end)
-            if completedFrame.Visible then questCompleted = true end
         end
     end
 
@@ -129,14 +313,8 @@ end
 
 local function equipStand()
     local char = _movement:GetCharacter()
-    if not char then return end
-    local remoteFunc = char:FindFirstChild("RemoteFunction")
-    if not remoteFunc then return end
-    local summoned = char:FindFirstChild("SummonedStand")
-    if summoned and summoned.Value == false then
-        remoteFunc:InvokeServer("ToggleStand", "Toggle")
-        task.wait(0.3)
-    end
+    if not char then return false end
+    return ensureStandSummoned(char)
 end
 
 local function getNPCHealthState(npc)
@@ -228,8 +406,6 @@ end
 -- COMBAT CORE (Xenon V5 style)
 -- =============================================
 local function killTarget(targetName, token)
-    -- Lock one concrete NPC exactly like Xenon V5. Do not re-select by name until
-    -- this model has actually died/despawned.
     local target = getClosestNPC(targetName)
     if not target then
         moduleLog("INFO", "[CombatFarm] No alive target found: " .. targetName)
@@ -244,10 +420,6 @@ local function killTarget(targetName, token)
     end
 
     local oldPos = hrp.CFrame
-    local camera = workspace.CurrentCamera
-    local oldCameraSubject = camera and camera.CameraSubject
-    local oldCameraType = camera and camera.CameraType
-
     local questProgressBefore, questMaxBefore = nil, nil
     if activeMode == "Quest" then
         questProgressBefore, questMaxBefore = readQuestState()
@@ -255,11 +427,9 @@ local function killTarget(targetName, token)
 
     local hasStand = _inventory:HasStand()
     if hasStand then
-        equipStand()
+        ensureStandSummoned(character)
     end
 
-    -- Xenon keeps the Stand's native constraints/collision intact and simply
-    -- drags its PrimaryPart behind the locked NPC every frame.
     local standMorph = hasStand and character:FindFirstChild("StandMorph") or nil
     local standPart = standMorph and standMorph.PrimaryPart or nil
 
@@ -275,23 +445,27 @@ local function killTarget(targetName, token)
 
     _movement:SetNoclip(true)
 
-    local yOffset = -35
-    if targetName == "The Idol" then yOffset = 35 end
-
+    local safeYOffset = (targetName == "The Idol") and 35 or -35
     local startTime = tick()
     local killed = false
     local lastKnownHp, hpSource = getNPCHealthState(target)
+    local lastDamageAt = tick()
+    local previousHp = lastKnownHp
     local missingPartsSince = nil
     local attackBusy = false
+    local playerMeleeFallback = not hasStand
+    local nextSkillAt = 0
+    local skillIndex = 1
+    local perSkillLastUse = {}
+    local closeCastUntil = 0
+    local closeCastKey = nil
 
-    moduleLog("INFO", ("[CombatFarm][XenonLock] Locked %s | hp=%s source=%s"):format(
-        tostring(targetName), tostring(lastKnownHp), tostring(hpSource)
+    moduleLog("INFO", ("[CombatFarm][XenonLock] Locked %s | hp=%s source=%s stand=%s"):format(
+        tostring(targetName), tostring(lastKnownHp), tostring(hpSource), tostring(getCurrentStandName())
     ))
 
     while isTokenActive(token) and tick() - startTime < 60 do
         if not target or not target.Parent then
-            -- A locked NPC disappearing from workspace.Living after being alive is
-            -- treated as a real death/despawn, never as a reason to switch early.
             killed = true
             break
         end
@@ -300,8 +474,11 @@ local function killTarget(targetName, token)
         if hp ~= nil then
             lastKnownHp = hp
             hpSource = source
+            if previousHp ~= nil and hp < previousHp - 0.001 then
+                lastDamageAt = tick()
+            end
+            previousHp = hp
             if hp <= 0 then
-                -- Match Xenon's small post-zero settle before releasing the target.
                 task.wait(0.215)
                 killed = true
                 break
@@ -310,10 +487,7 @@ local function killTarget(targetName, token)
 
         local enemyHRP = target:FindFirstChild("HumanoidRootPart")
         local enemyHumanoid = target:FindFirstChildWhichIsA("Humanoid")
-
         if not enemyHRP or not enemyHumanoid then
-            -- Do not abandon a still-alive YBA NPC because ragdoll/death code
-            -- temporarily replaced a part. Give the locked target a grace window.
             if not missingPartsSince then missingPartsSince = tick() end
             if tick() - missingPartsSince > 1.0 then
                 local currentHp = getNPCHealthState(target)
@@ -324,7 +498,6 @@ local function killTarget(targetName, token)
                     killed = true
                     break
                 end
-                -- Still alive: keep the same target and keep waiting for parts.
                 missingPartsSince = tick()
             end
             task.wait(0.03)
@@ -332,26 +505,43 @@ local function killTarget(targetName, token)
         end
         missingPartsSince = nil
 
-        -- Xenon camera behavior: FocusCam stays on the enemy HRP rather than the
-        -- Stand. This avoids camera subject changes while the Stand is force-moved.
         if focusCam and focusCam.Parent then
             focusCam.Value = enemyHRP
         end
 
-        -- Refresh StandMorph because YBA may recreate it after summon/animation.
-        if hasStand and (not standPart or not standPart.Parent) then
-            standMorph = character:FindFirstChild("StandMorph")
-            standPart = standMorph and standMorph.PrimaryPart or nil
+        if hasStand then
+            ensureStandSummoned(character)
+            if not standPart or not standPart.Parent then
+                standMorph = character:FindFirstChild("StandMorph")
+                standPart = standMorph and standMorph.PrimaryPart or nil
+            end
         end
 
+        local standCF = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.1
         if standPart and standPart.Parent then
-            local standCF = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.1
             standPart.CFrame = standCF
-            -- Same spatial model as Xenon: player follows the Stand but remains
-            -- vertically separated from combat to avoid knockback/void issues.
-            hrp.CFrame = standCF + standCF.LookVector * -2.5 + Vector3.new(0, yOffset, 0)
+        end
+
+        -- If there is no Stand, or Stand M1s have failed to deal damage for a
+        -- short window, the player itself moves into melee range. This also covers
+        -- stands whose normal M1 is not useful for farming.
+        if hasStand and not playerMeleeFallback and tick() - lastDamageAt > 2.0 then
+            playerMeleeFallback = true
+            moduleLog("INFO", "[CombatFarm][MeleeFallback] No damage detected from Stand M1; moving player into melee range.")
+        end
+
+        local closeCasting = tick() < closeCastUntil
+        if closeCasting or playerMeleeFallback then
+            -- Player-centered hitboxes/AOE need the character itself close to the
+            -- victim. Face the NPC from just behind it so short-radius moves land.
+            local nearCF = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.0
+            hrp.CFrame = CFrame.lookAt(nearCF.Position, enemyHRP.Position)
+        elseif standPart and standPart.Parent then
+            hrp.CFrame = standCF + standCF.LookVector * -2.5 + Vector3.new(0, safeYOffset, 0)
         else
-            hrp.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.3 + Vector3.new(0, yOffset, 0)
+            -- Stand exists in PlayerStats but is temporarily not materialized.
+            -- Keep the player safe while the summon cooldown tries again.
+            hrp.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.3 + Vector3.new(0, safeYOffset, 0)
         end
 
         pcall(function()
@@ -359,8 +549,6 @@ local function killTarget(targetName, token)
             hrp.AssemblyAngularVelocity = Vector3.zero
         end)
 
-        -- Xenon attacks asynchronously so InvokeServer cannot stall the positioning
-        -- loop and let the Stand fall away from the target.
         if not attackBusy then
             attackBusy = true
             task.spawn(function()
@@ -369,31 +557,47 @@ local function killTarget(targetName, token)
             end)
         end
 
+        -- Auto Skills: one skill at a time, throttled. This avoids firing every
+        -- configured RemoteEvent every render frame on mobile.
         local skills = _config:Get("AutoSkills")
-        if type(skills) == "table" and #skills > 0 then
-            task.spawn(function()
-                for _, sk in ipairs(skills) do
-                    if not isTokenActive(token) then break end
-                    local keyCode = Enum.KeyCode[sk]
-                    if keyCode then
-                        pcall(function() useMove(keyCode) end)
-                    end
+        if type(skills) == "table" and #skills > 0 and tick() >= nextSkillAt then
+            if skillIndex > #skills then skillIndex = 1 end
+            local sk = tostring(skills[skillIndex])
+            skillIndex = skillIndex + 1
+            local keyCode = Enum.KeyCode[sk]
+            local since = tick() - (perSkillLastUse[sk] or 0)
+            if keyCode and since >= 2.0 then
+                local profile = getSkillProfile(sk)
+                perSkillLastUse[sk] = tick()
+                nextSkillAt = tick() + 0.28
+
+                if profile and profile.closeCast then
+                    closeCastKey = sk
+                    closeCastUntil = tick() + (profile.hold or 0.28)
+                    local nearCF = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.8
+                    hrp.CFrame = CFrame.lookAt(nearCF.Position, enemyHRP.Position)
+                    pcall(function()
+                        hrp.AssemblyLinearVelocity = Vector3.zero
+                        hrp.AssemblyAngularVelocity = Vector3.zero
+                    end)
                 end
-            end)
+
+                task.spawn(function()
+                    pcall(function() useMove(keyCode) end)
+                end)
+            else
+                nextSkillAt = tick() + 0.08
+            end
         end
 
         task.wait()
     end
 
     if killed and activeMode == "Quest" and isTokenActive(token, "Quest") then
-        -- Do not select the next same-name spawn until YBA has had a chance to
-        -- credit the kill. This directly addresses kills visually ending but not
-        -- incrementing QuestProgress.
         local settleDeadline = tick() + 1.25
         while tick() < settleDeadline and isTokenActive(token, "Quest") do
             local progress, maxProgress = readQuestState()
-            if questCompleted
-                or progress ~= questProgressBefore
+            if progress ~= questProgressBefore
                 or maxProgress ~= questMaxBefore
                 or ((maxProgress or 0) > 0 and (progress or 0) >= (maxProgress or 0)) then
                 moduleLog("INFO", ("[CombatFarm][XenonLock] Kill credited | progress=%s/%s"):format(
@@ -404,18 +608,14 @@ local function killTarget(targetName, token)
             task.wait(0.05)
         end
     elseif killed then
-        task.wait(0.25)
+        task.wait(0.15)
     end
 
-    -- Chain targeting: on a successful kill, hand camera/position directly to
-    -- the next same-name NPC instead of bouncing back to the safe spot between
-    -- kills. This removes the camera reset + teleport round-trip delay.
     local chainedToNext = false
     local questFinishedNow = false
     if killed and activeMode == "Quest" then
         local progress, maxProgress = readQuestState()
-        questFinishedNow = questCompleted
-            or ((maxProgress or 0) > 0 and (progress or 0) >= (maxProgress or 0))
+        questFinishedNow = ((maxProgress or 0) > 0 and (progress or 0) >= (maxProgress or 0))
     end
 
     if killed and token == runId and isTokenActive(token) and not questFinishedNow then
@@ -426,17 +626,24 @@ local function killTarget(targetName, token)
                 focusCam.Value = nextHRP
             end
 
-            if hasStand and (not standPart or not standPart.Parent) then
+            if hasStand then
+                ensureStandSummoned(character)
                 standMorph = character:FindFirstChild("StandMorph")
                 standPart = standMorph and standMorph.PrimaryPart or nil
             end
 
+            local nextStandCF = nextHRP.CFrame - nextHRP.CFrame.LookVector * 1.1
             if standPart and standPart.Parent then
-                local nextStandCF = nextHRP.CFrame - nextHRP.CFrame.LookVector * 1.1
                 standPart.CFrame = nextStandCF
-                hrp.CFrame = nextStandCF + nextStandCF.LookVector * -2.5 + Vector3.new(0, yOffset, 0)
+            end
+
+            if playerMeleeFallback then
+                local nearCF = nextHRP.CFrame - nextHRP.CFrame.LookVector * 2.0
+                hrp.CFrame = CFrame.lookAt(nearCF.Position, nextHRP.Position)
+            elseif standPart and standPart.Parent then
+                hrp.CFrame = nextStandCF + nextStandCF.LookVector * -2.5 + Vector3.new(0, safeYOffset, 0)
             else
-                hrp.CFrame = nextHRP.CFrame - nextHRP.CFrame.LookVector * 2.3 + Vector3.new(0, yOffset, 0)
+                hrp.CFrame = nextHRP.CFrame - nextHRP.CFrame.LookVector * 2.3 + Vector3.new(0, safeYOffset, 0)
             end
 
             pcall(function()
@@ -445,7 +652,7 @@ local function killTarget(targetName, token)
             end)
 
             chainedToNext = true
-            moduleLog("INFO", ("[CombatFarm][XenonChain] Handoff %s -> next spawn (no safe-spot/camera reset)"):format(tostring(targetName)))
+            moduleLog("INFO", ("[CombatFarm][XenonChain] Handoff %s -> next spawn"):format(tostring(targetName)))
         end
     end
 
@@ -459,26 +666,10 @@ local function killTarget(targetName, token)
                 end
             end)
         end
-
         if token == runId then
             _movement:SetNoclip(false)
-            -- Do NOT return to oldPos after every successful kill. Staying at the
-            -- combat location avoids the safe-spot round trip; Stop() still performs
-            -- full cleanup when farming is disabled.
             if not killed and hrp and hrp.Parent then
                 pcall(function() hrp.CFrame = oldPos end)
-            end
-            if camera and camera.Parent then
-                pcall(function()
-                    if oldCameraSubject and oldCameraSubject.Parent then
-                        camera.CameraSubject = oldCameraSubject
-                    else
-                        local char = _movement:GetCharacter()
-                        local humanoid = char and char:FindFirstChildWhichIsA("Humanoid")
-                        if humanoid then camera.CameraSubject = humanoid end
-                    end
-                    if oldCameraType then camera.CameraType = oldCameraType end
-                end)
             end
         end
     end
@@ -518,24 +709,31 @@ local function questLevelFromName(name)
 end
 
 local function getBestQuest()
-    local level = Player.PlayerStats.Level.Value
+    local stats = Player:FindFirstChild("PlayerStats")
+    local levelObj = stats and stats:FindFirstChild("Level")
+    local level = levelObj and tonumber(levelObj.Value) or 0
     local best = nil
     local bestReq = -1
 
     for questName, data in pairs(questInfo) do
-        if data.autoChoose == true then
+        if data.autoChoose == true and data.enemy and not data.special then
             local req = questLevelFromName(questName)
             if req and req <= level and req > bestReq then
                 bestReq = req
                 best = questName
             elseif req and req <= level and req == bestReq and best then
-                -- Prefer a quest whose exact dialogue object exists in the current server.
                 local dialogues = workspace:FindFirstChild("Dialogues")
                 if dialogues and dialogues:FindFirstChild(questName) and not dialogues:FindFirstChild(best) then
                     best = questName
                 end
             end
         end
+    end
+
+    if best then
+        moduleLog("INFO", ("[CombatFarm] Auto Choose selected highest normal quest: %s (player level %s)"):format(
+            tostring(best), tostring(level)
+        ))
     end
     return best
 end
@@ -699,10 +897,21 @@ local function acceptQuest(questName, token)
     questOnCooldown = false
 
     local beforeProgress, beforeMax = readQuestState()
-    if (beforeMax or 0) > 0 then
-        -- A quest is already active. Do not reopen the NPC dialogue.
-        questCompleted = (beforeProgress or 0) >= (beforeMax or 0) and (beforeMax or 0) > 0
+    local activeIncomplete = (beforeMax or 0) > 0 and (beforeProgress or 0) < (beforeMax or 0)
+    local previousCompleted = (beforeMax or 0) > 0 and (beforeProgress or 0) >= (beforeMax or 0)
+
+    if activeIncomplete then
+        questCompleted = false
         return true
+    end
+
+    -- A completed quest is NOT an active quest. Re-open the NPC immediately so
+    -- normal leveling quests can be taken again. Only quests with a real mapped
+    -- cooldown are allowed to enter the cooldown state.
+    if previousCompleted then
+        questCompleted = false
+        moduleLog("INFO", ("[CombatFarm] Previous quest finished (%s/%s). Re-taking %s...")
+            :format(tostring(beforeProgress), tostring(beforeMax), tostring(questName)))
     end
 
     local prompt = findQuestPrompt(questName)
@@ -718,10 +927,6 @@ local function acceptQuest(questName, token)
         return false
     end
 
-    -- DialogueAnalyzer mapping (2026-09-14): this quest path uses the same
-    -- ClientFunctions option callback as Merchant and accepts with:
-    -- Option1 -> Option1 -> Option1. Prefer internal U[1] injection; retain the
-    -- visible click path only as an executor-compatibility fallback.
     local deadline = tick() + 8
     local lastStageSignature = nil
     local lastAdvanceAt = 0
@@ -730,10 +935,13 @@ local function acceptQuest(questName, token)
 
     while tick() < deadline and isTokenActive(token, "Quest") do
         local progress, maxProgress = readQuestState()
-        if (maxProgress or 0) > 0 or progress ~= beforeProgress or maxProgress ~= beforeMax then
+        local nowActive = (maxProgress or 0) > 0 and (progress or 0) < (maxProgress or 0)
+        local stateChanged = progress ~= beforeProgress or maxProgress ~= beforeMax
+
+        if nowActive and (stateChanged or previousCompleted or (beforeMax or 0) == 0) then
             questCompleted = false
-            moduleLog("INFO", ("[CombatFarm] Quest accepted through updated dialogue: %s | internalStages=%d fallbackClicks=%d")
-                :format(questName, internalStages, fallbackClicks))
+            moduleLog("INFO", ("[CombatFarm] Quest accepted: %s | progress=%s/%s internalStages=%d fallbackClicks=%d")
+                :format(questName, tostring(progress), tostring(maxProgress), internalStages, fallbackClicks))
             return true
         end
 
@@ -743,17 +951,13 @@ local function acceptQuest(questName, token)
             local isNewStage = signature ~= lastStageSignature
             local retryExpired = (tick() - lastAdvanceAt) >= 0.45
             if isNewStage or retryExpired then
-                local injected = false
-                local okInject, route = injectDialogueOption("Option1")
+                local okInject = injectDialogueOption("Option1")
                 if okInject then
-                    injected = true
                     internalStages = internalStages + 1
                     lastStageSignature = signature
                     lastAdvanceAt = tick()
                     task.wait(0.04)
-                end
-
-                if not injected then
+                else
                     if clickDialogueButton(btn) then
                         fallbackClicks = fallbackClicks + 1
                         lastStageSignature = signature
@@ -766,23 +970,28 @@ local function acceptQuest(questName, token)
             end
         else
             task.wait(0.04)
-            if not Player.PlayerGui:FindFirstChild("DialogueGui") and tick() + 0.5 < deadline then
-                -- UI closed before PlayerStats changed: cooldown, requirement, or dialogue mismatch.
-                break
-            end
         end
     end
 
     local progress, maxProgress = readQuestState()
-    if (maxProgress or 0) > 0 or progress ~= beforeProgress or maxProgress ~= beforeMax then
+    local nowActive = (maxProgress or 0) > 0 and (progress or 0) < (maxProgress or 0)
+    if nowActive and (progress ~= beforeProgress or maxProgress ~= beforeMax or previousCompleted) then
         questCompleted = false
-        moduleLog("INFO", "[CombatFarm] Quest accepted: " .. questName)
+        moduleLog("INFO", "[CombatFarm] Quest accepted after dialogue settle: " .. questName)
         return true
     end
 
-    moduleLog("INFO", "[CombatFarm] Quest acceptance failed/cooldown with new dialogue. Last stage: " .. tostring(dialogueStageSignature()))
-    questOnCooldown = true
-    cooldownUntil = tick() + 60
+    local data = questInfo[questName]
+    local mappedCooldown = data and tonumber(data.cooldownSeconds) or 0
+    if mappedCooldown and mappedCooldown > 0 then
+        questOnCooldown = true
+        cooldownUntil = tick() + mappedCooldown
+        moduleLog("INFO", ("[CombatFarm] Quest appears unavailable; mapped cooldown %ss: %s")
+            :format(tostring(mappedCooldown), tostring(questName)))
+    else
+        questOnCooldown = false
+        moduleLog("WARN", "[CombatFarm] Quest acceptance failed; no cooldown is mapped for this normal quest, so it will retry.")
+    end
     return false
 end
 
@@ -832,36 +1041,40 @@ local function runQuestFarm(token)
     else
         currentQuest = _config:Get("SelectedQuest")
     end
+
     if not currentQuest or currentQuest == "" then
         moduleLog("INFO", "[CombatFarm] No quest selected or found.")
+        return false
+    end
+
+    local data = questInfo[currentQuest]
+    if not data then
+        moduleLog("WARN", "[CombatFarm] Quest was detected by the UI but its objective is not mapped yet: " .. tostring(currentQuest))
+        return false
+    end
+    if data.special then
+        moduleLog("WARN", "[CombatFarm] Special quest is visible but not automated yet: " .. tostring(currentQuest) .. " (" .. tostring(data.special) .. ").")
         return false
     end
 
     if not acceptQuest(currentQuest, token) then
         return false
     end
-    if not waitToken(0.35, token, "Quest") then return false end
+    if not waitToken(0.10, token, "Quest") then return false end
 
-    if questCompleted then
-        moduleLog("INFO", "[CombatFarm] Quest already completed.")
-        return true
-    end
-
-    local data = questInfo[currentQuest]
-    if not data then
-        moduleLog("WARN", "[CombatFarm] Quest was detected by the UI but its objective is not mapped yet: " .. tostring(currentQuest) .. ". Run DialogueAnalyzer and send the quest log.")
+    local progress, maxProgress = readQuestState()
+    if (maxProgress or 0) <= 0 then
+        moduleLog("WARN", "[CombatFarm] Quest dialogue finished but no active QuestMaxProgress was detected.")
         return false
     end
-    if data.special then
-        moduleLog("WARN", "[CombatFarm] Special quest is visible but not automated yet: " .. tostring(currentQuest) .. " (" .. tostring(data.special) .. "). It is excluded from Auto Choose.")
-        return false
-    end
+
     if data.enemy then
-        -- Keep killing fresh alive spawns until the active quest reports complete.
         while isTokenActive(token, "Quest") do
-            local progress, maxProgress = readQuestState()
-            if questCompleted or ((maxProgress or 0) > 0 and (progress or 0) >= (maxProgress or 0)) then
+            progress, maxProgress = readQuestState()
+            if (maxProgress or 0) > 0 and (progress or 0) >= (maxProgress or 0) then
                 questCompleted = true
+                moduleLog("INFO", ("[CombatFarm] Quest objective complete: %s | %s/%s")
+                    :format(tostring(currentQuest), tostring(progress), tostring(maxProgress)))
                 return true
             end
 
@@ -870,12 +1083,19 @@ local function runQuestFarm(token)
             if ok then
                 if not waitToken(0.02, token, "Quest") then return false end
             else
-                if not waitToken(0.75, token, "Quest") then return false end
+                if not waitToken(0.50, token, "Quest") then return false end
             end
         end
         return false
     elseif data.item then
-        return collectItem(data.item, data.amount, token)
+        local ok = collectItem(data.item, data.amount, token)
+        if ok then
+            local p, m = readQuestState()
+            if (m or 0) > 0 and (p or 0) >= (m or 0) then
+                questCompleted = true
+            end
+        end
+        return ok
     end
     return false
 end
@@ -910,10 +1130,10 @@ local function farmLoop(token)
             if token ~= runId or stopRequested then break end
 
             if ok then
-                moduleLog("INFO", "[CombatFarm] Quest completed! Moving to next.")
-                if not waitCancelable(3, token) then break end
+                moduleLog("INFO", "[CombatFarm] Quest completed. Re-taking highest/selected quest...")
                 questCompleted = false
                 questOnCooldown = false
+                if not waitCancelable(0.45, token) then break end
             else
                 if questOnCooldown then
                     local remaining = math.max(1, math.ceil(cooldownUntil - tick()))
@@ -959,6 +1179,40 @@ local function startMode(mode)
     task.spawn(function()
         farmLoop(token)
     end)
+end
+
+
+function CombatFarm:GetSkillCatalog()
+    local standName, _, preset = getStandPreset()
+    local source = "generic"
+    local sourceSkills = preset
+
+    if preset then
+        source = "stand-preset"
+    else
+        local guiDetected = scanGuiSkillCatalog()
+        if #guiDetected > 0 then
+            source = "gui-detected"
+            sourceSkills = guiDetected
+        else
+            sourceSkills = GENERIC_MOBILE_SKILLS
+        end
+    end
+
+    local skills = {}
+    for _, entry in ipairs(sourceSkills) do
+        local profile = getSkillProfile(entry.key)
+        skills[#skills + 1] = {
+            key = entry.key,
+            name = entry.name,
+            closeCast = (entry.closeCast == true) or (profile and profile.closeCast == true) or false,
+        }
+    end
+    return {
+        stand = standName,
+        source = source,
+        skills = skills,
+    }
 end
 
 function CombatFarm:StartNPC()
