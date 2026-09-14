@@ -6,6 +6,8 @@
 -- =====================
 
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local Player = Players.LocalPlayer
 
 local CombatFarm = {}
@@ -122,14 +124,27 @@ local function equipStand()
     end
 end
 
+local function isNPCAlive(npc)
+    if not npc or not npc.Parent then return false end
+    local hrp = npc:FindFirstChild("HumanoidRootPart")
+    local hum = npc:FindFirstChildWhichIsA("Humanoid")
+    if not hrp or not hum or hum.Health <= 0 then return false end
+    local healthValue = npc:FindFirstChild("Health")
+    if healthValue and tonumber(healthValue.Value) and tonumber(healthValue.Value) <= 0 then
+        return false
+    end
+    return true
+end
+
 local function getClosestNPC(npcName)
     local closest = nil
     local closestDist = math.huge
     local hrp = _movement:GetCharacter("HumanoidRootPart")
     if not hrp then return nil end
+
     for _, npc in pairs(workspace.Living:GetChildren()) do
-        if npc.Name == npcName and npc:FindFirstChild("HumanoidRootPart") then
-            local npcHRP = npc.HumanoidRootPart
+        if npc.Name == npcName and isNPCAlive(npc) then
+            local npcHRP = npc:FindFirstChild("HumanoidRootPart")
             local dist = (hrp.Position - npcHRP.Position).Magnitude
             if dist < closestDist then
                 closestDist = dist
@@ -140,13 +155,39 @@ local function getClosestNPC(npcName)
     return closest
 end
 
+local function isTokenActive(token, expectedMode)
+    if stopRequested or token ~= runId then return false end
+    if expectedMode and activeMode ~= expectedMode then return false end
+
+    -- Extra safety: even if a UI callback ever fails, the persisted toggle state
+    -- can still stop an old worker on the next frame.
+    if _config then
+        if activeMode == "NPC" and _config:Get("NPCFarmEnabled") ~= true then
+            return false
+        end
+        if activeMode == "Quest" and _config:Get("QuestFarmEnabled") ~= true then
+            return false
+        end
+    end
+    return true
+end
+
+local function waitToken(seconds, token, expectedMode)
+    local deadline = tick() + seconds
+    while tick() < deadline do
+        if not isTokenActive(token, expectedMode) then return false end
+        task.wait(math.min(0.05, math.max(0, deadline - tick())))
+    end
+    return true
+end
+
 -- =============================================
 -- COMBAT CORE (Xenon V5 style)
 -- =============================================
 local function killTarget(targetName, token)
-    local target = getClosestNPC(targetName) or workspace.Living:FindFirstChild(targetName)
+    local target = getClosestNPC(targetName)
     if not target then
-        moduleLog("INFO", "[CombatFarm] Target not found: " .. targetName)
+        moduleLog("INFO", "[CombatFarm] No alive target found: " .. targetName)
         return false
     end
 
@@ -165,12 +206,22 @@ local function killTarget(targetName, token)
     local standPart = nil
     local standAlignPos, standAlignOri = nil, nil
     local standAlignPosEnabled, standAlignOriEnabled = nil, nil
+    local standCanCollide, standMassless = nil, nil
     local hasStand = _inventory:HasStand()
     if hasStand then
         equipStand()
         local standMorph = _movement:GetCharacter("StandMorph")
         if standMorph and standMorph.PrimaryPart then
             standPart = standMorph.PrimaryPart
+            standCanCollide = standPart.CanCollide
+            standMassless = standPart.Massless
+
+            -- Collision was one of the main causes of Stand fling when its CFrame
+            -- was forced into an NPC. Keep the Stand non-collidable and massless
+            -- only while CombatFarm owns it.
+            standPart.CanCollide = false
+            standPart.Massless = true
+
             local standAttach = standPart:FindFirstChild("StandAttach")
             if standAttach then
                 local alignPos = standAttach:FindFirstChild("AlignPosition")
@@ -185,12 +236,12 @@ local function killTarget(targetName, token)
                     alignOri.Enabled = false
                 end
             end
-            standPart.CanCollide = true
         end
     end
 
-    -- Focus camera on the Stand while fighting. The player body stays offset/hidden,
-    -- so following the Stand gives a stable view of the actual combat.
+    -- YBA reads FocusCam internally. Roblox's own camera is pointed at a smooth,
+    -- invisible anchor following the Stand so physics corrections do not shake
+    -- the player's view every frame.
     local character = _movement:GetCharacter()
     local focusCam = character and character:FindFirstChild("FocusCam")
     local createdFocusCam = false
@@ -202,83 +253,85 @@ local function killTarget(targetName, token)
         createdFocusCam = true
     end
 
-    local initialEnemyHRP = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
-    local focusTarget = standPart or initialEnemyHRP
-    if focusCam then
-        focusCam.Value = focusTarget
-    end
-    if camera and focusTarget then
+    local cameraAnchor = nil
+    if camera then
+        cameraAnchor = Instance.new("Part")
+        cameraAnchor.Name = "WhiteHubCombatCamera"
+        cameraAnchor.Size = Vector3.new(1, 1, 1)
+        cameraAnchor.Transparency = 1
+        cameraAnchor.Anchored = true
+        cameraAnchor.CanCollide = false
+        cameraAnchor.CanTouch = false
+        cameraAnchor.CanQuery = false
+        cameraAnchor.CFrame = (standPart and standPart.CFrame) or hrp.CFrame
+        cameraAnchor.Parent = workspace
         pcall(function()
             camera.CameraType = Enum.CameraType.Custom
-            camera.CameraSubject = focusTarget
+            camera.CameraSubject = cameraAnchor
         end)
     end
 
-    -- Combat flight lock: noclip alone does not cancel gravity. Reuse the same
-    -- BodyVelocity freeze approach used by item collection so the player hovers
-    -- at the combat offset instead of accelerating into the void.
+    if focusCam then
+        focusCam.Value = standPart or target:FindFirstChild("HumanoidRootPart")
+    end
+
     _movement:SetNoclip(true)
     local combatFreeze = _movement:Freeze()
 
-    -- Y offset for player position (Xenon V5: player stays underground for safety)
     local yOffset = -35
     if targetName == "The Idol" then yOffset = 35 end
 
     local startTime = tick()
     local killed = false
+    local fixedPlayerDistance = -2.5
 
-    while not stopRequested and token == runId and tick() - startTime < 60 do
-        target = getClosestNPC(targetName) or workspace.Living:FindFirstChild(targetName)
-        if not target then
+    while isTokenActive(token) and tick() - startTime < 60 do
+        -- This invocation owns one concrete NPC. Once it dies we return so the
+        -- outer loop can immediately choose another alive spawn with the same name.
+        if not isNPCAlive(target) then
             killed = true
             break
         end
 
         local enemyHRP = target:FindFirstChild("HumanoidRootPart")
-        local enemyHumanoid = target:FindFirstChildWhichIsA("Humanoid")
-        local enemyHealth = target:FindFirstChild("Health")
-        local currentHealth = enemyHealth and tonumber(enemyHealth.Value) or (enemyHumanoid and enemyHumanoid.Health)
+        if not enemyHRP then break end
 
-        if not enemyHRP or not enemyHumanoid or not currentHealth or currentHealth <= 0 then
-            killed = true
-            break
-        end
-
-        -- XENON V5 POSITIONING: stand behind NPC, player offset and suspended.
         if standPart and standPart.Parent then
-            standPart.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.1
-            hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-3, -2) + Vector3.new(0, yOffset, 0)
+            local standCF = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.1
+            standPart.CFrame = standCF
+            hrp.CFrame = standCF + standCF.LookVector * fixedPlayerDistance + Vector3.new(0, yOffset, 0)
 
-            -- Keep both YBA's FocusCam value and Roblox camera following the Stand.
+            pcall(function()
+                standPart.AssemblyLinearVelocity = Vector3.zero
+                standPart.AssemblyAngularVelocity = Vector3.zero
+            end)
+
             if focusCam and focusCam.Parent then
                 focusCam.Value = standPart
             end
-            if camera and camera.Parent and camera.CameraSubject ~= standPart then
-                pcall(function()
-                    camera.CameraType = Enum.CameraType.Custom
-                    camera.CameraSubject = standPart
-                end)
+
+            if cameraAnchor and cameraAnchor.Parent then
+                -- Smooth camera tracking without lagging far behind the combat.
+                cameraAnchor.CFrame = cameraAnchor.CFrame:Lerp(standPart.CFrame, 0.45)
             end
         else
-            hrp.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.3 + Vector3.new(0, yOffset, 0)
-            if focusCam and focusCam.Parent then
-                focusCam.Value = enemyHRP
+            local playerCF = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.3 + Vector3.new(0, yOffset, 0)
+            hrp.CFrame = playerCF
+            if focusCam and focusCam.Parent then focusCam.Value = enemyHRP end
+            if cameraAnchor and cameraAnchor.Parent then
+                cameraAnchor.CFrame = cameraAnchor.CFrame:Lerp(enemyHRP.CFrame, 0.45)
             end
         end
 
-        -- Kill any accumulated fall/knockback velocity. BodyVelocity keeps the
-        -- player hovering, while this prevents one-frame physics spikes.
         pcall(function()
-            hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.AssemblyAngularVelocity = Vector3.zero
         end)
 
-        -- Recreate the flight lock if YBA removed it during combat.
         if not combatFreeze or not combatFreeze.Parent then
             combatFreeze = _movement:Freeze()
         end
 
-        -- Attack
         pcall(function()
             remoteFunc:InvokeServer("Attack", "m1")
         end)
@@ -286,11 +339,10 @@ local function killTarget(targetName, token)
         local skills = _config:Get("AutoSkills")
         if type(skills) == "table" then
             for _, sk in ipairs(skills) do
+                if not isTokenActive(token) then break end
                 local keyCode = Enum.KeyCode[sk]
                 if keyCode then
-                    pcall(function()
-                        useMove(keyCode)
-                    end)
+                    pcall(function() useMove(keyCode) end)
                 end
             end
         end
@@ -298,9 +350,11 @@ local function killTarget(targetName, token)
         task.wait()
     end
 
-    -- Cleanup immediately after the combat loop.
-    -- Existing combat offsets/distances are intentionally unchanged.
     _movement:Unfreeze(combatFreeze)
+
+    if cameraAnchor and cameraAnchor.Parent then
+        cameraAnchor:Destroy()
+    end
 
     if focusCam and focusCam.Parent then
         pcall(function()
@@ -318,31 +372,34 @@ local function killTarget(targetName, token)
     if standAlignOri and standAlignOri.Parent and standAlignOriEnabled ~= nil then
         pcall(function() standAlignOri.Enabled = standAlignOriEnabled end)
     end
-
-    _movement:SetNoclip(false)
-
-    if hrp and hrp.Parent then
+    if standPart and standPart.Parent then
         pcall(function()
-            hrp.CFrame = oldPos
+            if standCanCollide ~= nil then standPart.CanCollide = standCanCollide end
+            if standMassless ~= nil then standPart.Massless = standMassless end
+            standPart.AssemblyLinearVelocity = Vector3.zero
+            standPart.AssemblyAngularVelocity = Vector3.zero
         end)
     end
 
-    if camera and camera.Parent then
-        pcall(function()
-            if oldCameraSubject and oldCameraSubject.Parent then
-                camera.CameraSubject = oldCameraSubject
-            else
-                local character = _movement:GetCharacter()
-                local humanoid = character and character:FindFirstChildWhichIsA("Humanoid")
-                if humanoid then
-                    camera.CameraSubject = humanoid
+    -- Only the currently owning worker restores global movement/camera state.
+    -- Stop() handles this itself when a worker is invalidated by toggling OFF.
+    if token == runId then
+        _movement:SetNoclip(false)
+        if hrp and hrp.Parent then
+            pcall(function() hrp.CFrame = oldPos end)
+        end
+        if camera and camera.Parent then
+            pcall(function()
+                if oldCameraSubject and oldCameraSubject.Parent then
+                    camera.CameraSubject = oldCameraSubject
+                else
+                    local char = _movement:GetCharacter()
+                    local humanoid = char and char:FindFirstChildWhichIsA("Humanoid")
+                    if humanoid then camera.CameraSubject = humanoid end
                 end
-            end
-
-            if oldCameraType then
-                camera.CameraType = oldCameraType
-            end
-        end)
+                if oldCameraType then camera.CameraType = oldCameraType end
+            end)
+        end
     end
 
     return killed
@@ -392,7 +449,71 @@ local function readQuestState()
     return progress, maxProgress
 end
 
-local function acceptQuest(questName)
+local function clickDialogueButton(btn)
+    if not btn or not btn:IsA("GuiButton") then return false end
+
+    if type(firesignal) == "function" then
+        local ok = pcall(function()
+            firesignal(btn.MouseButton1Click)
+        end)
+        if ok then return true end
+    end
+
+    local ok = pcall(function()
+        local pos = btn.AbsolutePosition
+        local size = btn.AbsoluteSize
+        local x = pos.X + size.X * 0.5
+        local y = pos.Y + size.Y * 0.5
+        VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+        task.wait(0.03)
+        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+    end)
+    return ok
+end
+
+local function findDialogueOption(optionName)
+    local gui = Player.PlayerGui:FindFirstChild("DialogueGui")
+    if not gui then return nil end
+    local options = gui:FindFirstChild("Options", true)
+    if not options then return nil end
+    local option = options:FindFirstChild(optionName)
+    if not option then return nil end
+    return option:FindFirstChildWhichIsA("GuiButton", true)
+end
+
+local function findQuestPrompt(questName)
+    local cleanName = tostring(questName):gsub("%s*%[Lvl%.%s*%d+%+%]%s*$", "")
+    local roots = {
+        workspace:FindFirstChild("Dialogues"),
+        ReplicatedStorage:FindFirstChild("Dialogue"),
+        ReplicatedStorage:FindFirstChild("NewDialogue"),
+    }
+
+    local best, bestScore = nil, -1
+    for _, root in ipairs(roots) do
+        if root then
+            for _, obj in ipairs(root:GetDescendants()) do
+                if obj:IsA("ProximityPrompt") then
+                    local score = 0
+                    local ancestry = obj:GetFullName():lower()
+                    local q = questName:lower()
+                    local c = cleanName:lower()
+                    if ancestry:find(q, 1, true) then score = score + 100 end
+                    if c ~= "" and ancestry:find(c, 1, true) then score = score + 60 end
+                    local objectText = tostring(obj.ObjectText or ""):lower()
+                    if objectText == q or objectText == c then score = score + 80 end
+                    if c ~= "" and objectText:find(c, 1, true) then score = score + 40 end
+                    if score > bestScore then
+                        best, bestScore = obj, score
+                    end
+                end
+            end
+        end
+    end
+    return bestScore > 0 and best or nil
+end
+
+local function acceptQuest(questName, token)
     if questOnCooldown and tick() < cooldownUntil then
         local remaining = math.ceil(cooldownUntil - tick())
         moduleLog("INFO", "[CombatFarm] Quest on cooldown, waiting " .. remaining .. " seconds.")
@@ -400,88 +521,62 @@ local function acceptQuest(questName)
     end
     questOnCooldown = false
 
-    local dialogues = workspace:FindFirstChild("Dialogues")
-    if not dialogues then
-        moduleLog("INFO", "[CombatFarm] Dialogues folder not found.")
-        return false
-    end
-
-    -- Recursive lookup also works when dialogue NPCs are nested in folders.
-    local dialogueNPC = dialogues:FindFirstChild(questName, true)
-    if not dialogueNPC then
-        moduleLog("INFO", "[CombatFarm] Dialogue NPC not found: " .. questName)
-        return false
-    end
-
-    local dialogueValue = dialogueNPC:FindFirstChild("Dialogue", true)
-    if not dialogueValue then
-        moduleLog("INFO", "[CombatFarm] No Dialogue value for " .. questName)
-        return false
-    end
-
-    local remoteEvent = _movement:GetCharacter("RemoteEvent")
-    if not remoteEvent then
-        moduleLog("INFO", "[CombatFarm] RemoteEvent not found.")
-        return false
-    end
-
-    local npcDialogue = dialogueValue.Value
     local beforeProgress, beforeMax = readQuestState()
+    if (beforeMax or 0) > 0 then
+        -- A quest is already active. Do not reopen the NPC dialogue.
+        questCompleted = (beforeProgress or 0) >= (beforeMax or 0) and (beforeMax or 0) > 0
+        return true
+    end
 
-    -- Advance dialogue one step at a time and stop as soon as the quest
-    -- state changes, instead of blindly sending the full sequence.
-    for i = 1, 10 do
-        local dialogueId = "Dialogue" .. i
+    local prompt = findQuestPrompt(questName)
+    if not prompt then
+        moduleLog("WARN", "[CombatFarm] New quest ProximityPrompt not found: " .. questName)
+        return false
+    end
 
-        pcall(function()
-            remoteEvent:FireServer("EndDialogue", {
-                ["NPC"] = npcDialogue,
-                ["Option"] = "Option1",
-                ["Dialogue"] = dialogueId
-            })
-        end)
+    moduleLog("INFO", "[CombatFarm] Opening updated quest dialogue: " .. questName)
+    local opened = pcall(function() fireproximityprompt(prompt) end)
+    if not opened then
+        moduleLog("WARN", "[CombatFarm] Could not trigger quest prompt: " .. questName)
+        return false
+    end
 
-        task.wait(0.08)
-
+    -- v1.7974+ quest dialogues are client UI driven. Historically quest choices
+    -- are affirmative Option1, so advance only Option1 and stop the instant the
+    -- PlayerStats quest state changes.
+    local deadline = tick() + 8
+    local nextClickAt = 0
+    while tick() < deadline and isTokenActive(token, "Quest") do
         local progress, maxProgress = readQuestState()
         if (maxProgress or 0) > 0 or progress ~= beforeProgress or maxProgress ~= beforeMax then
             questCompleted = false
-            moduleLog("INFO", "[CombatFarm] Quest accepted: " .. questName)
+            moduleLog("INFO", "[CombatFarm] Quest accepted through updated dialogue: " .. questName)
             return true
         end
 
-        -- Compatibility with dialogue implementations that expect a second
-        -- packet without the Option field.
-        pcall(function()
-            remoteEvent:FireServer("EndDialogue", {
-                ["NPC"] = npcDialogue,
-                ["Dialogue"] = dialogueId
-            })
-        end)
-
-        task.wait(0.08)
-
-        progress, maxProgress = readQuestState()
-        if (maxProgress or 0) > 0 or progress ~= beforeProgress or maxProgress ~= beforeMax then
-            questCompleted = false
-            moduleLog("INFO", "[CombatFarm] Quest accepted: " .. questName)
-            return true
+        local btn = findDialogueOption("Option1")
+        if btn and btn.Visible and tick() >= nextClickAt then
+            nextClickAt = tick() + 0.15
+            clickDialogueButton(btn)
+            task.wait(0.08)
+        else
+            task.wait(0.05)
+            if not Player.PlayerGui:FindFirstChild("DialogueGui") and tick() + 0.5 < deadline then
+                -- If the UI closed before quest state changed, do not keep blindly
+                -- clicking anything else; this is usually cooldown/requirements.
+                break
+            end
         end
     end
 
-    -- Short replication window rather than the previous 10-second polling.
-    local timeout = tick() + 3
-    while tick() < timeout do
-        local progress, maxProgress = readQuestState()
-        if (maxProgress or 0) > 0 or progress ~= beforeProgress or maxProgress ~= beforeMax then
-            questCompleted = false
-            moduleLog("INFO", "[CombatFarm] Quest accepted: " .. questName)
-            return true
-        end
-        task.wait(0.1)
+    local progress, maxProgress = readQuestState()
+    if (maxProgress or 0) > 0 or progress ~= beforeProgress or maxProgress ~= beforeMax then
+        questCompleted = false
+        moduleLog("INFO", "[CombatFarm] Quest accepted: " .. questName)
+        return true
     end
 
-    moduleLog("INFO", "[CombatFarm] Quest acceptance failed - possibly on cooldown.")
+    moduleLog("INFO", "[CombatFarm] Quest acceptance failed/cooldown with new dialogue.")
     questOnCooldown = true
     cooldownUntil = tick() + 60
     return false
@@ -491,7 +586,7 @@ local function collectItem(itemName, requiredAmount, token)
     local inventory = _inventory
     local movement  = _movement
     local startTime = tick()
-    while token == runId and not stopRequested and inventory:Count(itemName) < requiredAmount and (tick() - startTime) < 120 do
+    while isTokenActive(token, "Quest") and inventory:Count(itemName) < requiredAmount and (tick() - startTime) < 120 do
         local itemModel = nil
         local itemsFolder = workspace.Item_Spawns and workspace.Item_Spawns.Items
         if itemsFolder then
@@ -538,10 +633,10 @@ local function runQuestFarm(token)
         return false
     end
 
-    if not acceptQuest(currentQuest) then
+    if not acceptQuest(currentQuest, token) then
         return false
     end
-    task.wait(2)
+    if not waitToken(0.35, token, "Quest") then return false end
 
     if questCompleted then
         moduleLog("INFO", "[CombatFarm] Quest already completed.")
@@ -554,13 +649,21 @@ local function runQuestFarm(token)
         return false
     end
     if data.enemy then
-        local ok = killTarget(data.enemy, token)
-        if ok then
-            local timeout = tick()
-            while not questCompleted and tick() - timeout < 15 do
-                task.wait(0.5)
+        -- Keep killing fresh alive spawns until the active quest reports complete.
+        while isTokenActive(token, "Quest") do
+            local progress, maxProgress = readQuestState()
+            if questCompleted or ((maxProgress or 0) > 0 and (progress or 0) >= (maxProgress or 0)) then
+                questCompleted = true
+                return true
             end
-            return questCompleted
+
+            local ok = killTarget(data.enemy, token)
+            if not isTokenActive(token, "Quest") then return false end
+            if ok then
+                if not waitToken(0.15, token, "Quest") then return false end
+            else
+                if not waitToken(0.75, token, "Quest") then return false end
+            end
         end
         return false
     elseif data.item then
@@ -575,23 +678,24 @@ end
 local function waitCancelable(seconds, token)
     local deadline = tick() + seconds
     while tick() < deadline do
-        if stopRequested or token ~= runId then return false end
-        task.wait(math.min(0.25, deadline - tick()))
+        if not isTokenActive(token) then return false end
+        task.wait(math.min(0.10, math.max(0, deadline - tick())))
     end
     return true
 end
 
 local function farmLoop(token)
-    while not stopRequested and token == runId do
+    while isTokenActive(token) do
         if activeMode == "NPC" then
             local ok = runNPCFarm(token)
             if token ~= runId or stopRequested then break end
             if ok then
-                moduleLog("INFO", "[CombatFarm] NPC killed. Waiting for respawn...")
+                moduleLog("INFO", "[CombatFarm] NPC killed. Looking for another alive spawn...")
+                if not waitCancelable(0.15, token) then break end
             else
-                moduleLog("INFO", "[CombatFarm] NPC farm failed. Retrying in 5 seconds...")
+                moduleLog("INFO", "[CombatFarm] No alive NPC found. Retrying shortly...")
+                if not waitCancelable(0.75, token) then break end
             end
-            if not waitCancelable(5, token) then break end
 
         elseif activeMode == "Quest" then
             local ok = runQuestFarm(token)
@@ -665,7 +769,8 @@ function CombatFarm:Stop()
     questCompleted = false
     _movement:SetNoclip(false)
     _movement:ClearFocus()
-    moduleLog("INFO", "[CombatFarm] Stopped.")
+    _movement:FixCamera()
+    moduleLog("INFO", "[CombatFarm] Stopped immediately and cleaned combat state.")
 end
 
 function CombatFarm:IsRunning()
