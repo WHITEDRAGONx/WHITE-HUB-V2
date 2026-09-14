@@ -642,6 +642,10 @@ function UI:Create()
     MakeToggle(FarmPage, "Auto Sell", _config and _config:Get("AutoSell"), function(v)
         if _config then _config:Set("AutoSell", v) end
     end)
+    MakeToggle(FarmPage, "Fast Sell (Hidden Dialogue)", _config and _config:Get("FastSellHidden"), function(v)
+        if _config then _config:Set("FastSellHidden", v) end
+        runtimeLog("INFO", "Fast Sell (Hidden Dialogue) = " .. tostring(v))
+    end)
     MakeToggle(FarmPage, "Auto Buy Lucky", _config and _config:Get("BuyLucky"), function(v)
         if _config then _config:Set("BuyLucky", v) end
     end)
