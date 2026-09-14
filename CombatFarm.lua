@@ -1,7 +1,7 @@
 -- =====================
 -- CombatFarm.lua
 -- Unified combat: NPC and Quest farming.
--- QUEST/COMBAT BUILD: R15-EXACT-TEST-ALL
+-- QUEST/COMBAT BUILD: R16-COMBAT-ONLY-TEST-ALL
 -- Logic identical to Xenon V5 (stand positioning, attacks, death detection).
 -- FIXED: player positioned underground (yOffset -35) with noclip for safety.
 -- =====================
@@ -1177,14 +1177,249 @@ local function collectItem(itemName, requiredAmount, token)
     return inventory:Count(itemName) >= requiredAmount
 end
 
+-- Exact local port of DialogueAnalyzer R2 TEST ALL.  Keep this inside
+-- CombatFarm so Inventory.lua (the proven Zero-Delay Merchant build) stays
+-- completely untouched.
+local cfRawGetConnections = type(getconnections) == "function" and getconnections or nil
+local cfRawSetupvalue = type(setupvalue) == "function" and setupvalue
+    or (debug and type(debug.setupvalue) == "function" and debug.setupvalue) or nil
+local cfRawFireSignal = type(firesignal) == "function" and firesignal or nil
+
+local function cfFindClickContinue(gui)
+    if not gui then return nil end
+    local direct = gui:FindFirstChild("ClickContinue", true)
+    if direct and direct:IsA("GuiButton") then return direct end
+    for _, obj in ipairs(gui:GetDescendants()) do
+        if obj:IsA("GuiButton") and tostring(obj.Name):lower():find("continue", 1, true) then
+            return obj
+        end
+    end
+    return nil
+end
+
+local function cfConnectionLine(fn)
+    if type(fn) ~= "function" then return "?" end
+    local line = "?"
+    if debug and type(debug.info) == "function" then
+        pcall(function() line = debug.info(fn, "l") or "?" end)
+    elseif debug and type(debug.getinfo) == "function" then
+        pcall(function()
+            local info = debug.getinfo(fn)
+            if info then line = info.currentline or info.linedefined or "?" end
+        end)
+    end
+    return tostring(line)
+end
+
+local function cfStageToken(gui)
+    if not gui or not gui.Parent then return "<closed>" end
+    local sig = dialogueStageSignature() or ""
+    local click = cfFindClickContinue(gui)
+    local connCount = 0
+    if click and cfRawGetConnections then
+        local signal = nil
+        pcall(function() signal = click.MouseButton1Click end)
+        if signal then
+            local ok, conns = pcall(cfRawGetConnections, signal)
+            if ok and type(conns) == "table" then connCount = #conns end
+        end
+    end
+    return tostring(gui) .. "|" .. tostring(sig) .. "|continue=" .. tostring(connCount)
+end
+
+local function cfStageChanged(gui, before)
+    task.wait(0.035)
+    local playerGui = Player:FindFirstChild("PlayerGui")
+    local current = playerGui and playerGui:FindFirstChild("DialogueGui")
+    if not current or current ~= gui or not gui.Parent then return true end
+    return cfStageToken(gui) ~= before
+end
+
+local function cfHideDialogue(gui)
+    if not gui or not gui:IsA("ScreenGui") then return nil end
+    local old = gui.Enabled
+    local guard
+    guard = gui:GetPropertyChangedSignal("Enabled"):Connect(function()
+        if gui.Parent and gui.Enabled then gui.Enabled = false end
+    end)
+    gui.Enabled = false
+    return function(restore)
+        if guard then pcall(function() guard:Disconnect() end) end
+        if restore and gui.Parent then pcall(function() gui.Enabled = old end) end
+    end
+end
+
+local function cfTestOption1(gui)
+    local option = findDialogueOption("Option1")
+    if not option then return false, "no Option1" end
+    if not cfRawGetConnections then return false, "getconnections unavailable" end
+
+    local signal = nil
+    pcall(function() signal = option.MouseButton1Click end)
+    if not signal then pcall(function() signal = option.Activated end) end
+    if not signal then return false, "Option1 has no signal" end
+
+    local ok, conns = pcall(cfRawGetConnections, signal)
+    if not ok or type(conns) ~= "table" or #conns == 0 then
+        return false, "Option1 has no connections"
+    end
+
+    for _, conn in pairs(conns) do
+        local fn = nil
+        pcall(function() fn = conn.Function end)
+        local line = cfConnectionLine(fn)
+        local before = cfStageToken(gui)
+
+        if cfRawSetupvalue and type(fn) == "function" then
+            local okSet = pcall(cfRawSetupvalue, fn, 1, "Option1")
+            if okSet and cfStageChanged(gui, before) then
+                return true, "setupvalue line=" .. line
+            end
+        end
+
+        before = cfStageToken(gui)
+        local fireMethod = nil
+        pcall(function() fireMethod = conn.Fire end)
+        if type(fireMethod) == "function" then
+            local okFire = pcall(function() conn:Fire() end)
+            if okFire and cfStageChanged(gui, before) then
+                return true, "connection:Fire line=" .. line
+            end
+        end
+
+        before = cfStageToken(gui)
+        if type(fn) == "function" then
+            local okFn = pcall(fn)
+            if okFn and cfStageChanged(gui, before) then
+                return true, "connection.Function line=" .. line
+            end
+        end
+    end
+
+    if cfRawFireSignal then
+        local before = cfStageToken(gui)
+        local okFire = pcall(cfRawFireSignal, signal)
+        if okFire and cfStageChanged(gui, before) then
+            return true, "firesignal"
+        end
+    end
+
+    return false, "all Option1 methods produced no stage change"
+end
+
+local function cfTestClickContinue(gui)
+    local click = cfFindClickContinue(gui)
+    if not click then return false, "ClickContinue not found" end
+
+    local signal = nil
+    pcall(function() signal = click.MouseButton1Click end)
+    if not signal then pcall(function() signal = click.Activated end) end
+    if not signal then return false, "ClickContinue has no signal" end
+
+    if cfRawGetConnections then
+        local ok, conns = pcall(cfRawGetConnections, signal)
+        if ok and type(conns) == "table" then
+            for _, conn in pairs(conns) do
+                local fn = nil
+                pcall(function() fn = conn.Function end)
+                local line = cfConnectionLine(fn)
+
+                local before = cfStageToken(gui)
+                local fireMethod = nil
+                pcall(function() fireMethod = conn.Fire end)
+                if type(fireMethod) == "function" then
+                    local okFire = pcall(function() conn:Fire() end)
+                    if okFire and cfStageChanged(gui, before) then
+                        return true, "connection:Fire line=" .. line
+                    end
+                end
+
+                before = cfStageToken(gui)
+                if type(fn) == "function" then
+                    local okFn = pcall(fn)
+                    if okFn and cfStageChanged(gui, before) then
+                        return true, "connection.Function line=" .. line
+                    end
+                end
+            end
+        end
+    end
+
+    if cfRawFireSignal then
+        local before = cfStageToken(gui)
+        local okFire = pcall(cfRawFireSignal, signal)
+        if okFire and cfStageChanged(gui, before) then
+            return true, "firesignal"
+        end
+    end
+
+    return false, "all ClickContinue methods produced no stage change"
+end
+
+local function cfRunExactTestAll(isComplete, timeout)
+    timeout = math.max(0.35, tonumber(timeout) or 2.50)
+    local playerGui = Player:FindFirstChild("PlayerGui")
+    local gui = playerGui and playerGui:FindFirstChild("DialogueGui")
+    if not gui then return false, "No DialogueGui open" end
+
+    local unhide = cfHideDialogue(gui)
+    local deadline = tick() + timeout
+    local passes = 0
+    local lastMethod = "none"
+
+    while tick() < deadline do
+        if type(isComplete) == "function" then
+            local okDone, done = pcall(isComplete)
+            if okDone and done == true then
+                if unhide then unhide(false) end
+                return true, string.format("passes=%d method=%s", passes, tostring(lastMethod))
+            end
+        end
+
+        local current = playerGui:FindFirstChild("DialogueGui")
+        if not current or not current.Parent then
+            if unhide then unhide(false) end
+            return true, string.format("passes=%d method=%s", passes, tostring(lastMethod))
+        end
+        gui = current
+        pcall(function() if gui:IsA("ScreenGui") then gui.Enabled = false end end)
+        passes = passes + 1
+
+        local sig = dialogueStageSignature() or ""
+        local ok, method
+        if sig ~= "" then
+            ok, method = cfTestOption1(gui)
+        else
+            ok, method = cfTestClickContinue(gui)
+        end
+        lastMethod = method or lastMethod
+        task.wait(0.02)
+    end
+
+    if type(isComplete) == "function" then
+        local okDone, done = pcall(isComplete)
+        if okDone and done == true then
+            if unhide then unhide(false) end
+            return true, string.format("passes=%d method=%s", passes, tostring(lastMethod))
+        end
+    end
+    if not playerGui:FindFirstChild("DialogueGui") then
+        if unhide then unhide(false) end
+        return true, string.format("passes=%d method=%s", passes, tostring(lastMethod))
+    end
+
+    if unhide then unhide(true) end
+    return false, "TEST ALL timeout; last method=" .. tostring(lastMethod)
+end
+
 -- Some normal leveling quests open an automatic final DialogueGui after the
 -- objective is complete. DialogueAnalyzer mapped Dio/Jotaro's final page as
 -- Option1 = "Very well." using the same ClientFunctions:2063 callback used by
 -- Merchant and quest acceptance. Hide and clear it before re-taking the quest.
 runPromptDialogueFast = function(prompt, token, isComplete, waitTimeout, label)
     if not prompt then return false, "missing ProximityPrompt" end
-    if not _inventory or (type(_inventory.RunDialogueTestAll) ~= "function" and type(_inventory.RunFastExistingDialogueOptionLoop) ~= "function") then
-        return false, "fast existing-dialogue controller unavailable"
+    if not cfRawGetConnections then
+        return false, "exact TEST ALL requires getconnections"
     end
 
     waitTimeout = math.max(0.75, tonumber(waitTimeout) or 3.50)
@@ -1200,16 +1435,10 @@ runPromptDialogueFast = function(prompt, token, isComplete, waitTimeout, label)
             if stale:IsA("ScreenGui") then stale.Enabled = false end
         end)
         local staleRef = stale
-        local staleComplete = function()
+        local staleOk = select(1, cfRunExactTestAll(function()
             local current = playerGui:FindFirstChild("DialogueGui")
             return current == nil or current ~= staleRef
-        end
-        local staleOk
-        if type(_inventory.RunDialogueTestAll) == "function" then
-            staleOk = select(1, _inventory:RunDialogueTestAll("Option1", staleComplete, 2.50))
-        else
-            staleOk = select(1, _inventory:RunFastExistingDialogueOptionLoop("Option1", staleComplete, 10, 2.50))
-        end
+        end, 2.50))
         if not staleOk then
             return false, "stale DialogueGui could not be cleared"
         end
@@ -1277,22 +1506,11 @@ runPromptDialogueFast = function(prompt, token, isComplete, waitTimeout, label)
         end
     end
 
-    local okFast, info
-    if type(_inventory.RunDialogueTestAll) == "function" then
-        moduleLog("INFO", ("[CombatFarm][FastDialogue] %s: using exact DialogueAnalyzer TEST ALL engine."):format(label))
-        okFast, info = _inventory:RunDialogueTestAll(
-            "Option1",
-            completionCheck,
-            math.max(1.25, waitTimeout)
-        )
-    else
-        okFast, info = _inventory:RunFastExistingDialogueOptionLoop(
-            "Option1",
-            completionCheck,
-            12,
-            math.max(1.25, waitTimeout)
-        )
-    end
+    moduleLog("INFO", ("[CombatFarm][FastDialogue] %s: using CombatFarm-local exact DialogueAnalyzer TEST ALL engine."):format(label))
+    local okFast, info = cfRunExactTestAll(
+        completionCheck,
+        math.max(1.25, waitTimeout)
+    )
 
     if okFast then
         moduleLog("INFO", ("[CombatFarm][FastDialogue] %s cleared invisibly: %s"):format(label, tostring(info or "fast")))
