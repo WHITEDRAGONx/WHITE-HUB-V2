@@ -1,6 +1,6 @@
 -- =====================
 -- Inventory.lua
--- BUILD: ZERO-DELAY-2026.09.14-R1
+-- BUILD: ZERO-DELAY-2026.09.14-R2-FINGERPRINT-CACHE
 -- Handles item counting, selling, buying, and keep-item logic.
 -- Updated for YBA's new dialogue system (v1.7974+).
 -- ZERO-DELAY build: proven Merchant FINAL path (~0.70s) with safe restoration and fallbacks.
@@ -61,6 +61,8 @@ end
 -- =====================
 -- INIT
 -- =====================
+local runDialogueFingerprintCheck
+
 function Inventory:Init(Modules)
     _runtimeLog = Modules.RuntimeLog
     _config   = Modules.Config
@@ -78,6 +80,13 @@ function Inventory:Init(Modules)
     else
         moduleLog("INFO", "[Inventory] Initialized (no 2x gamepass).")
     end
+
+    -- One deferred compatibility fingerprint per runtime. This turns future YBA
+    -- dialogue recompiles into an actionable WARN instead of a silent slowdown.
+    task.spawn(function()
+        task.wait(1)
+        pcall(runDialogueFingerprintCheck)
+    end)
 end
 
 -- =====================
@@ -656,9 +665,78 @@ local function isClientFunctionsLine(fn, wantedLine)
     return line == wantedLine and type(source) == "string" and source:find("ClientFunctions", 1, true) ~= nil
 end
 
+-- Structural fingerprints are intentionally preferred over hard-coded line numbers.
+-- YBA can recompile ClientFunctions and move 1982/2035/2063 without changing the
+-- actual callback layout. Lines remain useful diagnostics, but no longer the only key.
+local _fingerprint = {
+    checked = false,
+    dialogueType = false,
+    dialogueTypeLine = nil,
+    optionCallbackLine = nil,
+    advanceClosureLine = nil,
+    warnedOptionMismatch = false,
+    warnedAdvanceMismatch = false,
+}
+
+local function isClientFunctionsSource(fn)
+    local source = select(1, functionSourceLine(fn))
+    return type(source) == "string" and source:find("ClientFunctions", 1, true) ~= nil
+end
+
+local function constantsContain(fn, wanted)
+    if type(_rawGetConstants) ~= "function" or type(fn) ~= "function" then return false end
+    local ok, constants = pcall(_rawGetConstants, fn)
+    if not ok or type(constants) ~= "table" then return false end
+    for _, value in pairs(constants) do
+        if value == wanted then return true end
+    end
+    return false
+end
+
+local function looksLikeOptionCallback(fn)
+    if type(fn) ~= "function" or not isClientFunctionsSource(fn) then return false end
+    local _, line = functionSourceLine(fn)
+    if line == 2063 then return true end
+    return constantsContain(fn, "Name")
+end
+
+local function looksLikeAdvanceClosure(fn)
+    if type(fn) ~= "function" or not isClientFunctionsSource(fn) then return false end
+    local _, line = functionSourceLine(fn)
+    if line == 1982 then return true end
+
+    local hasTimestamp, timestamp = getIndexedUpvalue(fn, 1)
+    local hasRich, richObject = getIndexedUpvalue(fn, 4)
+    if not hasTimestamp or type(timestamp) ~= "number" or not hasRich or type(richObject) ~= "table" then
+        return false
+    end
+    return type(richObject.Animate) == "function" or richObject.Text ~= nil
+end
+
+local function fingerprintSummary()
+    local caps = {
+        getconnections = type(_rawGetConnections) == "function",
+        setupvalue = type(_rawSetupvalue) == "function",
+        getupvalue = type(_rawGetUpvalue) == "function",
+        getgc = type(_rawGetGC) == "function",
+        getconstants = type(_rawGetConstants) == "function",
+        setconstant = type(_rawSetConstant) == "function",
+        firesignal = type(_rawFireSignal) == "function",
+    }
+    return string.format(
+        "getconnections=%s setupvalue=%s getupvalue=%s getgc=%s getconstants=%s setconstant=%s firesignal=%s",
+        tostring(caps.getconnections), tostring(caps.setupvalue), tostring(caps.getupvalue),
+        tostring(caps.getgc), tostring(caps.getconstants), tostring(caps.setconstant), tostring(caps.firesignal)
+    )
+end
+
 local function findLiveDialogueType()
-    if _cachedDialogueType and isClientFunctionsLine(_cachedDialogueType, 2035) then
-        return _cachedDialogueType
+    if _cachedDialogueType and isClientFunctionsSource(_cachedDialogueType) then
+        local exists, functionTable = getIndexedUpvalue(_cachedDialogueType, 1)
+        if isClientFunctionsLine(_cachedDialogueType, 2035)
+            or (exists and type(functionTable) == "table" and functionTable.DialogueType == _cachedDialogueType) then
+            return _cachedDialogueType
+        end
     end
     if type(_rawGetGC) ~= "function" then return nil end
 
@@ -667,18 +745,52 @@ local function findLiveDialogueType()
 
     local fallback = nil
     for _, obj in pairs(objects) do
-        if type(obj) == "function" and isClientFunctionsLine(obj, 2035) then
-            fallback = fallback or obj
+        if type(obj) == "function" and isClientFunctionsSource(obj) then
+            local _, line = functionSourceLine(obj)
             local exists, functionTable = getIndexedUpvalue(obj, 1)
-            if exists and type(functionTable) == "table" and functionTable.DialogueType == obj then
-                _cachedDialogueType = obj
-                return obj
+            local structuralMatch = exists and type(functionTable) == "table" and functionTable.DialogueType == obj
+            if line == 2035 or structuralMatch then
+                fallback = fallback or obj
+                if structuralMatch then
+                    _cachedDialogueType = obj
+                    _fingerprint.dialogueType = true
+                    _fingerprint.dialogueTypeLine = line
+                    return obj
+                end
             end
         end
     end
 
     _cachedDialogueType = fallback
+    if fallback then
+        _fingerprint.dialogueType = true
+        _fingerprint.dialogueTypeLine = select(2, functionSourceLine(fallback))
+    end
     return fallback
+end
+
+runDialogueFingerprintCheck = function()
+    if _fingerprint.checked then return _fingerprint.dialogueType end
+    _fingerprint.checked = true
+
+    moduleLog("INFO", "[Inventory][Fingerprint] Executor capabilities: " .. fingerprintSummary())
+    if type(_rawGetGC) ~= "function" or type(_rawGetUpvalue) ~= "function" then
+        moduleLog("WARN", "[Inventory][Fingerprint] Deep dialogue fingerprint unavailable; FINAL route will use compatibility fallbacks.")
+        return false
+    end
+
+    local dialogueType = findLiveDialogueType()
+    if dialogueType then
+        local _, line = functionSourceLine(dialogueType)
+        moduleLog("INFO", "[Inventory][Fingerprint] ClientFunctions DialogueType detected at line " .. tostring(line or "unknown") .. ".")
+        if line and line ~= 2035 then
+            moduleLog("WARN", "[Inventory][Fingerprint] YBA ClientFunctions line layout changed (DialogueType was 2035, now " .. tostring(line) .. "). Structural fingerprint still matches; fast route remains enabled.")
+        end
+        return true
+    end
+
+    moduleLog("WARN", "[Inventory][Fingerprint] ClientFunctions dialogue layout was not recognized. FINAL route may be disabled/fall back; copy WARN/ERROR if Merchant speed breaks after a YBA update.")
+    return false
 end
 
 local function hasInternalDialogueStateSupport()
@@ -686,9 +798,11 @@ local function hasInternalDialogueStateSupport()
 end
 
 local function hasFinalZeroDelaySupport()
+    -- getgc is now optional for the first attempt: ClickContinue connections can
+    -- expose the live advance closure directly. If they do not, getgc remains
+    -- the compatibility discovery fallback.
     return hasInternalDialogueStateSupport()
         and type(_rawGetUpvalue) == "function"
-        and type(_rawGetGC) == "function"
 end
 
 local function optionNameForButton(btn)
@@ -756,6 +870,19 @@ local function injectDialogueOption(wantedName)
         return false, "MouseButton1Click callback unavailable"
     end
 
+    local _, callbackLine = functionSourceLine(fn)
+    _fingerprint.optionCallbackLine = callbackLine
+    if not looksLikeOptionCallback(fn) then
+        if not _fingerprint.warnedOptionMismatch then
+            _fingerprint.warnedOptionMismatch = true
+            moduleLog("WARN", "[Inventory][Fingerprint] Dialogue option callback no longer matches the proven ClientFunctions fingerprint (line=" .. tostring(callbackLine or "unknown") .. "). Internal injection disabled for this screen.")
+        end
+        return false, "dialogue option callback fingerprint mismatch"
+    elseif callbackLine and callbackLine ~= 2063 and not _fingerprint.warnedOptionMismatch then
+        _fingerprint.warnedOptionMismatch = true
+        moduleLog("WARN", "[Inventory][Fingerprint] Dialogue option callback moved from line 2063 to " .. tostring(callbackLine) .. "; structural fingerprint still matches.")
+    end
+
     local ok, err = pcall(_rawSetupvalue, fn, 1, wantedName)
     if not ok then return false, tostring(err) end
     task.wait()
@@ -803,6 +930,7 @@ local function newFinalState()
         clickContinue = nil,
         signalFires = 0,
         direct1982Calls = 0,
+        connectionClosureHits = 0,
         richObjects = 0,
         constantsZeroed = 0,
         gcScans = 0,
@@ -958,15 +1086,51 @@ local function fireButtonSignal(button, state)
     return false
 end
 
-local function findFresh1982Closure(state)
-    if type(_rawGetGC) ~= "function" then return nil end
+local function findAdvanceClosureFromClickContinue(state)
+    local button = state and state.clickContinue
+    if not button or type(_rawGetConnections) ~= "function" then return nil end
 
-    -- Reuse the current stage closure. getgc(true) is one of the most expensive
-    -- executor operations here, so only scan again after the stage changes or
-    -- when no usable closure has been discovered yet.
-    if state and type(state.active1982) == "function" then
+    local signals = {}
+    pcall(function() signals[#signals + 1] = button.MouseButton1Click end)
+    pcall(function() signals[#signals + 1] = button.Activated end)
+
+    for _, signal in ipairs(signals) do
+        if signal then
+            local ok, conns = pcall(_rawGetConnections, signal)
+            if ok and type(conns) == "table" then
+                for _, conn in pairs(conns) do
+                    local fn = nil
+                    pcall(function() fn = conn.Function end)
+                    if looksLikeAdvanceClosure(fn) then
+                        state.connectionClosureHits = (state.connectionClosureHits or 0) + 1
+                        local _, line = functionSourceLine(fn)
+                        _fingerprint.advanceClosureLine = line
+                        return fn
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function findFresh1982Closure(state)
+    -- Reuse the active closure for this stage first.
+    if state and type(state.active1982) == "function" and looksLikeAdvanceClosure(state.active1982) then
         return state.active1982
     end
+
+    -- Preferred path: ask ClickContinue for its live callback. If the executor
+    -- exposes the active closure here, this avoids an expensive getgc(true) scan.
+    if state then
+        local direct = findAdvanceClosureFromClickContinue(state)
+        if direct then
+            state.active1982 = direct
+            return direct
+        end
+    end
+
+    if type(_rawGetGC) ~= "function" then return nil end
 
     local now = tick()
     if state and (now - (state.lastGCScan or 0)) < FINAL_GC_RESCAN_INTERVAL then
@@ -984,7 +1148,7 @@ local function findFresh1982Closure(state)
     local bestTimestamp = -math.huge
 
     for _, obj in pairs(objects) do
-        if type(obj) == "function" and isClientFunctionsLine(obj, 1982) then
+        if type(obj) == "function" and looksLikeAdvanceClosure(obj) then
             fallback = fallback or obj
             local exists, timestamp = getIndexedUpvalue(obj, 1)
             if exists and type(timestamp) == "number" and timestamp > bestTimestamp then
@@ -995,6 +1159,14 @@ local function findFresh1982Closure(state)
     end
 
     local found = best or fallback
+    if found then
+        local _, line = functionSourceLine(found)
+        _fingerprint.advanceClosureLine = line
+        if line and line ~= 1982 and not _fingerprint.warnedAdvanceMismatch then
+            _fingerprint.warnedAdvanceMismatch = true
+            moduleLog("WARN", "[Inventory][Fingerprint] Dialogue advance closure moved from line 1982 to " .. tostring(line) .. "; structural fingerprint still matches.")
+        end
+    end
     if state then state.active1982 = found end
     return found
 end
@@ -1163,9 +1335,9 @@ local function tryFinalMerchantSell(itemName, merchantPrompt)
 
     if soldAmount and soldAmount > 0 then
         moduleLog("INFO", string.format(
-            "[Inventory][ZeroDelay] ✅ Sold %dx %s in %.3fs | signals=%d direct1982=%d rich=%d constants=%d gcScans=%d",
+            "[Inventory][ZeroDelay] ✅ Sold %dx %s in %.3fs | signals=%d direct1982=%d connClosure=%d rich=%d constants=%d gcScans=%d",
             soldAmount, itemName, tick() - startedAt, state.signalFires, state.direct1982Calls,
-            state.richObjects, state.constantsZeroed, state.gcScans or 0
+            state.connectionClosureHits or 0, state.richObjects, state.constantsZeroed, state.gcScans or 0
         ))
         return true, soldAmount
     end
@@ -1594,6 +1766,18 @@ function Inventory:SummonStand()
     end
 
     return false
+end
+
+function Inventory:GetDialogueDiagnostics()
+    return {
+        Build = "ZERO-DELAY-2026.09.14-R2-FINGERPRINT-CACHE",
+        FingerprintChecked = _fingerprint.checked,
+        DialogueTypeDetected = _fingerprint.dialogueType,
+        DialogueTypeLine = _fingerprint.dialogueTypeLine,
+        OptionCallbackLine = _fingerprint.optionCallbackLine,
+        AdvanceClosureLine = _fingerprint.advanceClosureLine,
+        Capabilities = fingerprintSummary(),
+    }
 end
 
 return Inventory
