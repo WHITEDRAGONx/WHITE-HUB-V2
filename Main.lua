@@ -26,9 +26,139 @@ local function clockText()
     return ok and result or string.format("%.2f", tick() - bootStartedAt)
 end
 
+local RuntimeLog = {
+    _entries = {},
+    _listeners = {},
+    _nextListenerId = 0,
+    _maxEntries = 500,
+    RuntimeId = "pending",
+}
+
+local function joinArgs(...)
+    local out = {}
+    for i = 1, select("#", ...) do
+        out[#out + 1] = tostring(select(i, ...))
+    end
+    return table.concat(out, " ")
+end
+
+function RuntimeLog:Write(level, moduleName, ...)
+    level = tostring(level or "INFO"):upper()
+    moduleName = tostring(moduleName or "General")
+    local message = joinArgs(...)
+    local entry = {
+        Time = clockText(),
+        Level = level,
+        Module = moduleName,
+        Message = message,
+    }
+
+    table.insert(self._entries, entry)
+    while #self._entries > self._maxEntries do
+        table.remove(self._entries, 1)
+    end
+
+    for id, callback in pairs(self._listeners) do
+        local ok = pcall(callback, entry)
+        if not ok then
+            self._listeners[id] = nil
+        end
+    end
+end
+
+function RuntimeLog:Info(moduleName, ...) self:Write("INFO", moduleName, ...) end
+function RuntimeLog:Warn(moduleName, ...) self:Write("WARN", moduleName, ...) end
+function RuntimeLog:Error(moduleName, ...) self:Write("ERROR", moduleName, ...) end
+
+function RuntimeLog:GetEntries()
+    local copy = {}
+    for i, entry in ipairs(self._entries) do
+        copy[i] = {
+            Time = entry.Time,
+            Level = entry.Level,
+            Module = entry.Module,
+            Message = entry.Message,
+        }
+    end
+    return copy
+end
+
+function RuntimeLog:GetStats()
+    local stats = { INFO = 0, WARN = 0, ERROR = 0, Total = #self._entries }
+    for _, entry in ipairs(self._entries) do
+        if stats[entry.Level] ~= nil then
+            stats[entry.Level] = stats[entry.Level] + 1
+        end
+    end
+    return stats
+end
+
+function RuntimeLog:GetLastError()
+    for i = #self._entries, 1, -1 do
+        local entry = self._entries[i]
+        if entry.Level == "ERROR" or entry.Level == "WARN" then
+            return entry
+        end
+    end
+    return nil
+end
+
+function RuntimeLog:GetText()
+    local stats = self:GetStats()
+    local exec = "Unknown"
+    pcall(function()
+        if type(identifyexecutor) == "function" then
+            local a, b = identifyexecutor()
+            exec = b ~= nil and (tostring(a) .. " " .. tostring(b)) or tostring(a)
+        end
+    end)
+
+    local lines = {
+        "WHITE HUB V3 - RUNTIME LOG",
+        "========================================",
+        "Runtime ID: " .. tostring(self.RuntimeId or "unknown"),
+        "PlaceId: " .. tostring(game.PlaceId),
+        "JobId: " .. tostring(game.JobId),
+        "Player: " .. tostring(Player and Player.Name or "unknown"),
+        "Executor: " .. tostring(exec),
+        ("Entries: %d | INFO: %d | WARN: %d | ERROR: %d"):format(stats.Total, stats.INFO, stats.WARN, stats.ERROR),
+        "",
+        "RUNTIME EVENTS",
+        "----------------------------------------",
+    }
+
+    for _, entry in ipairs(self._entries) do
+        lines[#lines + 1] = ("[%s] [%s] [%s] %s"):format(entry.Time, entry.Level, entry.Module, entry.Message)
+    end
+
+    return table.concat(lines, "\n")
+end
+
+function RuntimeLog:Clear()
+    table.clear(self._entries)
+    self:Write("INFO", "Console", "Runtime log cleared by user.")
+end
+
+function RuntimeLog:Subscribe(callback)
+    if type(callback) ~= "function" then return nil end
+    self._nextListenerId = self._nextListenerId + 1
+    local id = self._nextListenerId
+    self._listeners[id] = callback
+
+    local disconnected = false
+    return {
+        Disconnect = function()
+            if disconnected then return end
+            disconnected = true
+            self._listeners[id] = nil
+        end
+    }
+end
+
 local function pushLog(level, tag, msg)
     local line = ("[%s] [%s] [%s] %s"):format(clockText(), tostring(level), tostring(tag), tostring(msg))
     table.insert(bootLog, line)
+    RuntimeLog:Write(level, tag, msg)
 
     if level == "ERROR" or level == "WARN" then
         warn("[WHITE HUB V3] " .. line)
@@ -419,11 +549,12 @@ _G.WhiteHubModules = nil
 task.wait(0.25)
 env.__WhiteHubRuntimeId = HttpService:GenerateGUID(false)
 local runtimeId = env.__WhiteHubRuntimeId
+RuntimeLog.RuntimeId = runtimeId
 
 LOG("BOOT", "Starting runtime " .. runtimeId)
 
 local BASE_URL = "https://raw.githubusercontent.com/WHITEDRAGONx/WHITE-HUB-V2/main/"
-local Modules = {}
+local Modules = { RuntimeLog = RuntimeLog }
 
 local function cleanupLoadedModules()
     env.AutoPrestigeEnabled = false
