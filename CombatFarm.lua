@@ -36,7 +36,21 @@ local questInfo = {
     ["Dio [Lvl. 35+]"] = { enemy = "Jotaro" },
 }
 
+local _runtimeLog = nil
+local _rawPrint, _rawWarn = print, warn
+local function moduleLog(level, ...)
+    if _runtimeLog and type(_runtimeLog.Write) == "function" then
+        pcall(_runtimeLog.Write, _runtimeLog, level, "CombatFarm", ...)
+    end
+    if level == "WARN" or level == "ERROR" then
+        _rawWarn(...)
+    else
+        _rawPrint(...)
+    end
+end
+
 function CombatFarm:Init(Modules)
+    _runtimeLog = Modules.RuntimeLog
     _config    = Modules.Config
     _inventory = Modules.Inventory
     _movement  = Modules.Movement
@@ -57,7 +71,7 @@ function CombatFarm:Init(Modules)
             questWatcherConnection = completedFrame:GetPropertyChangedSignal("Visible"):Connect(function()
                 if completedFrame.Visible then
                     questCompleted = true
-                    print("[CombatFarm] Quest completed.")
+                    moduleLog("INFO", "[CombatFarm] Quest completed.")
                 end
             end)
             if completedFrame.Visible then questCompleted = true end
@@ -132,7 +146,7 @@ end
 local function killTarget(targetName, token)
     local target = getClosestNPC(targetName) or workspace.Living:FindFirstChild(targetName)
     if not target then
-        print("[CombatFarm] Target not found: " .. targetName)
+        moduleLog("INFO", "[CombatFarm] Target not found: " .. targetName)
         return false
     end
 
@@ -290,7 +304,7 @@ end
 local function runNPCFarm(token)
     local npcName = _config:Get("SelectedNPC")
     if not npcName or npcName == "" then
-        print("[CombatFarm] No NPC selected.")
+        moduleLog("INFO", "[CombatFarm] No NPC selected.")
         return false
     end
     return killTarget(npcName, token)
@@ -331,33 +345,33 @@ end
 local function acceptQuest(questName)
     if questOnCooldown and tick() < cooldownUntil then
         local remaining = math.ceil(cooldownUntil - tick())
-        print("[CombatFarm] Quest on cooldown, waiting " .. remaining .. " seconds.")
+        moduleLog("INFO", "[CombatFarm] Quest on cooldown, waiting " .. remaining .. " seconds.")
         return false
     end
     questOnCooldown = false
 
     local dialogues = workspace:FindFirstChild("Dialogues")
     if not dialogues then
-        print("[CombatFarm] Dialogues folder not found.")
+        moduleLog("INFO", "[CombatFarm] Dialogues folder not found.")
         return false
     end
 
     -- Recursive lookup also works when dialogue NPCs are nested in folders.
     local dialogueNPC = dialogues:FindFirstChild(questName, true)
     if not dialogueNPC then
-        print("[CombatFarm] Dialogue NPC not found: " .. questName)
+        moduleLog("INFO", "[CombatFarm] Dialogue NPC not found: " .. questName)
         return false
     end
 
     local dialogueValue = dialogueNPC:FindFirstChild("Dialogue", true)
     if not dialogueValue then
-        print("[CombatFarm] No Dialogue value for " .. questName)
+        moduleLog("INFO", "[CombatFarm] No Dialogue value for " .. questName)
         return false
     end
 
     local remoteEvent = _movement:GetCharacter("RemoteEvent")
     if not remoteEvent then
-        print("[CombatFarm] RemoteEvent not found.")
+        moduleLog("INFO", "[CombatFarm] RemoteEvent not found.")
         return false
     end
 
@@ -382,7 +396,7 @@ local function acceptQuest(questName)
         local progress, maxProgress = readQuestState()
         if (maxProgress or 0) > 0 or progress ~= beforeProgress or maxProgress ~= beforeMax then
             questCompleted = false
-            print("[CombatFarm] Quest accepted: " .. questName)
+            moduleLog("INFO", "[CombatFarm] Quest accepted: " .. questName)
             return true
         end
 
@@ -400,7 +414,7 @@ local function acceptQuest(questName)
         progress, maxProgress = readQuestState()
         if (maxProgress or 0) > 0 or progress ~= beforeProgress or maxProgress ~= beforeMax then
             questCompleted = false
-            print("[CombatFarm] Quest accepted: " .. questName)
+            moduleLog("INFO", "[CombatFarm] Quest accepted: " .. questName)
             return true
         end
     end
@@ -411,13 +425,13 @@ local function acceptQuest(questName)
         local progress, maxProgress = readQuestState()
         if (maxProgress or 0) > 0 or progress ~= beforeProgress or maxProgress ~= beforeMax then
             questCompleted = false
-            print("[CombatFarm] Quest accepted: " .. questName)
+            moduleLog("INFO", "[CombatFarm] Quest accepted: " .. questName)
             return true
         end
         task.wait(0.1)
     end
 
-    print("[CombatFarm] Quest acceptance failed - possibly on cooldown.")
+    moduleLog("INFO", "[CombatFarm] Quest acceptance failed - possibly on cooldown.")
     questOnCooldown = true
     cooldownUntil = tick() + 60
     return false
@@ -470,7 +484,7 @@ local function runQuestFarm(token)
         currentQuest = _config:Get("SelectedQuest")
     end
     if not currentQuest or currentQuest == "" then
-        print("[CombatFarm] No quest selected or found.")
+        moduleLog("INFO", "[CombatFarm] No quest selected or found.")
         return false
     end
 
@@ -480,13 +494,13 @@ local function runQuestFarm(token)
     task.wait(2)
 
     if questCompleted then
-        print("[CombatFarm] Quest already completed.")
+        moduleLog("INFO", "[CombatFarm] Quest already completed.")
         return true
     end
 
     local data = questInfo[currentQuest]
     if not data then
-        warn("[CombatFarm] Unknown quest configuration: " .. tostring(currentQuest))
+        moduleLog("WARN", "[CombatFarm] Unknown quest configuration: " .. tostring(currentQuest))
         return false
     end
     if data.enemy then
@@ -523,9 +537,9 @@ local function farmLoop(token)
             local ok = runNPCFarm(token)
             if token ~= runId or stopRequested then break end
             if ok then
-                print("[CombatFarm] NPC killed. Waiting for respawn...")
+                moduleLog("INFO", "[CombatFarm] NPC killed. Waiting for respawn...")
             else
-                print("[CombatFarm] NPC farm failed. Retrying in 5 seconds...")
+                moduleLog("INFO", "[CombatFarm] NPC farm failed. Retrying in 5 seconds...")
             end
             if not waitCancelable(5, token) then break end
 
@@ -534,17 +548,17 @@ local function farmLoop(token)
             if token ~= runId or stopRequested then break end
 
             if ok then
-                print("[CombatFarm] Quest completed! Moving to next.")
+                moduleLog("INFO", "[CombatFarm] Quest completed! Moving to next.")
                 if not waitCancelable(3, token) then break end
                 questCompleted = false
                 questOnCooldown = false
             else
                 if questOnCooldown then
                     local remaining = math.max(1, math.ceil(cooldownUntil - tick()))
-                    print("[CombatFarm] Quest on cooldown, waiting " .. remaining .. " seconds...")
+                    moduleLog("INFO", "[CombatFarm] Quest on cooldown, waiting " .. remaining .. " seconds...")
                     if not waitCancelable(remaining, token) then break end
                 else
-                    print("[CombatFarm] Quest failed. Retrying in 5 seconds...")
+                    moduleLog("INFO", "[CombatFarm] Quest failed. Retrying in 5 seconds...")
                     if not waitCancelable(5, token) then break end
                 end
             end
@@ -579,7 +593,7 @@ local function startMode(mode)
         questOnCooldown = false
     end
 
-    print("[CombatFarm] Starting " .. mode .. " farming (single-worker mode).")
+    moduleLog("INFO", "[CombatFarm] Starting " .. mode .. " farming (single-worker mode).")
     task.spawn(function()
         farmLoop(token)
     end)
@@ -601,7 +615,7 @@ function CombatFarm:Stop()
     questCompleted = false
     _movement:SetNoclip(false)
     _movement:ClearFocus()
-    print("[CombatFarm] Stopped.")
+    moduleLog("INFO", "[CombatFarm] Stopped.")
 end
 
 function CombatFarm:IsRunning()
