@@ -1,115 +1,54 @@
-# WHITE HUB V2
+# WHITE HUB V3 — Test Build
 
-**Modular, executor‑compatible, feature‑rich script for YBA (Your Bizarre Adventure).**
+This folder contains the revised modular version. `Main.lua` remains the entry point for the modular build. For testing without GitHub, use the separate `WhiteHub_Monolithic.lua` file.
 
-WHITE HUB V2 is a complete rewrite of the original WHITE HUB. It features a modern UI, real‑time config change detection, an intelligent 3‑phase farming system, and now an optional Auto Prestige module.
+## Boot Diagnostics (New)
 
----
+* `Main.lua` now uses a **fail-fast** boot process: if any critical module fails, initialization stops immediately.
+* The bootstrap distinguishes between `DOWNLOAD`, `COMPILE`, `MODULE RUNTIME`, `VALIDATION`, `CONFIG LOAD`, `INIT`, `CREATE`, and `START / RUNTIME` failures.
+* The error window is created directly by `Main.lua` and **does not depend on `UI.lua`**, so it still works even when the UI module itself is broken.
+* The window displays the module that failed, the stage where it failed, and a summarized reason.
+* The **Copy Detailed Log** button copies the runtime ID, module, stage, reason, traceback, PlaceId/JobId, executor information, and the complete boot log.
+* If the executor does not provide a clipboard API, the full error is still printed to the console.
+* `AutoPrestige.lua` is now downloaded and compiled during boot; a missing file or syntax error will prevent the Hub from silently starting in a partially broken state.
 
-## 🚀 Features
+## Main Fixes
 
-- **Smart 3‑phase farming**  
-  Phase 1 → normal item farm until 9 Lucky Arrows + $1,000,000  
-  Phase 2 → only collects items you have marked as “keep” (disabled sell)  
-  Phase 3 → idle, collecting only Lucky Arrows / Lucky Stone Mask
+* CombatFarm now uses a unique execution token to prevent old Quest Farm and NPC Farm workers from continuing to run in parallel.
+* Quest Farm and NPC Farm are mutually exclusive both in the UI and in the config.
+* Movement now restores the original `CanCollide` state instead of setting every part to `true` when noclip is disabled.
+* Noclip was optimized to use periodic passes instead of scanning all descendants every frame.
+* `FreezeAtPosition()` was added for compatibility with older modules.
+* Stand `AlignPosition` / `AlignOrientation` constraints are restored after CombatFarm finishes.
+* Farm now has a proper lifecycle (`Start`, `Stop`, `Destroy`) and prevents duplicate workers from being started.
+* Farm no longer sends phase-completion notifications when it was only paused or when Auto Prestige was enabled in the middle of a phase.
+* Item collection is only marked as successful after confirmation through the inventory or removal of the item model.
+* The Inventory dialogue click fallback was fixed: if `firesignal` is unavailable, it now properly falls back to `VirtualInputManager`.
+* UI now destroys the previous execution, manages global connections, and prevents duplicated listeners when the script is re-executed.
+* `UI:SetToggleValue()` now changes only the visual state and no longer writes incorrect config keys such as `"Auto Prestige"` to the JSON file.
+* Auto Skills input capture now disconnects correctly when cancelled or after receiving a key.
+* AutoPrestige now refreshes `Character`, `RemoteEvent`, `RemoteFunction`, and HRP references after respawning.
+* The inverted `FocusCam` condition in the prestige checker was fixed.
+* AutoPrestige hooks now only modify behavior while Auto Prestige is enabled.
+* ServerHop now includes cleanup for the kick listener and uses a simpler server cache.
+* Re-executing the Main script or monolithic build attempts to shut down modules from the previous execution before starting a new one.
 
-- **Real‑time config change detection**  
-  When idle (Phase 3), toggling any item in the UI restarts the farm instantly – no server hop needed.
+## Active Files
 
-- **Auto Prestige (optional)**  
-  Fully automated story progression, stand farming, leveling to 50, and prestiging up to prestige 3.  
-  Works alongside the normal farm – just enable the toggle in the UI.
+`Config.lua`, `Webhook.lua`, `Movement.lua`, `ServerHop.lua`, `Inventory.lua`, `CombatFarm.lua`, `Farm.lua`, `UI.lua`, `AutoPrestige.lua`, and `Main.lua`.
 
-- **Modern UI**  
-  Tab‑based interface (Farm, Items, Webhook, Credits), touch‑friendly, with smooth animations.
+`QuestFarm.lua` and `NPCFarm.lua` were moved to `Legacy_DO_NOT_LOAD`, because the current project already uses `CombatFarm.lua` for both features.
 
-- **Discord webhook integration**  
-  Get notified when phases complete, when the farm finishes, or when you manually disable/enable the farm.
+## Recommended Testing
 
-- **Executor compatibility**  
-  Works on Delta, Synapse, Script‑Ware, Wave, Volt, and many more (full Lua 5.1 support).
+1. First, execute `WhiteHub_Monolithic.lua` in the executor.
+2. Open and close the UI a few times, then re-execute the file to confirm that duplicate interfaces do not appear.
+3. Test Enable Farm ON/OFF during Phase 1 and confirm that pausing alone does not trigger a completion webhook.
+4. Enable Quest Farm and then NPC Farm; only the most recently enabled mode should continue running.
+5. Test death/respawn during CombatFarm and Auto Prestige.
+6. If possible, test item selling in an executor without `firesignal` to validate the click fallback.
+7. If anything breaks, copy the full console error and report which toggle/mode was active.
 
----
+## Note
 
-## 📦 Installation
-
-1. **Copy the loadstring** below and paste it into your executor:
-
-```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/WHITEDRAGONx/WHITE-HUB-V2/main/Main.lua"))()
-Execute it in YBA (Your Bizarre Adventure).
-
-Wait a few seconds – the UI will appear on your screen.
-
-🎮 How to use
-UI controls
-Farm tab
-
-Enable Farm – master toggle to pause/resume all farming actions.
-
-Auto Sell – automatically sells items you have marked in the Items tab.
-
-Auto Buy Lucky – automatically buys Lucky Arrows when enough money is available.
-
-Auto Prestige – enables the Auto Prestige mode (replaces normal farm with story/stand/leveling/prestige).
-
-Items tab
-Check which items you want to sell automatically.
-Unchecked items are kept (they will not be sold).
-
-Webhook tab
-Paste your Discord webhook URL to receive notifications.
-Use the Reset Webhook Flags button to re‑send Phase 1 complete or All farming complete notifications.
-
-Credits tab
-Contains credits and a click‑to‑copy Discord invite link.
-
-Keyboard shortcuts
-RightAlt – toggle the UI window.
-
-RightControl – show/hide the floating toggle button.
-
-🧩 Modules overview
-Module	Responsibility
-Config.lua	Load/save WhiteHubConfig.json, access configuration values.
-Webhook.lua	Send Discord notifications.
-Movement.lua	Teleport, noclip, freeze, camera fix.
-ServerHop.lua	Server hopping and rejoin on kick.
-Inventory.lua	Count items, check caps, sell, buy Lucky Arrows.
-UI.lua	Create the interface toggles, tabs, and popups.
-Farm.lua	Main farm loop (phases 1/2/3) with real‑time config detection.
-AutoPrestige.lua	Standalone script for story/stand/leveling/prestige.
-Main.lua	Entry point – loads all modules, creates UI, starts farm and auto‑prestige loader.
-⚙️ Configuration
-All settings are stored in WhiteHubConfig.json (created automatically in your executor’s workspace).
-
-You can edit it manually, but the UI toggles will update it for you.
-
-❓ Troubleshooting
-UI does not appear
-→ Make sure your executor supports LocalScript in StarterPlayerScripts.
-→ Re‑execute the loadstring after the character loads.
-
-Auto Prestige does not start
-→ Ensure you have enabled the toggle in the Farm tab.
-→ Check the console for errors (some executors may block certain functions).
-
-Webhook not sending
-→ Verify your webhook URL is correct (must start with https://discord.com/api/webhooks/...).
-→ Check if your executor allows HTTP requests.
-
-Farm or Prestige crashes
-→ Try hopping to another server.
-→ Disable other scripts that may conflict.
-
-📜 License & Credits
-WHITE HUB V2 – Made by WHITE DRAGON
-
-Auto Prestige logic is based on the original standalone script, preserved and integrated with minimal changes.
-
-🔗 Links
-GitHub Repository: https://github.com/WHITEDRAGONx/WHITE-HUB-V2
-
-Discord: https://discord.gg/Qwd23ZRNxJ
-
-Happy farming! ⚡
+The syntax of all active files and the monolithic build was validated locally. This does not replace testing inside YBA, because game structures, remotes, and UI elements may change.
