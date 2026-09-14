@@ -22,6 +22,10 @@ local NO_ITEM_TIMEOUT = 10   -- <-- alterado de 20 para 10
 local lastItemTime    = tick()
 
 local lastSellItemsSnapshot = nil
+local isRunning = false
+local stopRequested = false
+local runtimeSetup = false
+local runtimeConnections = {}
 
 function Farm:Init(Modules)
     _config    = Modules.Config
@@ -56,6 +60,10 @@ end
 
 -- Hooks & bypasses
 local function ApplyHooks()
+    local env = getgenv and getgenv() or _G
+    if env.__WhiteHubFarmHooksApplied then return end
+    env.__WhiteHubFarmHooksApplied = true
+
     pcall(function()
         local oldMag
         oldMag = hookmetamethod(Vector3.new(), "__index", newcclosure(function(self, index)
@@ -96,9 +104,10 @@ end
 
 local function ApplyAntiAfk()
     pcall(function()
-        Player.Idled:Connect(function()
+        local connection = Player.Idled:Connect(function()
             game:GetService("VirtualUser"):ClickButton2(Vector2.new())
         end)
+        table.insert(runtimeConnections, connection)
     end)
 end
 
@@ -128,7 +137,7 @@ local function GetItemInfo(model)
         if v:IsA("ProximityPrompt") and v.MaxActivationDistance ~= 0 then prompt = v break end
     end
     if not prompt then return nil end
-    return { Name = prompt.ObjectText, ProximityPrompt = prompt, Position = pp.Position }
+    return { Name = prompt.ObjectText, ProximityPrompt = prompt, Position = pp.Position, Model = model }
 end
 
 local function InitItemDetection()
@@ -155,7 +164,7 @@ local function InitItemDetection()
             end
         end)
     end
-    ItemSpawnFolder.ChildAdded:Connect(function(model)
+    local connection = ItemSpawnFolder.ChildAdded:Connect(function(model)
         task.wait(1)
         pcall(function()
             if model:IsA("Model") then
@@ -167,29 +176,72 @@ local function InitItemDetection()
             end
         end)
     end)
+    table.insert(runtimeConnections, connection)
 end
 
 local SAFE_SPOT = CFrame.new(978, -42, -49)
 
 local function CollectItem(itemInfo, index)
-    if not _config:Get("FarmEnabled") then return end
+    if not _config:Get("FarmEnabled") or stopRequested then return false end
 
     local hrp = _movement:GetCharacter("HumanoidRootPart")
-    if not hrp then return end
-    SpawnedItems[index] = nil
-    if _inventory:HasMax(itemInfo.Name) then return end
+    if not hrp or not itemInfo then return false end
+    if _inventory:HasMax(itemInfo.Name) then
+        SpawnedItems[index] = nil
+        return false
+    end
+
+    local beforeCount = _inventory:Count(itemInfo.Name)
+    local model = itemInfo.Model or index
+    local oldCF = hrp.CFrame
     local bv = _movement:Freeze()
     _movement:SetNoclip(true)
     _movement:Teleport(CFrame.new(itemInfo.Position.X, itemInfo.Position.Y - 25, itemInfo.Position.Z))
-    task.wait(.5)
-    pcall(function() fireproximityprompt(itemInfo.ProximityPrompt) end)
-    task.wait(.5)
+    task.wait(.35)
+
+    local fired = pcall(function()
+        if itemInfo.ProximityPrompt and itemInfo.ProximityPrompt.Parent then
+            fireproximityprompt(itemInfo.ProximityPrompt)
+        end
+    end)
+
+    local deadline = tick() + 1.5
+    local collected = false
+    while tick() < deadline do
+        if _inventory:Count(itemInfo.Name) > beforeCount then
+            collected = true
+            break
+        end
+        if model and not model.Parent then
+            collected = true
+            break
+        end
+        task.wait(0.1)
+    end
+
     _movement:Unfreeze(bv)
-    _movement:Teleport(SAFE_SPOT)
-    task.wait(.3)
+    if oldCF and hrp.Parent then
+        _movement:Teleport(SAFE_SPOT)
+    end
+    task.wait(.15)
     _movement:SetNoclip(false)
-    lastItemTime = tick()
-    print("[Farm] Collected: " .. itemInfo.Name)
+
+    if collected and fired then
+        SpawnedItems[index] = nil
+        lastItemTime = tick()
+        print("[Farm] Collected: " .. itemInfo.Name)
+        return true
+    end
+
+    -- Keep a live item in the queue so a transient prompt failure can retry.
+    if model and model.Parent then
+        local refreshed = GetItemInfo(model)
+        if refreshed then SpawnedItems[index] = refreshed end
+    else
+        SpawnedItems[index] = nil
+    end
+    warn("[Farm] Collection was not confirmed: " .. tostring(itemInfo.Name))
+    return false
 end
 
 -- Helper to check if we should skip hopping (based solely on UI toggle)
@@ -218,7 +270,7 @@ local function DoHop()
 end
 
 local function SetupWebhookListener()
-    Player.Backpack.ChildAdded:Connect(function(tool)
+    local connection = Player.Backpack.ChildAdded:Connect(function(tool)
         if tool.Name == "Lucky Arrow" and _inventory:ShouldStopPhase1() then
             _webhook:SendLuckyFound(
                 _inventory:Count("Lucky Arrow"),
@@ -227,6 +279,7 @@ local function SetupWebhookListener()
             )
         end
     end)
+    table.insert(runtimeConnections, connection)
 end
 
 local function Startup()
@@ -235,7 +288,7 @@ local function Startup()
     local waitTime = 0
     repeat
         task.wait(0.5)
-        waitTime += 0.5
+        waitTime = waitTime + 0.5
         if waitTime > 30 then
             warn("[Farm] Timeout waiting for RemoteEvent — continuing anyway.")
             break
@@ -260,151 +313,198 @@ local function Startup()
     task.wait(5)
 end
 
-function Farm:Start()
-    ApplyHooks()
-    ApplyCrashBypass()
-    ApplyAntiAfk()
-    InitItemDetection()
-    SetupWebhookListener()
-    Startup()
+local function shouldPauseCycle()
+    return stopRequested or not _config:Get("FarmEnabled") or _config:Get("AutoPrestige")
+end
 
-    print("[Farm] Farm loop started.")
+local function runCycle()
+    lastItemTime = tick()
+    _config:SetMany({ Phase1Notified = false, Phase3Notified = false })
 
-    while true do
-        while not _config:Get("FarmEnabled") do
-            task.wait(1)
-            print("[Farm] Farm disabled by user. Waiting...")
+    -- ===== PHASE 1 =====
+    print("[Farm] >>> Phase 1 started — farming normally.")
+    while not stopRequested and _config:Get("FarmEnabled") and not _config:Get("AutoPrestige")
+      and not _inventory:ShouldStopPhase1() do
+        local snapshot = {}
+        for idx, info in pairs(SpawnedItems) do
+            table.insert(snapshot, {Index=idx, ItemInfo=info})
         end
 
-        -- If Auto Prestige is enabled, idle here
-        while _config:Get("AutoPrestige") do
-            task.wait(1)
-            if not _config:Get("FarmEnabled") then break end
+        for _, entry in ipairs(snapshot) do
+            if shouldPauseCycle() or _inventory:ShouldStopPhase1() then break end
+            CollectItem(entry.ItemInfo, entry.Index)
         end
 
-        -- Reset timer
-        lastItemTime = tick()
-        _config:Set("Phase1Notified", false)
-        _config:Set("Phase3Notified", false)
+        if shouldPauseCycle() then return end
 
-        -- ===== PHASE 1 =====
-        print("[Farm] >>> Phase 1 started — farming normally.")
-        while not _inventory:ShouldStopPhase1() and not _config:Get("AutoPrestige") do
-            if not _config:Get("FarmEnabled") then break end
+        local elapsed = tick() - lastItemTime
+        if elapsed > NO_ITEM_TIMEOUT then
+            if not _inventory:ShouldStopPhase1() then DoHop() end
+        elseif #snapshot == 0 then
+            print("[Farm] Waiting for items... (" .. math.max(0, math.floor(NO_ITEM_TIMEOUT - elapsed)) .. "s until hop)")
+        end
+        task.wait(1)
+    end
 
+    -- A pause/prestige transition is not a completed phase.
+    if shouldPauseCycle() then return end
+
+    _inventory:SellAll()
+    if shouldPauseCycle() then return end
+    _inventory:BuyLucky()
+    if shouldPauseCycle() then return end
+    print("[Farm] >>> Phase 1 complete.")
+
+    -- ===== PHASE 2 =====
+    local keepItems = _inventory:GetKeepItems()
+    if #keepItems > 0 then
+        if not _config:Get("Phase1Notified") then
+            _webhook:SendPhase1Complete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
+            _config:Set("Phase1Notified", true)
+        end
+
+        print("[Farm] >>> Phase 2 started — farming keep-items: " .. table.concat(keepItems, ", "))
+        while not stopRequested and _config:Get("FarmEnabled") and not _config:Get("AutoPrestige")
+          and not _inventory:AllKeepItemsFull() do
             local snapshot = {}
             for idx, info in pairs(SpawnedItems) do
-                table.insert(snapshot, {Index=idx, ItemInfo=info})
-            end
-            for _, entry in ipairs(snapshot) do
-                if _inventory:ShouldStopPhase1() or _config:Get("AutoPrestige") then break end
-                CollectItem(entry.ItemInfo, entry.Index)
-            end
-            local elapsed = tick() - lastItemTime
-            if elapsed > NO_ITEM_TIMEOUT then
-                if _inventory:ShouldStopPhase1() or _config:Get("AutoPrestige") then break end
-                DoHop()
-            else
-                if #snapshot == 0 then
-                    print("[Farm] Waiting for items... (" .. math.floor(NO_ITEM_TIMEOUT - elapsed) .. "s until hop)")
-                end
-            end
-            task.wait(1)
-        end
-
-        _inventory:SellAll()
-        _inventory:BuyLucky()
-        print("[Farm] >>> Phase 1 complete.")
-
-        -- ===== PHASE 2 =====
-        local keepItems = _inventory:GetKeepItems()
-        if #keepItems > 0 then
-            if not _config:Get("Phase1Notified") then
-                _webhook:SendPhase1Complete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
-                _config:Set("Phase1Notified", true)
-            end
-
-            print("[Farm] >>> Phase 2 started — farming keep-items: " .. table.concat(keepItems, ", "))
-            while not _inventory:AllKeepItemsFull() and not _config:Get("AutoPrestige") do
-                if not _config:Get("FarmEnabled") then break end
-
-                local snapshot = {}
-                for idx, info in pairs(SpawnedItems) do
-                    local isKeep = _config:GetSellItem(info.Name) == false
-                    if isKeep and not _inventory:HasMax(info.Name) then
-                        table.insert(snapshot, {Index=idx, ItemInfo=info})
-                    else
-                        if not isKeep then SpawnedItems[idx] = nil end
-                    end
-                end
-                for _, entry in ipairs(snapshot) do
-                    if _inventory:AllKeepItemsFull() or _config:Get("AutoPrestige") then break end
-                    CollectItem(entry.ItemInfo, entry.Index)
-                end
-                local elapsed = tick() - lastItemTime
-                if elapsed > NO_ITEM_TIMEOUT then
-                    if _inventory:AllKeepItemsFull() or _config:Get("AutoPrestige") then break end
-                    print("[Farm] Phase 2 — server dry, hopping...")
-                    DoHop()
-                else
-                    if #snapshot == 0 then
-                        print("[Farm] Waiting for keep-items... (" .. math.floor(NO_ITEM_TIMEOUT - elapsed) .. "s until hop)")
-                    end
-                end
-                task.wait(1)
-            end
-            print("[Farm] >>> Phase 2 complete — all keep-items maxed.")
-        else
-            print("[Farm] >>> No keep-items configured — skipping Phase 2.")
-        end
-
-        -- ===== PHASE 3 (IDLE) =====
-        if not _config:Get("Phase3Notified") then
-            print("[Farm] Sending 'All farming complete' webhook...")
-            _webhook:SendAllComplete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
-            _config:Set("Phase3Notified", true)
-        else
-            print("[Farm] 'All farming complete' already sent (persistent flag). Use UI reset button if needed.")
-        end
-        print("[Farm] >>> Phase 3 — fully stopped. Idling, only collecting Lucky Arrows.")
-        updateConfigSnapshot()
-
-        while not _config:Get("AutoPrestige") and _config:Get("FarmEnabled") do
-            if not _inventory:ShouldStopPhase1() then
-                print("[Farm] >>> Lucky count or money dropped below minimum — resetting flags and returning to Phase 1.")
-                _config:Set("Phase1Notified", false)
-                _config:Set("Phase3Notified", false)
-                lastItemTime = tick()
-                break
-            end
-
-            if hasConfigChanged() then
-                print("[Farm] >>> Configuration changed (item toggle) — resetting flags and returning to Phase 1.")
-                updateConfigSnapshot()
-                _config:Set("Phase1Notified", false)
-                _config:Set("Phase3Notified", false)
-                lastItemTime = tick()
-                break
-            end
-
-            local snapshot = {}
-            for idx, info in pairs(SpawnedItems) do
-                if info.Name == "Lucky Arrow" or info.Name == "Lucky Stone Mask" then
+                local isKeep = _config:GetSellItem(info.Name) == false
+                if isKeep and not _inventory:HasMax(info.Name) then
                     table.insert(snapshot, {Index=idx, ItemInfo=info})
-                else
+                elseif not isKeep then
                     SpawnedItems[idx] = nil
                 end
             end
+
             for _, entry in ipairs(snapshot) do
+                if shouldPauseCycle() or _inventory:AllKeepItemsFull() then break end
                 CollectItem(entry.ItemInfo, entry.Index)
+            end
+
+            if shouldPauseCycle() then return end
+
+            local elapsed = tick() - lastItemTime
+            if elapsed > NO_ITEM_TIMEOUT then
+                if not _inventory:AllKeepItemsFull() then
+                    print("[Farm] Phase 2 — server dry, hopping...")
+                    DoHop()
+                end
+            elseif #snapshot == 0 then
+                print("[Farm] Waiting for keep-items... (" .. math.max(0, math.floor(NO_ITEM_TIMEOUT - elapsed)) .. "s until hop)")
             end
             task.wait(1)
         end
+
+        if shouldPauseCycle() then return end
+        print("[Farm] >>> Phase 2 complete — all keep-items maxed.")
+    else
+        print("[Farm] >>> No keep-items configured — skipping Phase 2.")
+    end
+
+    if shouldPauseCycle() then return end
+
+    -- ===== PHASE 3 =====
+    if not _config:Get("Phase3Notified") then
+        print("[Farm] Sending 'All farming complete' webhook...")
+        _webhook:SendAllComplete(_inventory:Count("Lucky Arrow"), _inventory:GetLuckyStop(), _inventory:GetMoney())
+        _config:Set("Phase3Notified", true)
+    end
+
+    print("[Farm] >>> Phase 3 — idle; collecting Lucky Arrow / Lucky Stone Mask only.")
+    updateConfigSnapshot()
+
+    while not stopRequested and _config:Get("FarmEnabled") and not _config:Get("AutoPrestige") do
+        if not _inventory:ShouldStopPhase1() then
+            print("[Farm] >>> Lucky count or money dropped below minimum — returning to Phase 1.")
+            _config:SetMany({ Phase1Notified = false, Phase3Notified = false })
+            lastItemTime = tick()
+            return
+        end
+
+        if hasConfigChanged() then
+            print("[Farm] >>> Item configuration changed — returning to Phase 1.")
+            updateConfigSnapshot()
+            _config:SetMany({ Phase1Notified = false, Phase3Notified = false })
+            lastItemTime = tick()
+            return
+        end
+
+        local snapshot = {}
+        for idx, info in pairs(SpawnedItems) do
+            if info.Name == "Lucky Arrow" or info.Name == "Lucky Stone Mask" then
+                table.insert(snapshot, {Index=idx, ItemInfo=info})
+            else
+                SpawnedItems[idx] = nil
+            end
+        end
+        for _, entry in ipairs(snapshot) do
+            if shouldPauseCycle() then return end
+            CollectItem(entry.ItemInfo, entry.Index)
+        end
+        task.wait(1)
     end
 end
 
+function Farm:Start()
+    if isRunning then
+        print("[Farm] Start ignored — already running.")
+        return
+    end
+
+    isRunning = true
+    stopRequested = false
+
+    if not runtimeSetup then
+        runtimeSetup = true
+        ApplyHooks()
+        ApplyCrashBypass()
+        ApplyAntiAfk()
+        InitItemDetection()
+        SetupWebhookListener()
+        Startup()
+    end
+
+    print("[Farm] Farm loop started.")
+
+    while not stopRequested do
+        while not stopRequested and not _config:Get("FarmEnabled") do
+            task.wait(0.5)
+        end
+        while not stopRequested and _config:Get("AutoPrestige") do
+            task.wait(0.5)
+        end
+        if stopRequested then break end
+
+        local ok, err = pcall(runCycle)
+        if not ok then
+            warn("[Farm] Cycle error: " .. tostring(err))
+            task.wait(2)
+        end
+    end
+
+    isRunning = false
+    _movement:SetNoclip(false)
+    print("[Farm] Farm loop stopped.")
+end
+
 function Farm:Stop()
+    stopRequested = true
+    _movement:SetNoclip(false)
     print("[Farm] Stop requested.")
+end
+
+function Farm:IsRunning()
+    return isRunning
+end
+
+function Farm:Destroy()
+    self:Stop()
+    for _, connection in ipairs(runtimeConnections) do
+        pcall(function() connection:Disconnect() end)
+    end
+    table.clear(runtimeConnections)
+    runtimeSetup = false
+    table.clear(SpawnedItems)
 end
 
 return Farm
