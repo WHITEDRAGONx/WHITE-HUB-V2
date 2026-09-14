@@ -9,15 +9,26 @@ local Player      = Players.LocalPlayer
 
 local Webhook = {}
 local _config = nil
+local _runtimeLog = nil
 
 function Webhook:Init(Modules)
     _config = Modules.Config
+    _runtimeLog = Modules.RuntimeLog
+end
+
+local function log(level, message)
+    if _runtimeLog and type(_runtimeLog.Write) == "function" then
+        pcall(_runtimeLog.Write, _runtimeLog, level, "Webhook", message)
+    end
 end
 
 local function Send(message)
     local url = _config:Get("WebhookURL")
-    if not url or url == "" then return end
-    pcall(function()
+    if not url or url == "" then
+        log("INFO", "Webhook URL is empty; notification skipped.")
+        return
+    end
+    local ok, err = pcall(function()
         local body = HttpService:JSONEncode({
             content = nil,
             embeds = {{
@@ -29,10 +40,16 @@ local function Send(message)
             }}
         })
         local req = http_request or request or (syn and syn.request)
-        if req then
-            req({ Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = body })
+        if not req then
+            error("No supported HTTP request function is available in this executor.")
         end
+        req({ Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = body })
     end)
+    if ok then
+        log("INFO", "Discord webhook request sent.")
+    else
+        log("ERROR", "Discord webhook failed: " .. tostring(err))
+    end
 end
 
 function Webhook:Send(message)
