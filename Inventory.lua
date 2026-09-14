@@ -2,7 +2,7 @@
 -- Inventory.lua
 -- Handles item counting, selling, buying, and keep-item logic.
 -- Updated for YBA's new dialogue system (v1.7974+).
--- Uses DialogueGui clicking instead of the old EndDialogue remote.
+-- Prefers direct Merchant EndDialogue selling; falls back to DialogueGui automation.
 -- =====================
 
 local Players             = game:GetService("Players")
@@ -591,9 +591,178 @@ local function runMerchantSellDialogue(itemName, beforeCount, fastMode)
 end
 
 -- =====================
+-- DIRECT / FALLBACK SELLING
+-- Fast path first tries the old Merchant EndDialogue server action directly.
+-- If the current YBA server rejects it, we fall back to the adaptive 1.7974+
+-- DialogueGui driver above. The direct path never opens DialogueGui.
+-- =====================
+local DIRECT_SELL_ARGS = {
+    NPC = "Merchant",
+    Dialogue = "Dialogue5",
+    Option = "Option2",
+}
+
+local function getCharacterRemoteEvent()
+    local char = Player.Character
+    return char and char:FindFirstChild("RemoteEvent") or nil
+end
+
+local function equipSellTool(itemName)
+    local char = Player.Character
+    local hum = char and char:FindFirstChildWhichIsA("Humanoid")
+    if not hum then return nil end
+
+    local tool = Player.Backpack:FindFirstChild(itemName)
+    if not tool and char then
+        tool = char:FindFirstChild(itemName)
+    end
+    if not tool then return nil end
+
+    if tool.Parent == Player.Backpack then
+        local ok = pcall(function() hum:EquipTool(tool) end)
+        if not ok then return nil end
+        task.wait(0.03)
+    end
+
+    return tool
+end
+
+-- Attempts to sell the equipped item without ever opening Merchant UI.
+-- Returns:
+--   true, soldAmount   -> direct server call worked
+--   false, 0           -> no inventory progress; caller should use UI fallback
+local function tryDirectMerchantSell(itemName)
+    local before = Inventory:Count(itemName)
+    if before <= 0 then return true, 0 end
+
+    local tool = equipSellTool(itemName)
+    if not tool then
+        return false, 0
+    end
+
+    local remoteEvent = getCharacterRemoteEvent()
+    if not remoteEvent then
+        moduleLog("WARN", "[Inventory][DirectSell] Character RemoteEvent not found.")
+        return false, 0
+    end
+
+    -- The pre-1.7974 Merchant used this exact action. Some current YBA systems
+    -- still keep server compatibility even though the visible dialogue changed.
+    -- Try twice only when the first packet makes no progress, then stop and let
+    -- the new dialogue fallback handle it.
+    for attempt = 1, 2 do
+        local fired = pcall(function()
+            remoteEvent:FireServer("EndDialogue", {
+                NPC = DIRECT_SELL_ARGS.NPC,
+                Dialogue = DIRECT_SELL_ARGS.Dialogue,
+                Option = DIRECT_SELL_ARGS.Option,
+            })
+        end)
+
+        if not fired then
+            return false, 0
+        end
+
+        local deadline = tick() + 0.35
+        while tick() < deadline do
+            local now = Inventory:Count(itemName)
+            if now < before then
+                -- Give the server one tiny replication window; on the old route
+                -- a single call normally removes the whole stack immediately.
+                task.wait(0.04)
+                local final = Inventory:Count(itemName)
+                return true, before - final
+            end
+            task.wait(0.025)
+        end
+    end
+
+    return false, 0
+end
+
+local function sellItemViaDialogueFallback(itemName, merchantPrompt, fastMode)
+    local initialCount = Inventory:Count(itemName)
+    local currentCount = initialCount
+    local attempts = 0
+
+    while currentCount > 0 and attempts < 4 and not Inventory:IsMoneyMaxed() do
+        attempts = attempts + 1
+
+        local tool = equipSellTool(itemName)
+        if not tool then break end
+
+        closeDialogueIfOpen()
+        restoreDialogueRendering()
+
+        if fastMode then
+            suppressDialogueRendering()
+        end
+
+        local opened = pcall(function()
+            fireproximityprompt(merchantPrompt)
+        end)
+        if not opened then
+            moduleLog("WARN", "[Inventory] Could not trigger Merchant prompt for " .. itemName)
+            break
+        end
+
+        task.wait(fastMode and 0.06 or 0.45)
+
+        local beforeAttempt = Inventory:Count(itemName)
+        local dialogueWorked = runMerchantSellDialogue(itemName, beforeAttempt, fastMode)
+        task.wait(fastMode and 0.12 or 0.75)
+
+        local afterAttempt = Inventory:Count(itemName)
+
+        if fastMode and afterAttempt >= beforeAttempt then
+            moduleLog("WARN", "[Inventory] Hidden dialogue made no progress for " .. itemName
+                .. " — retrying with visible dialogue fallback.")
+            restoreDialogueRendering()
+            closeDialogueIfOpen()
+            task.wait(0.15)
+
+            local reopened = pcall(function()
+                fireproximityprompt(merchantPrompt)
+            end)
+            if reopened then
+                task.wait(0.4)
+                dialogueWorked = runMerchantSellDialogue(itemName, beforeAttempt, false)
+                task.wait(0.65)
+                afterAttempt = Inventory:Count(itemName)
+            end
+        end
+
+        if afterAttempt < beforeAttempt then
+            moduleLog("INFO", "[Inventory] Sold " .. tostring(beforeAttempt - afterAttempt) .. "x " .. itemName
+                .. " through dialogue fallback (remaining: " .. tostring(afterAttempt) .. ")")
+        elseif dialogueWorked then
+            local deadline = tick() + 1.5
+            while tick() < deadline and Inventory:Count(itemName) >= beforeAttempt do
+                task.wait(0.1)
+            end
+            afterAttempt = Inventory:Count(itemName)
+        end
+
+        currentCount = Inventory:Count(itemName)
+        if currentCount >= beforeAttempt then
+            moduleLog("WARN", "[Inventory] Merchant dialogue made no inventory progress for: " .. itemName)
+            closeDialogueIfOpen()
+            restoreDialogueRendering()
+            break
+        end
+
+        closeDialogueIfOpen()
+        restoreDialogueRendering()
+        task.wait(fastMode and 0.06 or 0.25)
+    end
+
+    return Inventory:Count(itemName) < initialCount, initialCount - Inventory:Count(itemName)
+end
+
+-- =====================
 -- SELL ALL
--- Sells every item marked as sell=true using the current Merchant dialogue.
--- It no longer depends on the old fixed wording/order from pre-1.7974.
+-- 1) Direct server sell: no Merchant prompt, no DialogueGui, near-instant.
+-- 2) If rejected by the current YBA server, use adaptive dialogue fallback.
 -- =====================
 function Inventory:SellAll()
     if not _config:Get("FarmEnabled") then return end
@@ -621,26 +790,15 @@ function Inventory:SellAll()
     end
 
     table.sort(toSell)
-    moduleLog("INFO", "[Inventory] Selling " .. #toSell .. " item type(s) with dynamic Merchant dialogue...")
-
-    local merchantPrompt = findMerchantPrompt()
-    if not merchantPrompt then
-        moduleLog("WARN", "[Inventory] Merchant ProximityPrompt not found — cannot sell.")
-        return
-    end
+    moduleLog("INFO", "[Inventory] Selling " .. #toSell .. " item type(s)...")
 
     local soldTypes = 0
     local failedTypes = 0
+    local merchantPrompt = nil
 
     local fastRequested = _config:Get("FastSellHidden") ~= false
     local fastSupported = hasInternalClickSupport()
-    local fastMode = fastRequested and fastSupported
-
-    if fastMode then
-        moduleLog("INFO", "[Inventory] Fast Sell active — Merchant dialogue will be hidden and activated internally.")
-    elseif fastRequested then
-        moduleLog("WARN", "[Inventory] Fast Sell requested, but this executor has no firesignal/getconnections support. Using visible fallback.")
-    end
+    local fallbackFastMode = fastRequested and fastSupported
 
     for _, itemName in ipairs(toSell) do
         if self:IsMoneyMaxed() then
@@ -649,115 +807,63 @@ function Inventory:SellAll()
         end
 
         local initialCount = self:Count(itemName)
-        local currentCount = initialCount
-        local attempts = 0
-        local madeProgress = false
+        local directWorked = false
+        local directSold = 0
 
-        -- Usually one pass sells ALL. Retry a few times in case the new dialogue
-        -- only sells a fixed quantity or the first click is lost to replication.
-        while currentCount > 0 and attempts < 4 and not self:IsMoneyMaxed() do
-            attempts = attempts + 1
-
-            local tool = Player.Backpack:FindFirstChild(itemName)
-            if not tool and Player.Character then
-                tool = Player.Character:FindFirstChild(itemName)
+        if fastRequested then
+            directWorked, directSold = tryDirectMerchantSell(itemName)
+            if directWorked and directSold > 0 then
+                moduleLog("INFO", "[Inventory][DirectSell] ✅ Sold " .. tostring(directSold) .. "x " .. itemName
+                    .. " instantly without opening dialogue.")
             end
+        end
 
-            if not tool then
-                break
+        -- If direct selling only removed part of the stack, keep using the same
+        -- direct route while it continues making progress. No UI is opened.
+        if directWorked then
+            local previous = self:Count(itemName)
+            local directPasses = 0
+            while previous > 0 and directPasses < 4 and not self:IsMoneyMaxed() do
+                directPasses = directPasses + 1
+                local ok, sold = tryDirectMerchantSell(itemName)
+                local now = self:Count(itemName)
+                if not ok or sold <= 0 or now >= previous then break end
+                directSold = directSold + sold
+                previous = now
             end
-
-            local char = Player.Character
-            local hum = char and char:FindFirstChildWhichIsA("Humanoid")
-            if hum and tool.Parent == Player.Backpack then
-                pcall(function() hum:EquipTool(tool) end)
-                task.wait(fastMode and 0.05 or 0.2)
-            end
-
-            closeDialogueIfOpen()
-            restoreDialogueRendering()
-
-            if fastMode then
-                -- Hide an already-existing DialogueGui before opening Merchant.
-                -- If YBA recreates it, runMerchantSellDialogue suppresses it again
-                -- as soon as the first options are available.
-                suppressDialogueRendering()
-            end
-
-            local opened = pcall(function()
-                fireproximityprompt(merchantPrompt)
-            end)
-            if not opened then
-                moduleLog("WARN", "[Inventory] Could not trigger Merchant prompt for " .. itemName)
-                break
-            end
-
-            task.wait(fastMode and 0.06 or 0.45)
-
-            local beforeAttempt = self:Count(itemName)
-            local dialogueWorked = runMerchantSellDialogue(itemName, beforeAttempt, fastMode)
-            task.wait(fastMode and 0.12 or 0.75)
-
-            local afterAttempt = self:Count(itemName)
-
-            -- If the executor exposes firesignal/getconnections but YBA's current
-            -- buttons are wired in a way the internal path cannot activate, retry
-            -- the same item once with the proven visible/VirtualInput fallback.
-            if fastMode and afterAttempt >= beforeAttempt then
-                moduleLog("WARN", "[Inventory] Fast Sell made no progress for " .. itemName
-                    .. " — retrying this item with visible dialogue fallback.")
-                restoreDialogueRendering()
-                closeDialogueIfOpen()
-                task.wait(0.15)
-
-                local reopened = pcall(function()
-                    fireproximityprompt(merchantPrompt)
-                end)
-                if reopened then
-                    task.wait(0.4)
-                    dialogueWorked = runMerchantSellDialogue(itemName, beforeAttempt, false)
-                    task.wait(0.65)
-                    afterAttempt = self:Count(itemName)
-                end
-            end
-            if afterAttempt < beforeAttempt then
-                madeProgress = true
-                moduleLog("INFO", "[Inventory] Sold " .. tostring(beforeAttempt - afterAttempt) .. "x " .. itemName
-                    .. " (remaining: " .. tostring(afterAttempt) .. ")")
-            elseif dialogueWorked then
-                -- Give replication one extra short window before declaring failure.
-                local deadline = tick() + 1.5
-                while tick() < deadline and self:Count(itemName) >= beforeAttempt do
-                    task.wait(0.1)
-                end
-                afterAttempt = self:Count(itemName)
-                if afterAttempt < beforeAttempt then
-                    madeProgress = true
-                end
-            end
-
-            currentCount = self:Count(itemName)
-            if currentCount >= beforeAttempt then
-                moduleLog("WARN", "[Inventory] Merchant dialogue made no inventory progress for: " .. itemName)
-                closeDialogueIfOpen()
-                restoreDialogueRendering()
-                break
-            end
-
-            closeDialogueIfOpen()
-            restoreDialogueRendering()
-            task.wait(fastMode and 0.06 or 0.25)
         end
 
         local finalCount = self:Count(itemName)
+
+        if finalCount >= initialCount then
+            -- Direct route is not accepted by this server/build. Only now do we
+            -- resolve/open Merchant and use the visible/new dialogue system.
+            moduleLog("WARN", "[Inventory][DirectSell] Server made no progress for " .. itemName
+                .. " — using 1.7974+ dialogue fallback.")
+
+            if not merchantPrompt then
+                merchantPrompt = findMerchantPrompt()
+            end
+
+            if merchantPrompt then
+                local ok, sold = sellItemViaDialogueFallback(itemName, merchantPrompt, fallbackFastMode)
+                finalCount = self:Count(itemName)
+                if ok and sold > 0 then
+                    moduleLog("INFO", "[Inventory] Dialogue fallback sold " .. tostring(sold) .. "x " .. itemName .. ".")
+                end
+            else
+                moduleLog("WARN", "[Inventory] Merchant ProximityPrompt not found — cannot use fallback.")
+            end
+        end
+
+        finalCount = self:Count(itemName)
         if finalCount < initialCount then
             soldTypes = soldTypes + 1
             moduleLog("INFO", "[Inventory] ✅ Sold " .. tostring(initialCount - finalCount) .. "/" .. tostring(initialCount)
                 .. " of " .. itemName)
         else
             failedTypes = failedTypes + 1
-            moduleLog("WARN", "[Inventory] ❌ Failed to sell: " .. itemName
-                .. ". Check the [Inventory][Dialogue] option dump above.")
+            moduleLog("WARN", "[Inventory] ❌ Failed to sell: " .. itemName)
         end
     end
 
