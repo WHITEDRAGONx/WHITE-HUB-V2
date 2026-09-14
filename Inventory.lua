@@ -163,20 +163,17 @@ end
 -- Attempts to click a GuiButton using multiple methods
 -- Returns true if at least one method was attempted successfully
 local function clickButton(btn)
-    if not btn then return false end
+    if not btn or not btn.Parent then return false end
 
-    -- Method 1: firesignal (fastest, works if executor supports it)
-    local ok1 = pcall(function()
-        if firesignal then
+    -- Method 1: firesignal. Only report success if it actually exists and is called.
+    if type(firesignal) == "function" then
+        local ok1 = pcall(function()
             firesignal(btn.MouseButton1Click)
-        end
-    end)
-    if ok1 then
-        return true
+        end)
+        if ok1 then return true end
     end
 
-    -- Method 2: VirtualInputManager (physical click via screen coords)
-    -- This always works as long as the button is visible on screen
+    -- Method 2: VirtualInputManager fallback.
     local ok2 = pcall(function()
         local absPos  = btn.AbsolutePosition
         local absSize = btn.AbsoluteSize
