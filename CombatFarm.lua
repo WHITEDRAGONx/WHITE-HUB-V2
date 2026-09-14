@@ -1109,6 +1109,41 @@ local function collectItem(itemName, requiredAmount, token)
     return inventory:Count(itemName) >= requiredAmount
 end
 
+-- Some normal leveling quests open an automatic final DialogueGui after the
+-- objective is complete. DialogueAnalyzer mapped Dio/Jotaro's final page as
+-- Option1 = "Very well." using the same ClientFunctions:2063 callback used by
+-- Merchant and quest acceptance. Hide and clear it before re-taking the quest.
+local function finishQuestDialogueFast(token)
+    if not _inventory or type(_inventory.RunFastExistingDialogueOptionLoop) ~= "function" then
+        return false
+    end
+
+    local waitDeadline = tick() + 1.50
+    local gui = nil
+    while tick() < waitDeadline and isTokenActive(token, "Quest") do
+        gui = Player.PlayerGui:FindFirstChild("DialogueGui")
+        if gui then break end
+        task.wait(0.01)
+    end
+    if not gui or not isTokenActive(token, "Quest") then
+        return false
+    end
+
+    local originalGui = gui
+    local okFast, info = _inventory:RunFastExistingDialogueOptionLoop("Option1", function()
+        local current = Player.PlayerGui:FindFirstChild("DialogueGui")
+        return current == nil or current ~= originalGui
+    end, 3, 1.60)
+
+    if okFast then
+        moduleLog("INFO", "[CombatFarm][FastDialogue] Quest completion dialogue cleared invisibly: " .. tostring(info or "fast"))
+        return true
+    end
+
+    moduleLog("INFO", "[CombatFarm][FastDialogue] Quest completion dialogue fast-clear was not confirmed: " .. tostring(info or "unknown"))
+    return false
+end
+
 local function runQuestFarm(token)
     local autoChoose = _config:Get("AutoChooseQuest")
     if autoChoose then
@@ -1150,6 +1185,10 @@ local function runQuestFarm(token)
                 questCompleted = true
                 moduleLog("INFO", ("[CombatFarm] Quest objective complete: %s | %s/%s")
                     :format(tostring(currentQuest), tostring(progress), tostring(maxProgress)))
+                -- The game may automatically open a quest-completion page here.
+                -- Clear it before the farm loop re-opens the quest NPC so the
+                -- player never has to wait for/render the final dialogue.
+                finishQuestDialogueFast(token)
                 return true
             end
 
