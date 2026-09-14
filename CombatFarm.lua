@@ -189,17 +189,36 @@ local function killTarget(targetName, token)
         end
     end
 
-    -- Focus camera
-    local focusCam = _movement:GetCharacter("FocusCam")
-    if not focusCam then
+    -- Focus camera on the Stand while fighting. The player body stays offset/hidden,
+    -- so following the Stand gives a stable view of the actual combat.
+    local character = _movement:GetCharacter()
+    local focusCam = character and character:FindFirstChild("FocusCam")
+    local createdFocusCam = false
+    local previousFocusValue = focusCam and focusCam.Value or nil
+    if not focusCam and character then
         focusCam = Instance.new("ObjectValue")
         focusCam.Name = "FocusCam"
-        focusCam.Parent = _movement:GetCharacter()
+        focusCam.Parent = character
+        createdFocusCam = true
     end
-    focusCam.Value = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
 
-    -- Enable noclip so player can stay underground without collision
+    local initialEnemyHRP = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
+    local focusTarget = standPart or initialEnemyHRP
+    if focusCam then
+        focusCam.Value = focusTarget
+    end
+    if camera and focusTarget then
+        pcall(function()
+            camera.CameraType = Enum.CameraType.Custom
+            camera.CameraSubject = focusTarget
+        end)
+    end
+
+    -- Combat flight lock: noclip alone does not cancel gravity. Reuse the same
+    -- BodyVelocity freeze approach used by item collection so the player hovers
+    -- at the combat offset instead of accelerating into the void.
     _movement:SetNoclip(true)
+    local combatFreeze = _movement:Freeze()
 
     -- Y offset for player position (Xenon V5: player stays underground for safety)
     local yOffset = -35
@@ -225,12 +244,38 @@ local function killTarget(targetName, token)
             break
         end
 
-        -- XENON V5 POSITIONING: stand behind NPC, player underground
+        -- XENON V5 POSITIONING: stand behind NPC, player offset and suspended.
         if standPart and standPart.Parent then
             standPart.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.1
             hrp.CFrame = standPart.CFrame + standPart.CFrame.LookVector * math.random(-3, -2) + Vector3.new(0, yOffset, 0)
+
+            -- Keep both YBA's FocusCam value and Roblox camera following the Stand.
+            if focusCam and focusCam.Parent then
+                focusCam.Value = standPart
+            end
+            if camera and camera.Parent and camera.CameraSubject ~= standPart then
+                pcall(function()
+                    camera.CameraType = Enum.CameraType.Custom
+                    camera.CameraSubject = standPart
+                end)
+            end
         else
             hrp.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.3 + Vector3.new(0, yOffset, 0)
+            if focusCam and focusCam.Parent then
+                focusCam.Value = enemyHRP
+            end
+        end
+
+        -- Kill any accumulated fall/knockback velocity. BodyVelocity keeps the
+        -- player hovering, while this prevents one-frame physics spikes.
+        pcall(function()
+            hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end)
+
+        -- Recreate the flight lock if YBA removed it during combat.
+        if not combatFreeze or not combatFreeze.Parent then
+            combatFreeze = _movement:Freeze()
         end
 
         -- Attack
@@ -255,10 +300,15 @@ local function killTarget(targetName, token)
 
     -- Cleanup immediately after the combat loop.
     -- Existing combat offsets/distances are intentionally unchanged.
-    if focusCam then
+    _movement:Unfreeze(combatFreeze)
+
+    if focusCam and focusCam.Parent then
         pcall(function()
-            focusCam.Value = nil
-            focusCam:Destroy()
+            if createdFocusCam then
+                focusCam:Destroy()
+            else
+                focusCam.Value = previousFocusValue
+            end
         end)
     end
 
