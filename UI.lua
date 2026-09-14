@@ -13,7 +13,7 @@ local PlayerGui = Player:WaitForChild("PlayerGui")
 
 local UI = {}
 
-local UI_BUILD = "FUTURE-GOLD-2026.09.14-R3"
+local UI_BUILD = "FUTURE-GOLD-2026.09.14-R4-CONSOLE-FILTERS"
 UI.Build = UI_BUILD
 
 local THEME = {
@@ -1108,30 +1108,32 @@ function UI:Create()
     consoleButtons.BackgroundTransparency = 1
     consoleButtons.Parent = ConsolePage
 
-    local copyLogBtn = Instance.new("TextButton")
-    copyLogBtn.Size = UDim2.new(0.64,-2,1,0)
-    copyLogBtn.BackgroundColor3 = THEME.GOLD_DARK
-    copyLogBtn.BorderSizePixel = 0
-    copyLogBtn.Text = "Copy Log"
-    copyLogBtn.TextColor3 = THEME.WHITE
-    copyLogBtn.TextSize = 13
-    copyLogBtn.Font = Enum.Font.GothamBold
-    copyLogBtn.Parent = consoleButtons
-    Instance.new("UICorner", copyLogBtn).CornerRadius = UDim.new(0,7)
-    styleActionButton(copyLogBtn, true)
+    local function makeConsoleButton(text, xScale, widthScale, accent)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(widthScale,-3,1,0)
+        btn.Position = UDim2.new(xScale,0,0,0)
+        btn.BackgroundColor3 = accent and THEME.GOLD_DARK or THEME.PANEL3
+        btn.BorderSizePixel = 0
+        btn.Text = text
+        btn.TextColor3 = THEME.WHITE
+        btn.TextSize = 11
+        btn.Font = Enum.Font.GothamBold
+        btn.AutoButtonColor = false
+        btn.Parent = consoleButtons
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0,7)
+        styleActionButton(btn, accent)
+        return btn
+    end
 
-    local clearLogBtn = Instance.new("TextButton")
-    clearLogBtn.Size = UDim2.new(0.36,-2,1,0)
-    clearLogBtn.Position = UDim2.new(0.64,4,0,0)
-    clearLogBtn.BackgroundColor3 = THEME.PANEL3
-    clearLogBtn.BorderSizePixel = 0
-    clearLogBtn.Text = "Clear"
-    clearLogBtn.TextColor3 = THEME.WHITE
-    clearLogBtn.TextSize = 13
-    clearLogBtn.Font = Enum.Font.GothamBold
-    clearLogBtn.Parent = consoleButtons
-    Instance.new("UICorner", clearLogBtn).CornerRadius = UDim.new(0,7)
-    styleActionButton(clearLogBtn, false)
+    local copyLogBtn   = makeConsoleButton("Copy All",   0.00, 0.28, true)
+    local copyWarnBtn  = makeConsoleButton("Copy WARN",  0.28, 0.26, false)
+    local copyErrorBtn = makeConsoleButton("Copy ERROR", 0.54, 0.27, false)
+    local clearLogBtn  = makeConsoleButton("Clear",      0.81, 0.19, false)
+
+    local warnStroke = copyWarnBtn:FindFirstChildOfClass("UIStroke")
+    if warnStroke then warnStroke.Color = THEME.GOLD end
+    local errorStroke = copyErrorBtn:FindFirstChildOfClass("UIStroke")
+    if errorStroke then errorStroke.Color = THEME.RED or Color3.fromRGB(190,72,72) end
 
     local function refreshConsole()
         if not _runtimeLog then
@@ -1163,19 +1165,93 @@ function UI:Create()
         end)
     end
 
-    copyLogBtn.MouseButton1Click:Connect(function()
-        local text = _runtimeLog and _runtimeLog:GetText() or "WHITE HUB V3 - RuntimeLog unavailable"
-        if copyToClipboard(text) then
-            copyLogBtn.Text = "Copied!"
-            runtimeLog("INFO", "Runtime log copied to clipboard.")
+    local function executorName()
+        local exec = "Unknown"
+        pcall(function()
+            if type(identifyexecutor) == "function" then
+                local a, b = identifyexecutor()
+                exec = b ~= nil and (tostring(a) .. " " .. tostring(b)) or tostring(a)
+            end
+        end)
+        return exec
+    end
+
+    local function buildFilteredRuntimeLog(level)
+        level = tostring(level or ""):upper()
+        if not _runtimeLog then
+            return "WHITE HUB V3 - RuntimeLog unavailable"
+        end
+
+        local entries = {}
+        if type(_runtimeLog.GetEntries) == "function" then
+            local ok, result = pcall(function()
+                return _runtimeLog:GetEntries()
+            end)
+            if ok and type(result) == "table" then
+                entries = result
+            end
+        end
+
+        local lines = {
+            "WHITE HUB V3 - " .. level .. " REPORT",
+            "========================================",
+            "UI Build: " .. tostring(UI_BUILD),
+            "Runtime ID: " .. tostring(_runtimeLog.RuntimeId or "unknown"),
+            "PlaceId: " .. tostring(game.PlaceId),
+            "JobId: " .. tostring(game.JobId),
+            "Player: " .. tostring(Player and Player.Name or "unknown"),
+            "Executor: " .. executorName(),
+            "",
+            level .. " EVENTS",
+            "----------------------------------------",
+        }
+
+        local count = 0
+        for _, entry in ipairs(entries) do
+            if tostring(entry.Level or ""):upper() == level then
+                count = count + 1
+                lines[#lines + 1] = ("[%s] [%s] [%s] %s"):format(
+                    tostring(entry.Time or "?"),
+                    level,
+                    tostring(entry.Module or "General"),
+                    tostring(entry.Message or "")
+                )
+            end
+        end
+
+        if count == 0 then
+            lines[#lines + 1] = "No " .. level .. " entries recorded."
+        end
+
+        table.insert(lines, 9, "Matching entries: " .. tostring(count))
+        return table.concat(lines, "\n")
+    end
+
+    local function copyConsoleReport(button, idleText, report, successMessage)
+        if copyToClipboard(report) then
+            button.Text = "Copied!"
+            runtimeLog("INFO", successMessage)
         else
-            copyLogBtn.Text = "No clipboard API"
-            runtimeLog("WARN", "Clipboard API unavailable; runtime log printed to console.")
-            print(text)
+            button.Text = "No clipboard"
+            runtimeLog("WARN", "Clipboard API unavailable; report printed to executor console.")
+            print(report)
         end
         task.delay(2, function()
-            if copyLogBtn and copyLogBtn.Parent then copyLogBtn.Text = "Copy Log" end
+            if button and button.Parent then button.Text = idleText end
         end)
+    end
+
+    copyLogBtn.MouseButton1Click:Connect(function()
+        local report = _runtimeLog and _runtimeLog:GetText() or "WHITE HUB V3 - RuntimeLog unavailable"
+        copyConsoleReport(copyLogBtn, "Copy All", report, "Full runtime log copied to clipboard.")
+    end)
+
+    copyWarnBtn.MouseButton1Click:Connect(function()
+        copyConsoleReport(copyWarnBtn, "Copy WARN", buildFilteredRuntimeLog("WARN"), "WARN-only runtime report copied to clipboard.")
+    end)
+
+    copyErrorBtn.MouseButton1Click:Connect(function()
+        copyConsoleReport(copyErrorBtn, "Copy ERROR", buildFilteredRuntimeLog("ERROR"), "ERROR-only runtime report copied to clipboard.")
     end)
 
     clearLogBtn.MouseButton1Click:Connect(function()
