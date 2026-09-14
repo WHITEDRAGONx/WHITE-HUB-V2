@@ -157,86 +157,323 @@ end
 
 -- =====================
 -- DIALOGUE CLICKING HELPERS
--- (YBA v1.7974+ uses a client-side DialogueGui — no more sell remote)
+-- YBA 1.7974+ uses the newer client-side dialogue system.
+-- The Merchant wording/options can change, so selling is intent-based
+-- instead of depending on one exact sentence sequence.
 -- =====================
 
--- Attempts to click a GuiButton using multiple methods
--- Returns true if at least one method was attempted successfully
-local function clickButton(btn)
-    if not btn or not btn.Parent then return false end
-
-    -- Method 1: firesignal. Only report success if it actually exists and is called.
-    if type(firesignal) == "function" then
-        local ok1 = pcall(function()
-            firesignal(btn.MouseButton1Click)
-        end)
-        if ok1 then return true end
-    end
-
-    -- Method 2: VirtualInputManager fallback.
-    local ok2 = pcall(function()
-        local absPos  = btn.AbsolutePosition
-        local absSize = btn.AbsoluteSize
-        local x = absPos.X + absSize.X / 2
-        local y = absPos.Y + absSize.Y / 2
-
-        VirtualInputManager:SendMouseButtonEvent(x, y, 0, true,  game, 1)
-        task.wait(0.05)
-        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
-    end)
-
-    return ok2
+local function normalizeText(text)
+    text = tostring(text or ""):lower()
+    text = text:gsub("[%c%p]", " ")
+    text = text:gsub("%s+", " ")
+    return text:match("^%s*(.-)%s*$") or ""
 end
 
--- Searches DialogueGui.Options for an option whose TextButton contains
--- the given text. Returns the TextButton (or nil on timeout).
-local function findOptionByText(text, timeout)
-    timeout = timeout or 5
-    local start = tick()
+local function getButtonText(btn)
+    if not btn then return "" end
 
-    while tick() - start < timeout do
-        local dlg = Player.PlayerGui:FindFirstChild("DialogueGui")
-        if dlg then
-            local opts = dlg:FindFirstChild("Options")
-            if opts then
-                for _, opt in ipairs(opts:GetChildren()) do
-                    local btn = opt:FindFirstChild("TextButton", true)
-                    if btn then
-                        local btnText = btn.Text or ""
-                        if btnText:find(text, 1, true) then
-                            return btn
-                        end
-                    end
-                end
-            end
+    if btn:IsA("TextButton") then
+        local direct = tostring(btn.Text or "")
+        if direct ~= "" then
+            return direct
         end
-        task.wait(0.15)
+    end
+
+    -- Some dialogue versions put the visible text in a child TextLabel.
+    for _, child in ipairs(btn:GetDescendants()) do
+        if child:IsA("TextLabel") and tostring(child.Text or "") ~= "" then
+            return child.Text
+        end
+    end
+
+    return ""
+end
+
+local function isActuallyVisible(guiObject)
+    if not guiObject or not guiObject.Parent then return false end
+    if guiObject:IsA("GuiObject") and guiObject.Visible == false then return false end
+
+    local parent = guiObject.Parent
+    while parent and parent ~= Player.PlayerGui do
+        if parent:IsA("GuiObject") and parent.Visible == false then
+            return false
+        end
+        parent = parent.Parent
+    end
+
+    return true
+end
+
+local function getDialogueGui()
+    local direct = Player.PlayerGui:FindFirstChild("DialogueGui")
+    if direct then return direct end
+
+    -- Fallback for renamed/new dialogue containers.
+    for _, obj in ipairs(Player.PlayerGui:GetChildren()) do
+        local lowered = tostring(obj.Name):lower()
+        if lowered:find("dialog", 1, true) then
+            return obj
+        end
     end
 
     return nil
 end
 
--- Waits for an option matching the text and clicks it.
--- Returns true on success, false on timeout.
-local function waitAndClick(text, timeout)
-    local btn = findOptionByText(text, timeout)
-    if btn then
-        clickButton(btn)
-        return true
+local function getVisibleDialogueButtons()
+    local dlg = getDialogueGui()
+    if not dlg then return {} end
+
+    local buttons = {}
+    for _, obj in ipairs(dlg:GetDescendants()) do
+        if obj:IsA("GuiButton") and isActuallyVisible(obj) then
+            local text = getButtonText(obj)
+            if normalizeText(text) ~= "" then
+                table.insert(buttons, {
+                    Button = obj,
+                    Text = text,
+                    Normalized = normalizeText(text),
+                })
+            end
+        end
+    end
+
+    return buttons
+end
+
+local function describeButtons(buttons)
+    local texts = {}
+    for _, entry in ipairs(buttons) do
+        table.insert(texts, tostring(entry.Text))
+    end
+    return table.concat(texts, " | ")
+end
+
+-- Attempts to click a GuiButton using multiple executor-compatible methods.
+local function clickButton(btn)
+    if not btn or not btn.Parent then return false end
+
+    if type(firesignal) == "function" then
+        local ok = pcall(function()
+            firesignal(btn.MouseButton1Click)
+        end)
+        if ok then return true end
+    end
+
+    local ok = pcall(function()
+        local absPos  = btn.AbsolutePosition
+        local absSize = btn.AbsoluteSize
+        local x = absPos.X + absSize.X / 2
+        local y = absPos.Y + absSize.Y / 2
+
+        VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+        task.wait(0.05)
+        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+    end)
+
+    return ok
+end
+
+local NEGATIVE_WORDS = {
+    "buy", "leave", "cancel", "nevermind", "never mind",
+    "no thanks", "no thank", "goodbye", "exit", "nothing",
+}
+
+local function containsAny(text, words)
+    for _, word in ipairs(words) do
+        if text:find(word, 1, true) then
+            return true
+        end
     end
     return false
 end
 
+-- Scores an option by SELL intent. This intentionally does not require
+-- exact English sentences so wording/format changes are less likely to break it.
+local function scoreSellOption(entry)
+    local text = entry.Normalized
+    if text == "" then return -math.huge end
+    if containsAny(text, NEGATIVE_WORDS) then return -1000 end
+
+    local score = 0
+    local hasSell = text:find("sell", 1, true) ~= nil
+    local hasAll = text:find("all", 1, true) ~= nil
+    local hasEverything = text:find("everything", 1, true) ~= nil
+    local hasMax = text:find("max", 1, true) ~= nil
+
+    -- Quantity selection: strongly prefer ALL/MAX/EVERYTHING.
+    if hasSell and (hasAll or hasEverything or hasMax) then score = score + 220 end
+    if hasAll or hasEverything or hasMax then score = score + 150 end
+
+    -- General sell route / currently equipped item route.
+    if hasSell then score = score + 100 end
+    if text:find("this", 1, true) and hasSell then score = score + 30 end
+    if text:find("item", 1, true) and hasSell then score = score + 20 end
+
+    -- Confirmation pages in the new dialogue system.
+    if text:find("deal", 1, true) then score = score + 90 end
+    if text:find("confirm", 1, true) then score = score + 80 end
+    if text == "yes" or text:find("yes ", 1, true) == 1 then score = score + 70 end
+    if text == "ok" or text == "okay" or text:find("sure", 1, true) then score = score + 55 end
+
+    -- If quantity choices are numbers only, prefer the largest-looking option
+    -- only as a weak fallback; explicit ALL/MAX always wins above.
+    local quantity = tonumber(text:match("(%d+)%s*x")) or tonumber(text:match("sell%s+(%d+)"))
+    if quantity then
+        score = score + math.min(quantity, 50)
+    end
+
+    return score
+end
+
+local function waitForDialogueButtons(timeout)
+    timeout = timeout or 3
+    local started = tick()
+
+    while tick() - started < timeout do
+        local buttons = getVisibleDialogueButtons()
+        if #buttons > 0 then
+            return buttons
+        end
+        task.wait(0.1)
+    end
+
+    return {}
+end
+
+local function chooseBestSellButton(buttons)
+    local bestEntry = nil
+    local bestScore = -math.huge
+
+    for _, entry in ipairs(buttons) do
+        local score = scoreSellOption(entry)
+        if score > bestScore then
+            bestScore = score
+            bestEntry = entry
+        end
+    end
+
+    if bestScore <= 0 then
+        return nil, bestScore
+    end
+
+    return bestEntry, bestScore
+end
+
+local function findMerchantPrompt()
+    -- Known/new dialogue storage path first.
+    local dlgFolder = ReplicatedStorage:FindFirstChild("Dialogue")
+    if dlgFolder then
+        local merchant = dlgFolder:FindFirstChild("Merchant", true)
+        if merchant then
+            local prompt = merchant:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt then return prompt end
+        end
+    end
+
+    -- Search models/folders whose ancestry identifies the Merchant.
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("ProximityPrompt") then
+            local parent = obj.Parent
+            local matchedMerchant = false
+            local depth = 0
+            while parent and parent ~= workspace and depth < 6 do
+                if tostring(parent.Name):lower():find("merchant", 1, true) then
+                    matchedMerchant = true
+                    break
+                end
+                parent = parent.Parent
+                depth = depth + 1
+            end
+
+            local objectText = normalizeText(obj.ObjectText)
+            local actionText = normalizeText(obj.ActionText)
+            if matchedMerchant or objectText:find("merchant", 1, true) or actionText:find("merchant", 1, true) then
+                return obj
+            end
+        end
+    end
+
+    return nil
+end
+
+local function closeDialogueIfOpen()
+    local dlg = getDialogueGui()
+    if not dlg then return end
+
+    -- Prefer a harmless close/cancel button after a failed attempt.
+    local buttons = getVisibleDialogueButtons()
+    for _, entry in ipairs(buttons) do
+        local t = entry.Normalized
+        if t:find("leave", 1, true) or t:find("cancel", 1, true)
+            or t:find("nevermind", 1, true) or t:find("never mind", 1, true)
+            or t:find("goodbye", 1, true) or t:find("exit", 1, true) then
+            clickButton(entry.Button)
+            task.wait(0.2)
+            return
+        end
+    end
+end
+
+-- Drives the current Merchant dialogue dynamically until the item count drops.
+-- Returns true if at least one item was sold.
+local function runMerchantSellDialogue(itemName, beforeCount)
+    local lastOptions = ""
+    local repeatedSameState = 0
+
+    for step = 1, 7 do
+        if Inventory:Count(itemName) < beforeCount then
+            return true
+        end
+
+        local buttons = waitForDialogueButtons(step == 1 and 3 or 2)
+        if #buttons == 0 then
+            task.wait(0.35)
+            if Inventory:Count(itemName) < beforeCount then
+                return true
+            end
+            warn("[Inventory][Dialogue] No visible dialogue options at step " .. tostring(step) .. ".")
+            return false
+        end
+
+        local description = describeButtons(buttons)
+        print("[Inventory][Dialogue] Step " .. tostring(step) .. " options: " .. description)
+
+        if description == lastOptions then
+            repeatedSameState = repeatedSameState + 1
+        else
+            repeatedSameState = 0
+            lastOptions = description
+        end
+
+        if repeatedSameState >= 2 then
+            warn("[Inventory][Dialogue] Dialogue did not advance. Options: " .. description)
+            return false
+        end
+
+        local chosen, score = chooseBestSellButton(buttons)
+        if not chosen then
+            warn("[Inventory][Dialogue] Could not identify a sell option. Options: " .. description)
+            return false
+        end
+
+        print("[Inventory][Dialogue] Clicking: " .. tostring(chosen.Text) .. " (score " .. tostring(score) .. ")")
+        if not clickButton(chosen.Button) then
+            warn("[Inventory][Dialogue] Failed to click option: " .. tostring(chosen.Text))
+            return false
+        end
+
+        task.wait(0.5)
+    end
+
+    return Inventory:Count(itemName) < beforeCount
+end
+
 -- =====================
 -- SELL ALL
--- Sells every item marked as "sell = true" in the config.
--- Walks through the new dialogue flow:
---   1. "I'd like to sell this..."
---   2. "Deal."
---   3. "I'll sell ALL of these."
+-- Sells every item marked as sell=true using the current Merchant dialogue.
+-- It no longer depends on the old fixed wording/order from pre-1.7974.
 -- =====================
 function Inventory:SellAll()
-    -- Guard clauses
     if not _config:Get("FarmEnabled") then return end
     if self:IsMoneyMaxed() then
         print("[Inventory] Money already maxed — skipping sell.")
@@ -247,16 +484,12 @@ function Inventory:SellAll()
         return
     end
 
-    -- Build list of items to sell
     local sellItems = _config:GetSellItems()
     local toSell = {}
 
     for name, sell in pairs(sellItems) do
-        if sell then
-            local count = self:Count(name)
-            if count > 0 then
-                table.insert(toSell, name)
-            end
+        if sell and self:Count(name) > 0 then
+            table.insert(toSell, name)
         end
     end
 
@@ -265,130 +498,108 @@ function Inventory:SellAll()
         return
     end
 
-    print("[Inventory] Selling " .. #toSell .. " item type(s)...")
+    table.sort(toSell)
+    print("[Inventory] Selling " .. #toSell .. " item type(s) with dynamic Merchant dialogue...")
 
-    -- Locate the Merchant ProximityPrompt
-    local merchantPrompt
-    local dlgFolder = ReplicatedStorage:FindFirstChild("Dialogue")
-    if dlgFolder then
-        local merchant = dlgFolder:FindFirstChild("Merchant")
-        if merchant then
-            merchantPrompt = merchant:FindFirstChildWhichIsA("ProximityPrompt", true)
-        end
-    end
-
-    -- Fallback: search workspace
-    if not merchantPrompt then
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("Model") and obj.Name:find("Merchant") then
-                local pp = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
-                if pp then
-                    merchantPrompt = pp
-                    break
-                end
-            end
-        end
-    end
-
+    local merchantPrompt = findMerchantPrompt()
     if not merchantPrompt then
         warn("[Inventory] Merchant ProximityPrompt not found — cannot sell.")
         return
     end
 
-    local soldCount   = 0
-    local failedCount = 0
+    local soldTypes = 0
+    local failedTypes = 0
 
-    -- Sell each item type
     for _, itemName in ipairs(toSell) do
-        -- Re-fetch the tool (might be in backpack or equipped)
-        local tool = Player.Backpack:FindFirstChild(itemName)
-        if not tool and Player.Character then
-            tool = Player.Character:FindFirstChild(itemName)
+        if self:IsMoneyMaxed() then
+            print("[Inventory] Money reached max while selling — stopping.")
+            break
         end
 
-        if tool then
-            -- Equip the item so the server knows which one to sell
+        local initialCount = self:Count(itemName)
+        local currentCount = initialCount
+        local attempts = 0
+        local madeProgress = false
+
+        -- Usually one pass sells ALL. Retry a few times in case the new dialogue
+        -- only sells a fixed quantity or the first click is lost to replication.
+        while currentCount > 0 and attempts < 4 and not self:IsMoneyMaxed() do
+            attempts = attempts + 1
+
+            local tool = Player.Backpack:FindFirstChild(itemName)
+            if not tool and Player.Character then
+                tool = Player.Character:FindFirstChild(itemName)
+            end
+
+            if not tool then
+                break
+            end
+
             local char = Player.Character
-            local hum  = char and char:FindFirstChildWhichIsA("Humanoid")
+            local hum = char and char:FindFirstChildWhichIsA("Humanoid")
             if hum and tool.Parent == Player.Backpack then
-                hum:EquipTool(tool)
-                task.wait(0.15)
+                pcall(function() hum:EquipTool(tool) end)
+                task.wait(0.2)
             end
 
-            -- Open the dialogue via ProximityPrompt
-            pcall(function() fireproximityprompt(merchantPrompt) end)
-            task.wait(0.8)
+            closeDialogueIfOpen()
 
-            -- Step 1: "I'd like to sell this..."
-            local step1 = waitAndClick("I'd like to sell this", 3)
-            if not step1 then
-                step1 = waitAndClick("sell", 2)
+            local opened = pcall(function()
+                fireproximityprompt(merchantPrompt)
+            end)
+            if not opened then
+                warn("[Inventory] Could not trigger Merchant prompt for " .. itemName)
+                break
             end
-            task.wait(0.6)
 
-            -- Step 2: "Deal."
-            if step1 then
-                local step2 = waitAndClick("Deal.", 3)
-                if not step2 then
-                    step2 = waitAndClick("Deal", 2)
+            task.wait(0.45)
+
+            local beforeAttempt = self:Count(itemName)
+            local dialogueWorked = runMerchantSellDialogue(itemName, beforeAttempt)
+            task.wait(0.75)
+
+            local afterAttempt = self:Count(itemName)
+            if afterAttempt < beforeAttempt then
+                madeProgress = true
+                print("[Inventory] Sold " .. tostring(beforeAttempt - afterAttempt) .. "x " .. itemName
+                    .. " (remaining: " .. tostring(afterAttempt) .. ")")
+            elseif dialogueWorked then
+                -- Give replication one extra short window before declaring failure.
+                local deadline = tick() + 1.5
+                while tick() < deadline and self:Count(itemName) >= beforeAttempt do
+                    task.wait(0.1)
                 end
-                task.wait(0.6)
-
-                -- Step 3: "I'll sell ALL of these."
-                if step2 then
-                    local step3 = waitAndClick("sell ALL", 3)
-                    if not step3 then
-                        step3 = waitAndClick("ALL", 2)
-                    end
-
-                    -- Fallback: click the last option in the menu
-                    if not step3 then
-                        local dlg = Player.PlayerGui:FindFirstChild("DialogueGui")
-                        if dlg then
-                            local opts = dlg:FindFirstChild("Options")
-                            if opts then
-                                local children = opts:GetChildren()
-                                local last = children[#children]
-                                if last then
-                                    local btn = last:FindFirstChild("TextButton", true)
-                                    if btn then
-                                        clickButton(btn)
-                                        step3 = true
-                                    end
-                                end
-                            end
-                        end
-                    end
-
-                    task.wait(1.2)
-
-                    -- Verify the item was actually sold
-                    local stillHas = Player.Backpack:FindFirstChild(itemName)
-                    if not stillHas and Player.Character then
-                        stillHas = Player.Character:FindFirstChild(itemName)
-                    end
-
-                    if not stillHas then
-                        soldCount = soldCount + 1
-                        print("[Inventory] ✅ Sold: " .. itemName)
-                    else
-                        failedCount = failedCount + 1
-                        warn("[Inventory] ❌ Failed to sell: " .. itemName)
-                    end
-                else
-                    failedCount = failedCount + 1
-                    warn("[Inventory] ❌ 'Deal.' not found for: " .. itemName)
+                afterAttempt = self:Count(itemName)
+                if afterAttempt < beforeAttempt then
+                    madeProgress = true
                 end
-            else
-                failedCount = failedCount + 1
-                warn("[Inventory] ❌ 'I'd like to sell this...' not found for: " .. itemName)
             end
 
-            task.wait(0.3)
+            currentCount = self:Count(itemName)
+            if currentCount >= beforeAttempt then
+                warn("[Inventory] Merchant dialogue made no inventory progress for: " .. itemName)
+                closeDialogueIfOpen()
+                break
+            end
+
+            closeDialogueIfOpen()
+            task.wait(0.25)
+        end
+
+        local finalCount = self:Count(itemName)
+        if finalCount < initialCount then
+            soldTypes = soldTypes + 1
+            print("[Inventory] ✅ Sold " .. tostring(initialCount - finalCount) .. "/" .. tostring(initialCount)
+                .. " of " .. itemName)
+        else
+            failedTypes = failedTypes + 1
+            warn("[Inventory] ❌ Failed to sell: " .. itemName
+                .. ". Check the [Inventory][Dialogue] option dump above.")
         end
     end
 
-    print("[Inventory] SellAll done — Sold: " .. soldCount .. " | Failed: " .. failedCount)
+    closeDialogueIfOpen()
+    print("[Inventory] SellAll done — Types sold: " .. soldTypes .. " | Failed: " .. failedTypes)
 end
 
 -- =====================
