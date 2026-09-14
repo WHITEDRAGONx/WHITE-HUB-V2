@@ -1,3 +1,4 @@
+-- Build patch: R11-CONTINUE-SETTLE
 -- =====================
 -- Inventory.lua
 -- BUILD: ZERO-DELAY-2026.09.14-R6-DIRECT-CONTINUE
@@ -1962,6 +1963,25 @@ function Inventory:RunFastExistingDialogueOptionLoop(optionName, isComplete, max
                         continueFires = continueFires + 1
                         lastContinueFireAt = now
                         state.lastContinueMethod = fireMethod
+
+                        -- DialogueAnalyzer R2 proved that Delta's
+                        -- ClientFunctions:2088 connection:Fire() is the real
+                        -- continuation path. The callback may remove DialogueGui
+                        -- asynchronously a few milliseconds later, so give it a
+                        -- tiny settle window before trying fallback signals again.
+                        if type(fireMethod) == "string" and fireMethod:find("connection:Fire", 1, true) then
+                            local settleUntil = tick() + 0.06
+                            while tick() < settleUntil do
+                                local doneOk, done = pcall(isComplete)
+                                if doneOk and done then
+                                    return true, string.format("%.3fs stages=%d continues=%d method=%s gcScans=%d", tick() - startedAt, stages, continueFires, tostring(state.lastContinueMethod or "n/a"), state.gcScans or 0)
+                                end
+                                if not getDialogueGui() then
+                                    return true, string.format("%.3fs stages=%d continues=%d method=%s gcScans=%d", tick() - startedAt, stages, continueFires, tostring(state.lastContinueMethod or "n/a"), state.gcScans or 0)
+                                end
+                                task.wait(0.002)
+                            end
+                        end
                     end
                 end
 
