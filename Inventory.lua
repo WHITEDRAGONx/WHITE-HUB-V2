@@ -262,16 +262,62 @@ local function describeButtons(buttons)
     return table.concat(texts, " | ")
 end
 
--- Attempts to click a GuiButton using multiple executor-compatible methods.
-local function clickButton(btn)
+-- Internal click support lets Fast Sell drive dialogue without visibly clicking it.
+local function hasInternalClickSupport()
+    return type(firesignal) == "function" or type(getconnections) == "function"
+end
+
+local function fastClickButton(btn)
     if not btn or not btn.Parent then return false end
 
+    -- Preferred path: directly fire the Roblox signal. This does not require
+    -- the button to be visible on screen.
     if type(firesignal) == "function" then
         local ok = pcall(function()
             firesignal(btn.MouseButton1Click)
         end)
         if ok then return true end
     end
+
+    -- Executor fallback: call MouseButton1Click connections directly.
+    -- MouseButton1Click carries no arguments, so this is safer than trying
+    -- to invoke Activated callbacks with fabricated InputObjects.
+    if type(getconnections) == "function" then
+        local ok, connections = pcall(function()
+            return getconnections(btn.MouseButton1Click)
+        end)
+        if ok and type(connections) == "table" then
+            local invoked = false
+            for _, connection in ipairs(connections) do
+                local enabled = true
+                pcall(function()
+                    if connection.Enabled ~= nil then
+                        enabled = connection.Enabled
+                    end
+                end)
+
+                if enabled then
+                    local fn = nil
+                    pcall(function() fn = connection.Function end)
+                    if type(fn) == "function" then
+                        if pcall(fn) then
+                            invoked = true
+                        end
+                    end
+                end
+            end
+            if invoked then return true end
+        end
+    end
+
+    return false
+end
+
+-- Attempts an internal click first, then a physical-screen click as the
+-- compatibility fallback used by the normal visible dialogue mode.
+local function clickButton(btn)
+    if fastClickButton(btn) then return true end
+    if not btn or not btn.Parent then return false end
 
     local ok = pcall(function()
         local absPos  = btn.AbsolutePosition
@@ -285,6 +331,47 @@ local function clickButton(btn)
     end)
 
     return ok
+end
+
+-- Fast Sell suppresses ScreenGui rendering while leaving the dialogue tree
+-- alive. This means signals/connections can still be invoked internally.
+local suppressedDialogueGuis = {}
+
+local function suppressDialogueRendering()
+    local dlg = getDialogueGui()
+    if not dlg then return false end
+
+    if dlg:IsA("ScreenGui") then
+        if suppressedDialogueGuis[dlg] == nil then
+            local state = { Enabled = dlg.Enabled, Connection = nil }
+            state.Connection = dlg:GetPropertyChangedSignal("Enabled"):Connect(function()
+                -- YBA may try to re-enable the dialogue while opening the next
+                -- page. Keep it hidden for the duration of Fast Sell.
+                if suppressedDialogueGuis[dlg] and dlg.Enabled then
+                    dlg.Enabled = false
+                end
+            end)
+            suppressedDialogueGuis[dlg] = state
+        end
+        dlg.Enabled = false
+        return true
+    end
+
+    -- If YBA changes DialogueGui into a non-ScreenGui container, do not hide
+    -- it here because Visible=false would also make our option scanner ignore it.
+    return false
+end
+
+local function restoreDialogueRendering()
+    for dlg, state in pairs(suppressedDialogueGuis) do
+        if state and state.Connection then
+            pcall(function() state.Connection:Disconnect() end)
+        end
+        if dlg and dlg.Parent and dlg:IsA("ScreenGui") then
+            pcall(function() dlg.Enabled = state and state.Enabled ~= false end)
+        end
+        suppressedDialogueGuis[dlg] = nil
+    end
 end
 
 local NEGATIVE_WORDS = {
@@ -339,7 +426,7 @@ local function scoreSellOption(entry)
     return score
 end
 
-local function waitForDialogueButtons(timeout)
+local function waitForDialogueButtons(timeout, fastMode)
     timeout = timeout or 3
     local started = tick()
 
@@ -348,7 +435,7 @@ local function waitForDialogueButtons(timeout)
         if #buttons > 0 then
             return buttons
         end
-        task.wait(0.1)
+        task.wait(fastMode and 0.02 or 0.1)
     end
 
     return {}
@@ -430,23 +517,35 @@ end
 
 -- Drives the current Merchant dialogue dynamically until the item count drops.
 -- Returns true if at least one item was sold.
-local function runMerchantSellDialogue(itemName, beforeCount)
+local function runMerchantSellDialogue(itemName, beforeCount, fastMode)
     local lastOptions = ""
     local repeatedSameState = 0
+    local stepDelay = fastMode and 0.06 or 0.5
 
     for step = 1, 7 do
         if Inventory:Count(itemName) < beforeCount then
             return true
         end
 
-        local buttons = waitForDialogueButtons(step == 1 and 3 or 2)
+        local timeout
+        if fastMode then
+            timeout = step == 1 and 0.9 or 0.65
+        else
+            timeout = step == 1 and 3 or 2
+        end
+
+        local buttons = waitForDialogueButtons(timeout, fastMode)
         if #buttons == 0 then
-            task.wait(0.35)
+            task.wait(fastMode and 0.08 or 0.35)
             if Inventory:Count(itemName) < beforeCount then
                 return true
             end
             moduleLog("WARN", "[Inventory][Dialogue] No visible dialogue options at step " .. tostring(step) .. ".")
             return false
+        end
+
+        if fastMode then
+            suppressDialogueRendering()
         end
 
         local description = describeButtons(buttons)
@@ -470,13 +569,22 @@ local function runMerchantSellDialogue(itemName, beforeCount)
             return false
         end
 
-        moduleLog("INFO", "[Inventory][Dialogue] Clicking: " .. tostring(chosen.Text) .. " (score " .. tostring(score) .. ")")
-        if not clickButton(chosen.Button) then
-            moduleLog("WARN", "[Inventory][Dialogue] Failed to click option: " .. tostring(chosen.Text))
+        moduleLog("INFO", "[Inventory][Dialogue] " .. (fastMode and "Fast-clicking: " or "Clicking: ")
+            .. tostring(chosen.Text) .. " (score " .. tostring(score) .. ")")
+
+        local clicked
+        if fastMode then
+            clicked = fastClickButton(chosen.Button)
+        else
+            clicked = clickButton(chosen.Button)
+        end
+
+        if not clicked then
+            moduleLog("WARN", "[Inventory][Dialogue] Failed to activate option: " .. tostring(chosen.Text))
             return false
         end
 
-        task.wait(0.5)
+        task.wait(stepDelay)
     end
 
     return Inventory:Count(itemName) < beforeCount
@@ -524,6 +632,16 @@ function Inventory:SellAll()
     local soldTypes = 0
     local failedTypes = 0
 
+    local fastRequested = _config:Get("FastSellHidden") ~= false
+    local fastSupported = hasInternalClickSupport()
+    local fastMode = fastRequested and fastSupported
+
+    if fastMode then
+        moduleLog("INFO", "[Inventory] Fast Sell active — Merchant dialogue will be hidden and activated internally.")
+    elseif fastRequested then
+        moduleLog("WARN", "[Inventory] Fast Sell requested, but this executor has no firesignal/getconnections support. Using visible fallback.")
+    end
+
     for _, itemName in ipairs(toSell) do
         if self:IsMoneyMaxed() then
             moduleLog("INFO", "[Inventory] Money reached max while selling — stopping.")
@@ -553,10 +671,18 @@ function Inventory:SellAll()
             local hum = char and char:FindFirstChildWhichIsA("Humanoid")
             if hum and tool.Parent == Player.Backpack then
                 pcall(function() hum:EquipTool(tool) end)
-                task.wait(0.2)
+                task.wait(fastMode and 0.05 or 0.2)
             end
 
             closeDialogueIfOpen()
+            restoreDialogueRendering()
+
+            if fastMode then
+                -- Hide an already-existing DialogueGui before opening Merchant.
+                -- If YBA recreates it, runMerchantSellDialogue suppresses it again
+                -- as soon as the first options are available.
+                suppressDialogueRendering()
+            end
 
             local opened = pcall(function()
                 fireproximityprompt(merchantPrompt)
@@ -566,13 +692,34 @@ function Inventory:SellAll()
                 break
             end
 
-            task.wait(0.45)
+            task.wait(fastMode and 0.06 or 0.45)
 
             local beforeAttempt = self:Count(itemName)
-            local dialogueWorked = runMerchantSellDialogue(itemName, beforeAttempt)
-            task.wait(0.75)
+            local dialogueWorked = runMerchantSellDialogue(itemName, beforeAttempt, fastMode)
+            task.wait(fastMode and 0.12 or 0.75)
 
             local afterAttempt = self:Count(itemName)
+
+            -- If the executor exposes firesignal/getconnections but YBA's current
+            -- buttons are wired in a way the internal path cannot activate, retry
+            -- the same item once with the proven visible/VirtualInput fallback.
+            if fastMode and afterAttempt >= beforeAttempt then
+                moduleLog("WARN", "[Inventory] Fast Sell made no progress for " .. itemName
+                    .. " — retrying this item with visible dialogue fallback.")
+                restoreDialogueRendering()
+                closeDialogueIfOpen()
+                task.wait(0.15)
+
+                local reopened = pcall(function()
+                    fireproximityprompt(merchantPrompt)
+                end)
+                if reopened then
+                    task.wait(0.4)
+                    dialogueWorked = runMerchantSellDialogue(itemName, beforeAttempt, false)
+                    task.wait(0.65)
+                    afterAttempt = self:Count(itemName)
+                end
+            end
             if afterAttempt < beforeAttempt then
                 madeProgress = true
                 moduleLog("INFO", "[Inventory] Sold " .. tostring(beforeAttempt - afterAttempt) .. "x " .. itemName
@@ -593,11 +740,13 @@ function Inventory:SellAll()
             if currentCount >= beforeAttempt then
                 moduleLog("WARN", "[Inventory] Merchant dialogue made no inventory progress for: " .. itemName)
                 closeDialogueIfOpen()
+                restoreDialogueRendering()
                 break
             end
 
             closeDialogueIfOpen()
-            task.wait(0.25)
+            restoreDialogueRendering()
+            task.wait(fastMode and 0.06 or 0.25)
         end
 
         local finalCount = self:Count(itemName)
@@ -613,6 +762,7 @@ function Inventory:SellAll()
     end
 
     closeDialogueIfOpen()
+    restoreDialogueRendering()
     moduleLog("INFO", "[Inventory] SellAll done — Types sold: " .. soldTypes .. " | Failed: " .. failedTypes)
 end
 
