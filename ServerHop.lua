@@ -87,7 +87,21 @@ local function TPReturner()
     return false
 end
 
+local _runtimeLog = nil
+local _rawPrint, _rawWarn = print, warn
+local function moduleLog(level, ...)
+    if _runtimeLog and type(_runtimeLog.Write) == "function" then
+        pcall(_runtimeLog.Write, _runtimeLog, level, "ServerHop", ...)
+    end
+    if level == "WARN" or level == "ERROR" then
+        _rawWarn(...)
+    else
+        _rawPrint(...)
+    end
+end
+
 function ServerHop:Init(Modules)
+    _runtimeLog = Modules.RuntimeLog
     _movement = Modules.Movement
     _config = Modules.Config
 
@@ -106,7 +120,7 @@ function ServerHop:Init(Modules)
                 task.wait(0.1)
             end
             if not grabError.Parent then return end
-            print("[ServerHop] Kick detected: " .. tostring(grabError.Text) .. " — Rejoining...")
+            moduleLog("INFO", "[ServerHop] Kick detected: " .. tostring(grabError.Text) .. " — Rejoining...")
             task.wait(1)
             ServerHop:Rejoin()
         end)
@@ -115,11 +129,11 @@ end
 
 function ServerHop:Hop()
     if _config and _config:Get("StayInPrivateServer") then
-        print("[ServerHop] StayInPrivateServer is ON — skipping hop.")
+        moduleLog("INFO", "[ServerHop] StayInPrivateServer is ON — skipping hop.")
         return false
     end
 
-    print("[ServerHop] Hopping to a new server...")
+    moduleLog("INFO", "[ServerHop] Hopping to a new server...")
     local ok, result = pcall(function()
         if TPReturner() then return true end
         if foundAnything ~= "" then return TPReturner() end
@@ -130,16 +144,16 @@ function ServerHop:Hop()
         task.delay(3, function() _movement:FixCamera() end)
     end
 
-    if not ok then warn("[ServerHop] Hop failed: " .. tostring(result)) end
+    if not ok then moduleLog("WARN", "[ServerHop] Hop failed: " .. tostring(result)) end
     return ok and result == true
 end
 
 function ServerHop:Rejoin()
-    print("[ServerHop] Rejoining game...")
+    moduleLog("INFO", "[ServerHop] Rejoining game...")
     local ok, err = pcall(function()
         TeleportService:Teleport(PlaceID, Player)
     end)
-    if not ok then warn("[ServerHop] Rejoin failed: " .. tostring(err)) end
+    if not ok then moduleLog("WARN", "[ServerHop] Rejoin failed: " .. tostring(err)) end
     return ok
 end
 
