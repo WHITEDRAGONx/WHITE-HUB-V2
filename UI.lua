@@ -738,9 +738,11 @@ function UI:Create()
             runtimeLog("INFO", "Quest Farm enabled.")
             if _combatFarm then _combatFarm:StartQuest() end
         else
-            local running, mode = _combatFarm and _combatFarm:IsRunning()
             runtimeLog("INFO", "Quest Farm disabled.")
-            if running and mode == "Quest" then _combatFarm:Stop() end
+            if _combatFarm then
+                local running, mode = _combatFarm:IsRunning()
+                if running and mode == "Quest" then _combatFarm:Stop() end
+            end
         end
     end)
     
@@ -771,9 +773,11 @@ function UI:Create()
             runtimeLog("INFO", "NPC Farm enabled.")
             if _combatFarm then _combatFarm:StartNPC() end
         else
-            local running, mode = _combatFarm and _combatFarm:IsRunning()
             runtimeLog("INFO", "NPC Farm disabled.")
-            if running and mode == "NPC" then _combatFarm:Stop() end
+            if _combatFarm then
+                local running, mode = _combatFarm:IsRunning()
+                if running and mode == "NPC" then _combatFarm:Stop() end
+            end
         end
     end)
     
