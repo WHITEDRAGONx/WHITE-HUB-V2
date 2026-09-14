@@ -4,11 +4,21 @@
 -- Now respects StayInPrivateServer flag.
 -- =====================
 
-if getgenv().AutoPrestigeEnabled == nil then
-    getgenv().AutoPrestigeEnabled = false
+local env = getgenv and getgenv() or _G
+local AP_RUNTIME_ID = env.__WhiteHubRuntimeId
+
+if env.AutoPrestigeEnabled == nil then
+    env.AutoPrestigeEnabled = false
 end
 
-repeat task.wait(1) until getgenv().AutoPrestigeEnabled == true
+local function autoPrestigeActive()
+    return env.AutoPrestigeEnabled == true and env.__WhiteHubRuntimeId == AP_RUNTIME_ID
+end
+
+repeat
+    task.wait(0.5)
+    if env.__WhiteHubRuntimeId ~= AP_RUNTIME_ID then return end
+until autoPrestigeActive()
 
 print("[AutoPrestige] Enabled — starting up...")
 task.wait(8.0)
@@ -42,12 +52,26 @@ end)
 repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer and game.Players.LocalPlayer.Character
 
 local LocalPlayer = game.Players.LocalPlayer
-local Character   = LocalPlayer.Character
-repeat task.wait() until Character:FindFirstChild("RemoteEvent") and Character:FindFirstChild("RemoteFunction")
-local RemoteFunction, RemoteEvent = Character.RemoteFunction, Character.RemoteEvent
-local HRP   = Character.PrimaryPart
+local Character = nil
+local RemoteFunction, RemoteEvent = nil, nil
+local HRP = nil
 local part
 local dontTPOnDeath = true
+
+local function refreshCharacter(character)
+    Character = character or LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local deadline = tick() + 20
+    repeat
+        RemoteEvent = Character:FindFirstChild("RemoteEvent")
+        RemoteFunction = Character:FindFirstChild("RemoteFunction")
+        HRP = Character:FindFirstChild("HumanoidRootPart") or Character.PrimaryPart
+        if RemoteEvent and RemoteFunction and HRP then break end
+        task.wait(0.1)
+    until tick() >= deadline or not Character.Parent
+    return RemoteEvent ~= nil and RemoteFunction ~= nil
+end
+
+refreshCharacter(LocalPlayer.Character)
 
 local function disableAutoPrestige()
     local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
@@ -76,7 +100,7 @@ if isMaxPrestige() then
     end
     print("[AutoPrestige] Already max prestige. Disabling.")
     disableAutoPrestige()
-    while true do task.wait(9999999) end
+    return
 end
 
 if not LocalPlayer.PlayerGui:FindFirstChild("HUD") then
@@ -117,30 +141,39 @@ end
 
 local lastTick = tick()
 
--- Item magnitude hook
-local itemHook
-itemHook = hookfunction(
-    getrawmetatable(game.Players.LocalPlayer.Character.HumanoidRootPart.Position).__index,
-    function(p, i)
-        if getcallingscript().Name == "ItemSpawn" and i:lower() == "magnitude" then
-            return 0
-        end
-        return itemHook(p, i)
-    end
-)
+-- Hooks are installed once and only alter behavior while Auto Prestige is enabled.
 
--- Namecall hook
-local Hook
-Hook = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-    local args = {...}
-    local namecallmethod = getnamecallmethod()
-    if namecallmethod == "InvokeServer" then
-        if args[1] == "idklolbrah2de" then
-            return "  ___XP DE KEY"
-        end
-    end
-    return Hook(self, ...)
-end))
+if not env.__WhiteHubAutoPrestigeItemHookApplied then
+    env.__WhiteHubAutoPrestigeItemHookApplied = true
+    pcall(function()
+        local itemHook
+        itemHook = hookfunction(
+            getrawmetatable(game.Players.LocalPlayer.Character.HumanoidRootPart.Position).__index,
+            function(p, i)
+                local caller = getcallingscript and getcallingscript()
+                if env.AutoPrestigeEnabled == true and caller and caller.Name == "ItemSpawn" and type(i) == "string" and i:lower() == "magnitude" then
+                    return 0
+                end
+                return itemHook(p, i)
+            end
+        )
+    end)
+end
+
+if not env.__WhiteHubAutoPrestigeNamecallHookApplied then
+    env.__WhiteHubAutoPrestigeNamecallHookApplied = true
+    pcall(function()
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            local args = {...}
+            local method = getnamecallmethod()
+            if env.AutoPrestigeEnabled == true and method == "InvokeServer" and args[1] == "idklolbrah2de" then
+                return "  ___XP DE KEY"
+            end
+            return oldNamecall(self, ...)
+        end))
+    end)
+end
 
 -- =====================
 -- SERVER HOP (with StayInPrivateServer flag)
@@ -203,7 +236,7 @@ end
 -- Modified Teleport function: only uses StayInPrivateServer flag (no PrivateServerId)
 local function Teleport()
     while task.wait() do
-        if not getgenv().AutoPrestigeEnabled then
+        if not autoPrestigeActive() then
             print("[AutoPrestige] Disabled — stopping server hop loop.")
             return
         end
@@ -266,7 +299,7 @@ end
 local function countItems(itemName)
     local itemAmount = 0
     for _, item in pairs(game.Players.LocalPlayer.Backpack:GetChildren()) do
-        if item.Name == itemName then itemAmount += 1 end
+        if item.Name == itemName then itemAmount = itemAmount + 1 end
     end
     print(itemAmount)
     return itemAmount
@@ -509,7 +542,7 @@ local function allocateSkills()
 end
 
 local function autoStory()
-    if not getgenv().AutoPrestigeEnabled then
+    if not autoPrestigeActive() then
         print("[AutoPrestige] Disabled — autoStory() returning.")
         return
     end
@@ -781,7 +814,7 @@ end
 -- Prestige checker loop
 task.spawn(function()
     while task.wait(3) do
-        if not getgenv().AutoPrestigeEnabled then
+        if not autoPrestigeActive() then
             print("[AutoPrestige] Disabled — stopping prestige checker loop.")
             break
         end
@@ -789,44 +822,58 @@ task.spawn(function()
             print("[AutoPrestige] Prestiged!")
             Teleport()
         elseif LocalPlayer.PlayerStats.Level.Value == 50 then
-            if not Character:FindFirstChild("FocusCam") then
-                Character.FocusCam:Destroy()
-                break
-            end
+            local focusCam = Character and Character:FindFirstChild("FocusCam")
+            if focusCam then focusCam:Destroy() end
+            break
         else
             print("[AutoPrestige] Not ready to prestige yet.")
         end
     end
 end)
 
--- Death / respawn handler
-game.Workspace.Living.ChildAdded:Connect(function(character)
-    if character.Name == LocalPlayer.Name then
-        if not getgenv().AutoPrestigeEnabled then return end
+-- Death / respawn handlers. Store them globally so re-executing the Hub can replace them.
+if env.__WhiteHubAPLivingConnection then
+    pcall(function() env.__WhiteHubAPLivingConnection:Disconnect() end)
+end
+local living = game.Workspace:FindFirstChild("Living")
+if living then
+    env.__WhiteHubAPLivingConnection = living.ChildAdded:Connect(function(character)
+        if character.Name ~= LocalPlayer.Name or not autoPrestigeActive() then return end
         if LocalPlayer.PlayerStats.Level.Value == 50 then
             print("[AutoPrestige] Level 50 — skipping reconnect.")
+        elseif dontTPOnDeath then
+            Teleport()
         else
-            if dontTPOnDeath then
-                Teleport()
-            else
-                attemptStandFarm()
-            end
+            attemptStandFarm()
         end
-    end
-end)
+    end)
+end
 
--- Noclip on respawn
-LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(1)
-    for _, child in pairs(LocalPlayer.Character:GetDescendants()) do
-        if child:IsA("BasePart") and child.CanCollide == true then
+if env.__WhiteHubAPCharacterConnection then
+    pcall(function() env.__WhiteHubAPCharacterConnection:Disconnect() end)
+end
+env.__WhiteHubAPCharacterConnection = LocalPlayer.CharacterAdded:Connect(function(character)
+    refreshCharacter(character)
+    if not autoPrestigeActive() then return end
+    task.wait(0.5)
+    for _, child in ipairs(character:GetDescendants()) do
+        if child:IsA("BasePart") and child.CanCollide then
             child.CanCollide = false
         end
     end
 end)
 
--- Raycast noclip bypass
-hookfunction(workspace.Raycast, function() return end)
+-- Raycast bypass remains installed once, but becomes a no-op when Auto Prestige is disabled.
+if not env.__WhiteHubAutoPrestigeRaycastHookApplied then
+    env.__WhiteHubAutoPrestigeRaycastHookApplied = true
+    pcall(function()
+        local oldRaycast
+        oldRaycast = hookfunction(workspace.Raycast, function(...)
+            if env.AutoPrestigeEnabled == true then return nil end
+            return oldRaycast(...)
+        end)
+    end)
+end
 
 -- Entry point
 print("[AutoPrestige] Starting autoStory()...")
