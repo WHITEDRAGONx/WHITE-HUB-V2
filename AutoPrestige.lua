@@ -246,24 +246,21 @@ local function Teleport()
         if config and config:Get("StayInPrivateServer") then
             print("[AutoPrestige] StayInPrivateServer is ON – skipping hop.")
             task.wait(5)
-            goto continue_loop
-        end
-
-        pcall(function()
-            if getgenv().lessPing then
-                game:GetService("TeleportService"):Teleport(2809202155, game:GetService("Players").LocalPlayer)
-                game:GetService("TeleportService").TeleportInitFailed:Connect(function()
+        else
+            pcall(function()
+                if getgenv().lessPing then
                     game:GetService("TeleportService"):Teleport(2809202155, game:GetService("Players").LocalPlayer)
-                end)
-                repeat task.wait() until game.JobId ~= game.JobId
-            end
-            TPReturner()
-            if foundAnything ~= "" then
+                    game:GetService("TeleportService").TeleportInitFailed:Connect(function()
+                        game:GetService("TeleportService"):Teleport(2809202155, game:GetService("Players").LocalPlayer)
+                    end)
+                    repeat task.wait() until game.JobId ~= game.JobId
+                end
                 TPReturner()
-            end
-        end)
-
-        ::continue_loop::
+                if foundAnything ~= "" then
+                    TPReturner()
+                end
+            end)
+        end
     end
 end
 
