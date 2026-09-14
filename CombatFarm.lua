@@ -173,19 +173,21 @@ local function isNPCAlive(npc)
     return npc:FindFirstChild("HumanoidRootPart") ~= nil
 end
 
-local function getClosestNPC(npcName)
+local function getClosestNPC(npcName, excludeTarget)
     local closest = nil
     local closestDist = math.huge
     local hrp = _movement:GetCharacter("HumanoidRootPart")
     if not hrp then return nil end
 
     for _, npc in pairs(workspace.Living:GetChildren()) do
-        if npc.Name == npcName and isNPCAlive(npc) then
+        if npc ~= excludeTarget and npc.Name == npcName and isNPCAlive(npc) then
             local npcHRP = npc:FindFirstChild("HumanoidRootPart")
-            local dist = (hrp.Position - npcHRP.Position).Magnitude
-            if dist < closestDist then
-                closestDist = dist
-                closest = npc
+            if npcHRP then
+                local dist = (hrp.Position - npcHRP.Position).Magnitude
+                if dist < closestDist then
+                    closestDist = dist
+                    closest = npc
+                end
             end
         end
     end
@@ -405,32 +407,79 @@ local function killTarget(targetName, token)
         task.wait(0.25)
     end
 
-    if focusCam and focusCam.Parent then
-        pcall(function()
-            if createdFocusCam then
-                focusCam:Destroy()
-            else
-                focusCam.Value = previousFocusValue
-            end
-        end)
+    -- Chain targeting: on a successful kill, hand camera/position directly to
+    -- the next same-name NPC instead of bouncing back to the safe spot between
+    -- kills. This removes the camera reset + teleport round-trip delay.
+    local chainedToNext = false
+    local questFinishedNow = false
+    if killed and activeMode == "Quest" then
+        local progress, maxProgress = readQuestState()
+        questFinishedNow = questCompleted
+            or ((maxProgress or 0) > 0 and (progress or 0) >= (maxProgress or 0))
     end
 
-    if token == runId then
-        _movement:SetNoclip(false)
-        if hrp and hrp.Parent then
-            pcall(function() hrp.CFrame = oldPos end)
-        end
-        if camera and camera.Parent then
+    if killed and token == runId and isTokenActive(token) and not questFinishedNow then
+        local nextTarget = getClosestNPC(targetName, target)
+        local nextHRP = nextTarget and nextTarget:FindFirstChild("HumanoidRootPart")
+        if nextTarget and nextHRP and hrp and hrp.Parent then
+            if focusCam and focusCam.Parent then
+                focusCam.Value = nextHRP
+            end
+
+            if hasStand and (not standPart or not standPart.Parent) then
+                standMorph = character:FindFirstChild("StandMorph")
+                standPart = standMorph and standMorph.PrimaryPart or nil
+            end
+
+            if standPart and standPart.Parent then
+                local nextStandCF = nextHRP.CFrame - nextHRP.CFrame.LookVector * 1.1
+                standPart.CFrame = nextStandCF
+                hrp.CFrame = nextStandCF + nextStandCF.LookVector * -2.5 + Vector3.new(0, yOffset, 0)
+            else
+                hrp.CFrame = nextHRP.CFrame - nextHRP.CFrame.LookVector * 2.3 + Vector3.new(0, yOffset, 0)
+            end
+
             pcall(function()
-                if oldCameraSubject and oldCameraSubject.Parent then
-                    camera.CameraSubject = oldCameraSubject
-                else
-                    local char = _movement:GetCharacter()
-                    local humanoid = char and char:FindFirstChildWhichIsA("Humanoid")
-                    if humanoid then camera.CameraSubject = humanoid end
-                end
-                if oldCameraType then camera.CameraType = oldCameraType end
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hrp.AssemblyAngularVelocity = Vector3.zero
             end)
+
+            chainedToNext = true
+            moduleLog("INFO", ("[CombatFarm][XenonChain] Handoff %s -> next spawn (no safe-spot/camera reset)"):format(tostring(targetName)))
+        end
+    end
+
+    if not chainedToNext then
+        if focusCam and focusCam.Parent then
+            pcall(function()
+                if createdFocusCam then
+                    focusCam:Destroy()
+                else
+                    focusCam.Value = previousFocusValue
+                end
+            end)
+        end
+
+        if token == runId then
+            _movement:SetNoclip(false)
+            -- Do NOT return to oldPos after every successful kill. Staying at the
+            -- combat location avoids the safe-spot round trip; Stop() still performs
+            -- full cleanup when farming is disabled.
+            if not killed and hrp and hrp.Parent then
+                pcall(function() hrp.CFrame = oldPos end)
+            end
+            if camera and camera.Parent then
+                pcall(function()
+                    if oldCameraSubject and oldCameraSubject.Parent then
+                        camera.CameraSubject = oldCameraSubject
+                    else
+                        local char = _movement:GetCharacter()
+                        local humanoid = char and char:FindFirstChildWhichIsA("Humanoid")
+                        if humanoid then camera.CameraSubject = humanoid end
+                    end
+                    if oldCameraType then camera.CameraType = oldCameraType end
+                end)
+            end
         end
     end
 
@@ -819,7 +868,7 @@ local function runQuestFarm(token)
             local ok = killTarget(data.enemy, token)
             if not isTokenActive(token, "Quest") then return false end
             if ok then
-                if not waitToken(0.15, token, "Quest") then return false end
+                if not waitToken(0.02, token, "Quest") then return false end
             else
                 if not waitToken(0.75, token, "Quest") then return false end
             end
@@ -850,7 +899,7 @@ local function farmLoop(token)
             if token ~= runId or stopRequested then break end
             if ok then
                 moduleLog("INFO", "[CombatFarm] NPC killed. Looking for another alive spawn...")
-                if not waitCancelable(0.15, token) then break end
+                if not waitCancelable(0.02, token) then break end
             else
                 moduleLog("INFO", "[CombatFarm] No alive NPC found. Retrying shortly...")
                 if not waitCancelable(0.75, token) then break end
