@@ -15,12 +15,25 @@ local function autoPrestigeActive()
     return env.AutoPrestigeEnabled == true and env.__WhiteHubRuntimeId == AP_RUNTIME_ID
 end
 
+local _rawPrint, _rawWarn = print, warn
+local function moduleLog(level, ...)
+    local logger = _G.WhiteHubModules and _G.WhiteHubModules.RuntimeLog
+    if logger and type(logger.Write) == "function" then
+        pcall(logger.Write, logger, level, "AutoPrestige", ...)
+    end
+    if level == "WARN" or level == "ERROR" then
+        _rawWarn(...)
+    else
+        _rawPrint(...)
+    end
+end
+
 repeat
     task.wait(0.5)
     if env.__WhiteHubRuntimeId ~= AP_RUNTIME_ID then return end
 until autoPrestigeActive()
 
-print("[AutoPrestige] Enabled — starting up...")
+moduleLog("INFO", "[AutoPrestige] Enabled — starting up...")
 task.wait(8.0)
 
 getgenv().standList = {
@@ -98,13 +111,13 @@ if isMaxPrestige() then
         end
         config:Set("PrestigeMaxNotified", true)
     end
-    print("[AutoPrestige] Already max prestige. Disabling.")
+    moduleLog("INFO", "[AutoPrestige] Already max prestige. Disabling.")
     disableAutoPrestige()
     return
 end
 
 if not LocalPlayer.PlayerGui:FindFirstChild("HUD") then
-    print("[AutoPrestige] HUD not found — cloning from ReplicatedStorage.")
+    moduleLog("INFO", "[AutoPrestige] HUD not found — cloning from ReplicatedStorage.")
     local HUD = game:GetService("ReplicatedStorage").Objects.HUD:Clone()
     HUD.Parent = LocalPlayer.PlayerGui
 end
@@ -237,14 +250,14 @@ end
 local function Teleport()
     while task.wait() do
         if not autoPrestigeActive() then
-            print("[AutoPrestige] Disabled — stopping server hop loop.")
+            moduleLog("INFO", "[AutoPrestige] Disabled — stopping server hop loop.")
             return
         end
 
         -- Check private server flag from WHITE HUB config
         local config = _G.WhiteHubModules and _G.WhiteHubModules.Config
         if config and config:Get("StayInPrivateServer") then
-            print("[AutoPrestige] StayInPrivateServer is ON – skipping hop.")
+            moduleLog("INFO", "[AutoPrestige] StayInPrivateServer is ON – skipping hop.")
             task.wait(5)
         else
             pcall(function()
@@ -286,7 +299,7 @@ local function findItem(itemName)
                 table.insert(ItemsDict["ProximityPrompt"], item.ProximityPrompt)
                 table.insert(ItemsDict["Position"],        item.MeshPart.CFrame)
             else
-                print("[AutoPrestige] Fake item skipped.")
+                moduleLog("INFO", "[AutoPrestige] Fake item skipped.")
             end
         end
     end
@@ -298,7 +311,7 @@ local function countItems(itemName)
     for _, item in pairs(game.Players.LocalPlayer.Backpack:GetChildren()) do
         if item.Name == itemName then itemAmount = itemAmount + 1 end
     end
-    print(itemAmount)
+    moduleLog("INFO", itemAmount)
     return itemAmount
 end
 
@@ -327,16 +340,16 @@ end
 
 local function attemptStandFarm()
     if not LocalPlayer or not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        print("[AutoPrestige] ERROR: LocalPlayer or Character is invalid.")
+        moduleLog("INFO", "[AutoPrestige] ERROR: LocalPlayer or Character is invalid.")
         return
     end
     LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(500, 2010, 500)
     if LocalPlayer.PlayerStats and LocalPlayer.PlayerStats.Stand and LocalPlayer.PlayerStats.Stand.Value == "None" then
-        print("[AutoPrestige] No stand — using Mysterious Arrow.")
+        moduleLog("INFO", "[AutoPrestige] No stand — using Mysterious Arrow.")
         useItem("Mysterious Arrow", "II")
         repeat task.wait(0.5) until LocalPlayer.PlayerStats.Stand.Value ~= "None"
         if not getgenv().standList or not getgenv().standList[LocalPlayer.PlayerStats.Stand.Value] then
-            print("[AutoPrestige] Bad stand — using Rokakaka.")
+            moduleLog("INFO", "[AutoPrestige] Bad stand — using Rokakaka.")
             useItem("Rokakaka", "II")
         elseif getgenv().standList[LocalPlayer.PlayerStats.Stand.Value] then
             dontTPOnDeath = true
@@ -344,7 +357,7 @@ local function attemptStandFarm()
         end
     elseif LocalPlayer.PlayerStats and LocalPlayer.PlayerStats.Stand and LocalPlayer.PlayerStats.Stand.Value ~= "None" then
         if not getgenv().standList or not getgenv().standList[LocalPlayer.PlayerStats.Stand.Value] then
-            print("[AutoPrestige] Bad stand — clearing with Rokakaka.")
+            moduleLog("INFO", "[AutoPrestige] Bad stand — clearing with Rokakaka.")
             useItem("Rokakaka", "II")
         end
     end
@@ -404,7 +417,7 @@ local function farmItem(itemName, amount)
     local amountFirst = countItems(itemName) == amount
     for itemIndex, _ in pairs(items["Position"]) do
         if countItems(itemName) == amount or amountFirst then
-            print("[AutoPrestige] Item target reached: " .. itemName)
+            moduleLog("INFO", "[AutoPrestige] Item target reached: " .. itemName)
             break
         else
             getitem(items, itemIndex)
@@ -436,7 +449,7 @@ local function storyDialogue()
 end
 
 local function killNPC(npcName, playerDistance, dontDestroyOnKill, extraParameters)
-    print("[AutoPrestige] Targeting NPC:", npcName, playerDistance, dontDestroyOnKill, extraParameters)
+    moduleLog("INFO", "[AutoPrestige] Targeting NPC:", npcName, playerDistance, dontDestroyOnKill, extraParameters)
 
     local NPC          = workspace.Living:WaitForChild(npcName, getgenv().NPCTimeOut)
     local beingTargeted = true
@@ -511,7 +524,7 @@ local function killNPC(npcName, playerDistance, dontDestroyOnKill, extraParamete
         task.spawn(BlockBreaker)
     end
 
-    print("[AutoPrestige] killNPC result:", doneKilled)
+    moduleLog("INFO", "[AutoPrestige] killNPC result:", doneKilled)
     return doneKilled
 end
 
@@ -540,7 +553,7 @@ end
 
 local function autoStory()
     if not autoPrestigeActive() then
-        print("[AutoPrestige] Disabled — autoStory() returning.")
+        moduleLog("INFO", "[AutoPrestige] Disabled — autoStory() returning.")
         return
     end
 
@@ -571,7 +584,7 @@ local function autoStory()
         end
 
         if LocalPlayer.PlayerStats.Money.Value <= 10000 then
-            print("[AutoPrestige] Low money — collecting and selling items for Hamon.")
+            moduleLog("INFO", "[AutoPrestige] Low money — collecting and selling items for Hamon.")
             collectAndSell("Mysterious Arrow", 25)
             collectAndSell("Rokakaka", 25)
             collectAndSell("Diamond", 10)
@@ -635,7 +648,7 @@ local function autoStory()
     end
 
     if questPanel:FindFirstChild("Help Giorno by Defeating Security Guards") then
-        print("[AutoPrestige] Quest: Security Guard")
+        moduleLog("INFO", "[AutoPrestige] Quest: Security Guard")
         if killNPC("Security Guard", 15) then
             task.wait(1)
             storyDialogue()
@@ -646,13 +659,13 @@ local function autoStory()
 
     elseif not getgenv().standList[LocalPlayer.PlayerStats.Stand.Value]
     and LocalPlayer.PlayerStats.Level.Value >= 3 and dontTPOnDeath then
-        print("[AutoPrestige] No valid stand — farming arrows.")
+        moduleLog("INFO", "[AutoPrestige] No valid stand — farming arrows.")
         task.wait(5)
         farmItem("Rokakaka", 25)
         farmItem("Mysterious Arrow", 25)
         farmItem("Zeppeli's Hat", 1)
         if countItems("Mysterious Arrow") >= 25 and countItems("Rokakaka") >= 25 then
-            print("[AutoPrestige] Max arrows obtained — attempting stand farm.")
+            moduleLog("INFO", "[AutoPrestige] Max arrows obtained — attempting stand farm.")
             dontTPOnDeath = false
             attemptStandFarm()
         else
@@ -660,7 +673,7 @@ local function autoStory()
         end
 
     elseif questPanel:FindFirstChild("Defeat Leaky Eye Luca") and getgenv().standList[LocalPlayer.PlayerStats.Stand.Value] then
-        print("[AutoPrestige] Quest: Leaky Eye Luca")
+        moduleLog("INFO", "[AutoPrestige] Quest: Leaky Eye Luca")
         if killNPC("Leaky Eye Luca", 15) then
             task.wait(1)
             storyDialogue()
@@ -670,7 +683,7 @@ local function autoStory()
         end
 
     elseif questPanel:FindFirstChild("Defeat Bucciarati") then
-        print("[AutoPrestige] Quest: Bucciarati")
+        moduleLog("INFO", "[AutoPrestige] Quest: Bucciarati")
         if killNPC("Bucciarati", 15) then
             task.wait(1)
             storyDialogue()
@@ -680,7 +693,7 @@ local function autoStory()
         end
 
     elseif questPanel:FindFirstChild("Collect $5,000 To Cover For Popo's Real Fortune") then
-        print("[AutoPrestige] Quest: Collect $5,000")
+        moduleLog("INFO", "[AutoPrestige] Quest: Collect $5,000")
         if LocalPlayer.PlayerStats.Money.Value < 5000 then
             local function collectAndSell(toolName, amount)
                 if countItems(toolName) <= amount then
@@ -710,7 +723,7 @@ local function autoStory()
         autoStory()
 
     elseif questPanel:FindFirstChild("Defeat Fugo And His Purple Haze") then
-        print("[AutoPrestige] Quest: Fugo")
+        moduleLog("INFO", "[AutoPrestige] Quest: Fugo")
         if killNPC("Fugo", 15) then
             task.wait(1)
             storyDialogue()
@@ -720,7 +733,7 @@ local function autoStory()
         end
 
     elseif questPanel:FindFirstChild("Defeat Pesci") then
-        print("[AutoPrestige] Quest: Pesci")
+        moduleLog("INFO", "[AutoPrestige] Quest: Pesci")
         if killNPC("Pesci", 15) then
             task.wait(1)
             storyDialogue()
@@ -730,7 +743,7 @@ local function autoStory()
         end
 
     elseif questPanel:FindFirstChild("Defeat Ghiaccio") then
-        print("[AutoPrestige] Quest: Ghiaccio")
+        moduleLog("INFO", "[AutoPrestige] Quest: Ghiaccio")
         if killNPC("Ghiaccio", 15) then
             task.wait(1)
             storyDialogue()
@@ -740,7 +753,7 @@ local function autoStory()
         end
 
     elseif questPanel:FindFirstChild("Defeat Diavolo") then
-        print("[AutoPrestige] Quest: Diavolo")
+        moduleLog("INFO", "[AutoPrestige] Quest: Diavolo")
         killNPC("Diavolo", 15)
         endDialogue("Storyline #14", "Dialogue7", "Option1")
         if Character:WaitForChild("Requiem Arrow", 5) then
@@ -774,7 +787,7 @@ local function autoStory()
     and LocalPlayer.PlayerStats.Spec.Value ~= "None"
     and LocalPlayer.PlayerStats.Level.Value >= 25
     and LocalPlayer.PlayerStats.Level.Value ~= 50 then
-        print("[AutoPrestige] Quest: Vampires")
+        moduleLog("INFO", "[AutoPrestige] Quest: Vampires")
         getgenv().HamonCharge = 10
         local function vampire()
             LocalPlayer.Character.PrimaryPart.CFrame = workspace.Living:FindFirstChild("Vampire").HumanoidRootPart.CFrame - Vector3.new(0, 15, 0)
@@ -812,18 +825,18 @@ end
 task.spawn(function()
     while task.wait(3) do
         if not autoPrestigeActive() then
-            print("[AutoPrestige] Disabled — stopping prestige checker loop.")
+            moduleLog("INFO", "[AutoPrestige] Disabled — stopping prestige checker loop.")
             break
         end
         if checkPrestige(LocalPlayer.PlayerStats.Level.Value, LocalPlayer.PlayerStats.Prestige.Value) then
-            print("[AutoPrestige] Prestiged!")
+            moduleLog("INFO", "[AutoPrestige] Prestiged!")
             Teleport()
         elseif LocalPlayer.PlayerStats.Level.Value == 50 then
             local focusCam = Character and Character:FindFirstChild("FocusCam")
             if focusCam then focusCam:Destroy() end
             break
         else
-            print("[AutoPrestige] Not ready to prestige yet.")
+            moduleLog("INFO", "[AutoPrestige] Not ready to prestige yet.")
         end
     end
 end)
@@ -837,7 +850,7 @@ if living then
     env.__WhiteHubAPLivingConnection = living.ChildAdded:Connect(function(character)
         if character.Name ~= LocalPlayer.Name or not autoPrestigeActive() then return end
         if LocalPlayer.PlayerStats.Level.Value == 50 then
-            print("[AutoPrestige] Level 50 — skipping reconnect.")
+            moduleLog("INFO", "[AutoPrestige] Level 50 — skipping reconnect.")
         elseif dontTPOnDeath then
             Teleport()
         else
@@ -873,5 +886,5 @@ if not env.__WhiteHubAutoPrestigeRaycastHookApplied then
 end
 
 -- Entry point
-print("[AutoPrestige] Starting autoStory()...")
+moduleLog("INFO", "[AutoPrestige] Starting autoStory()...")
 autoStory()
