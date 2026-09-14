@@ -12,6 +12,7 @@ local _data = nil
 local Defaults = {
     BuyLucky = true,
     AutoSell = true,
+    FastSellHidden = true,
     WebhookURL = "",
     Phase1Notified = false,
     Phase3Notified = false,
