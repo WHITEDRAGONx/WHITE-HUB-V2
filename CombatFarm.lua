@@ -1,7 +1,7 @@
 -- =====================
 -- CombatFarm.lua
 -- Unified combat: NPC and Quest farming.
--- QUEST/COMBAT BUILD: R13-LATE-CONTINUE-WATCH
+-- QUEST/COMBAT BUILD: R14-TURNIN-PROMPT
 -- Logic identical to Xenon V5 (stand positioning, attacks, death detection).
 -- FIXED: player positioned underground (yOffset -35) with noclip for safety.
 -- =====================
@@ -418,7 +418,7 @@ end
 -- Forward declaration: killTarget waits for QuestProgress credit before the
 -- concrete readQuestState implementation later in this module.
 local readQuestState
-local finishQuestDialogueFast
+local runPromptDialogueFast
 
 local function waitToken(seconds, token, expectedMode)
     local deadline = tick() + seconds
@@ -669,48 +669,26 @@ local function killTarget(targetName, token)
     end
 
     if killed and activeMode == "Quest" and isTokenActive(token, "Quest") then
-        -- QuestProgress and the completion dialogue do not always arrive in the same
-        -- order. Dio/Jotaro can report 1/1 first and create DialogueGui several
-        -- seconds later. For mapped quests with a completion page, never release the
-        -- quest cycle just because PlayerStats updated: wait for the late GUI and
-        -- consume ClientFunctions:2088 as soon as it is created.
-        local questData = currentQuest and questInfo[currentQuest] or nil
-        local expectsCompletionDialogue = questData and questData.completionDialogue == true
-        local settleDeadline = tick() + (expectsCompletionDialogue and 6.50 or 1.50)
-        local creditedLogged = false
-        local completionCleared = false
-
+        -- Confirm the server-side quest credit, but do NOT wait for an automatic
+        -- DialogueGui here. DialogueAnalyzer/logs proved Dio/Jotaro's completion
+        -- page is created only after interacting with the quest NPC again.
+        local settleDeadline = tick() + 1.50
         while tick() < settleDeadline and isTokenActive(token, "Quest") do
             local progress, maxProgress = readQuestState()
             local credited = progress ~= questProgressBefore
                 or maxProgress ~= questMaxBefore
                 or ((maxProgress or 0) > 0 and (progress or 0) >= (maxProgress or 0))
 
-            if credited and not creditedLogged then
-                creditedLogged = true
+            if credited then
                 moduleLog("INFO", ("[CombatFarm][XenonLock] Kill credited | progress=%s/%s"):format(
                     tostring(progress), tostring(maxProgress)
                 ))
-            end
-
-            if type(finishQuestDialogueFast) == "function" then
-                local gui = Player.PlayerGui:FindFirstChild("DialogueGui")
-                if gui then
-                    moduleLog("INFO", "[CombatFarm][FastDialogue] Post-kill DialogueGui detected; clearing before quest re-take.")
-                    completionCleared = finishQuestDialogueFast(token, 0.15)
-                    if completionCleared then
-                        break
-                    end
-                elseif expectsCompletionDialogue and credited then
-                    -- Progress is already complete but YBA has not created the page
-                    -- yet. Arm the event-driven waiter instead of moving on early.
-                    moduleLog("INFO", "[CombatFarm][FastDialogue] Quest credited; waiting for delayed completion DialogueGui...")
-                    completionCleared = finishQuestDialogueFast(token, math.max(0.20, settleDeadline - tick()))
-                    break
+                if (maxProgress or 0) > 0 and (progress or 0) >= (maxProgress or 0) then
+                    -- The combat position is ~35 studs under the victim. Park on
+                    -- the real safe spot immediately so gravity cannot drop the
+                    -- character into the void while the quest is being turned in.
+                    goToSafeSpot("Quest objective complete; preparing instant turn-in")
                 end
-            end
-
-            if credited and not expectsCompletionDialogue then
                 break
             end
             task.wait(0.005)
@@ -1017,45 +995,78 @@ local function acceptQuest(questName, token)
         return true
     end
 
-    -- A completed quest is NOT an active quest. Re-open the NPC immediately so
-    -- normal leveling quests can be taken again. Only quests with a real mapped
-    -- cooldown are allowed to enter the cooldown state.
-    if previousCompleted then
-        questCompleted = false
-        moduleLog("INFO", ("[CombatFarm] Previous quest finished (%s/%s). Re-taking %s...")
-            :format(tostring(beforeProgress), tostring(beforeMax), tostring(questName)))
-    end
-
     local prompt = findQuestPrompt(questName)
     if not prompt then
         moduleLog("WARN", "[CombatFarm] New quest ProximityPrompt not found: " .. questName)
         return false
     end
 
+    -- A completed quest must be turned in first. The Dio/Jotaro logs proved that
+    -- the ClickContinue page does not spawn automatically after the kill: it is
+    -- created only when Dio's prompt is fired again. Do the turn-in explicitly,
+    -- invisibly, using the same line-2088 connection:Fire path proven by Analyzer.
+    if previousCompleted then
+        moduleLog("INFO", ("[CombatFarm] Previous quest finished (%s/%s). Instant turn-in: %s...")
+            :format(tostring(beforeProgress), tostring(beforeMax), tostring(questName)))
+
+        goToSafeSpot("Turning in completed quest")
+        local hold = nil
+        pcall(function() hold = _movement:Freeze() end)
+
+        local okTurn, turnInfo = runPromptDialogueFast(prompt, token, nil, 4.00, "Quest turn-in")
+
+        if hold then
+            pcall(function() _movement:Unfreeze(hold) end)
+        end
+
+        if not okTurn then
+            moduleLog("WARN", "[CombatFarm][FastDialogue] Quest turn-in was not confirmed: " .. tostring(turnInfo or "unknown"))
+            return false
+        end
+
+        -- Give PlayerStats a tiny settle window. If the same interaction already
+        -- activated the repeat quest, avoid firing the prompt a second time.
+        local settleUntil = tick() + 0.25
+        repeat
+            local p, m = readQuestState()
+            if (m or 0) > 0 and (p or 0) < (m or 0) then
+                questCompleted = false
+                moduleLog("INFO", ("[CombatFarm][FastDialogue] Quest reactivated during turn-in: %s | %s/%s")
+                    :format(tostring(questName), tostring(p), tostring(m)))
+                return true
+            end
+            task.wait(0.005)
+        until tick() >= settleUntil or not isTokenActive(token, "Quest")
+
+        beforeProgress, beforeMax = readQuestState()
+        previousCompleted = (beforeMax or 0) > 0 and (beforeProgress or 0) >= (beforeMax or 0)
+    end
+
     moduleLog("INFO", "[CombatFarm] Opening updated quest dialogue: " .. questName)
 
-    -- Reuse the exact fast dialogue engine proven by Merchant when available.
-    -- Normal leveling quests use affirmative Option1 pages; the loop stops the
-    -- moment PlayerStats confirms an active quest, so quests with fewer pages do
-    -- not receive extra selections.
-    if _inventory and type(_inventory.RunFastDialogueOptionLoop) == "function" then
-        local okFast, fastInfo = _inventory:RunFastDialogueOptionLoop(prompt, "Option1", function()
+    -- Use the already-proven existing-dialogue engine AFTER firing the prompt.
+    -- Unlike the older quest fast path this handles both Option1 pages (2063)
+    -- and option-less ClickContinue pages (2088), which fixes Officer Sam and
+    -- other NPCs whose first page is text-only.
+    if type(runPromptDialogueFast) == "function" then
+        local okFast, fastInfo = runPromptDialogueFast(prompt, token, function()
             local p, m = readQuestState()
-            local active = (m or 0) > 0 and (p or 0) < (m or 0)
-            local changed = p ~= beforeProgress or m ~= beforeMax
-            return active and (changed or previousCompleted or (beforeMax or 0) == 0)
-        end, 8, 3.0)
+            return (m or 0) > 0 and (p or 0) < (m or 0)
+        end, 4.00, "Quest accept")
+
         if okFast then
             local p, m = readQuestState()
             questCompleted = false
             moduleLog("INFO", ("[CombatFarm][FastDialogue] Quest accepted automatically: %s | progress=%s/%s | %s")
                 :format(tostring(questName), tostring(p), tostring(m), tostring(fastInfo or "fast")))
             return true
-        else
-            moduleLog("INFO", "[CombatFarm][FastDialogue] Fast route did not confirm quest; using visible compatibility route. " .. tostring(fastInfo or ""))
         end
+
+        moduleLog("INFO", "[CombatFarm][FastDialogue] Automatic quest route not confirmed; using compatibility route. " .. tostring(fastInfo or ""))
     end
 
+    -- Compatibility route retained for executors where connection/upvalue APIs
+    -- are incomplete. This route may be visible/slower but keeps the farm usable.
     local opened = pcall(function() fireproximityprompt(prompt) end)
     if not opened then
         moduleLog("WARN", "[CombatFarm] Could not trigger quest prompt: " .. questName)
@@ -1071,9 +1082,7 @@ local function acceptQuest(questName, token)
     while tick() < deadline and isTokenActive(token, "Quest") do
         local progress, maxProgress = readQuestState()
         local nowActive = (maxProgress or 0) > 0 and (progress or 0) < (maxProgress or 0)
-        local stateChanged = progress ~= beforeProgress or maxProgress ~= beforeMax
-
-        if nowActive and (stateChanged or previousCompleted or (beforeMax or 0) == 0) then
+        if nowActive then
             questCompleted = false
             moduleLog("INFO", ("[CombatFarm] Quest accepted: %s | progress=%s/%s internalStages=%d fallbackClicks=%d")
                 :format(questName, tostring(progress), tostring(maxProgress), internalStages, fallbackClicks))
@@ -1109,8 +1118,7 @@ local function acceptQuest(questName, token)
     end
 
     local progress, maxProgress = readQuestState()
-    local nowActive = (maxProgress or 0) > 0 and (progress or 0) < (maxProgress or 0)
-    if nowActive and (progress ~= beforeProgress or maxProgress ~= beforeMax or previousCompleted) then
+    if (maxProgress or 0) > 0 and (progress or 0) < (maxProgress or 0) then
         questCompleted = false
         moduleLog("INFO", "[CombatFarm] Quest accepted after dialogue settle: " .. questName)
         return true
@@ -1173,75 +1181,109 @@ end
 -- objective is complete. DialogueAnalyzer mapped Dio/Jotaro's final page as
 -- Option1 = "Very well." using the same ClientFunctions:2063 callback used by
 -- Merchant and quest acceptance. Hide and clear it before re-taking the quest.
-finishQuestDialogueFast = function(token, waitTimeout)
+runPromptDialogueFast = function(prompt, token, isComplete, waitTimeout, label)
+    if not prompt then return false, "missing ProximityPrompt" end
     if not _inventory or type(_inventory.RunFastExistingDialogueOptionLoop) ~= "function" then
-        return false
+        return false, "fast existing-dialogue controller unavailable"
     end
 
-    waitTimeout = math.max(0.05, tonumber(waitTimeout) or 2.00)
+    waitTimeout = math.max(0.75, tonumber(waitTimeout) or 3.50)
+    label = tostring(label or "Quest dialogue")
+
     local playerGui = Player:FindFirstChild("PlayerGui")
-    if not playerGui then return false end
+    if not playerGui then return false, "PlayerGui missing" end
 
-    local gui = playerGui:FindFirstChild("DialogueGui")
-    local createdConnection = nil
+    -- Do not let a stale dialogue consume the new prompt interaction.
+    local stale = playerGui:FindFirstChild("DialogueGui")
+    if stale then
+        pcall(function()
+            if stale:IsA("ScreenGui") then stale.Enabled = false end
+        end)
+        local staleRef = stale
+        local staleOk = _inventory:RunFastExistingDialogueOptionLoop("Option1", function()
+            local current = playerGui:FindFirstChild("DialogueGui")
+            return current == nil or current ~= staleRef
+        end, 10, 2.50)
+        if not staleOk then
+            return false, "stale DialogueGui could not be cleared"
+        end
+        task.wait(0.01)
+    end
 
-    local function hideNow(candidate)
+    local gui = nil
+    local childConnection = nil
+    local function captureDialogue(candidate)
         if not candidate or candidate.Name ~= "DialogueGui" then return end
         gui = candidate
-        -- Hide on the ChildAdded callback itself so the completion page does not
-        -- visibly animate while the fast controller is waiting for its callback.
+        -- Hide on ChildAdded itself. ScreenGui.Enabled does not prevent the
+        -- callback tree from existing, so Option1/ClickContinue remain usable.
         pcall(function()
-            if candidate:IsA("ScreenGui") then
-                candidate.Enabled = false
-            end
-            -- Do not set Frame.Visible=false: Inventory intentionally scans the
-            -- live option tree while ScreenGui.Enabled=false. Hiding the frame
-            -- would make Option1 structurally invisible to the scanner.
+            if candidate:IsA("ScreenGui") then candidate.Enabled = false end
         end)
     end
 
-    if gui then
-        hideNow(gui)
-    else
-        createdConnection = playerGui.ChildAdded:Connect(function(child)
-            if child.Name == "DialogueGui" then
-                hideNow(child)
-            end
-        end)
+    childConnection = playerGui.ChildAdded:Connect(function(child)
+        if child.Name == "DialogueGui" then
+            captureDialogue(child)
+        end
+    end)
+
+    local fired, fireErr = pcall(function()
+        fireproximityprompt(prompt)
+    end)
+    if not fired then
+        pcall(function() childConnection:Disconnect() end)
+        return false, "prompt failed: " .. tostring(fireErr)
     end
 
-    local waitDeadline = tick() + waitTimeout
-    while not gui and tick() < waitDeadline and isTokenActive(token, "Quest") do
-        -- Poll as a race-safe fallback in case ChildAdded fired just before the
-        -- connection was installed.
+    -- Some quest NPCs create DialogueGui noticeably later than Merchant. Wait
+    -- event-driven/polling for the GUI itself instead of assuming a fixed delay.
+    local appearDeadline = tick() + math.min(waitTimeout, 3.50)
+    while not gui and tick() < appearDeadline and isTokenActive(token, "Quest") do
         local existing = playerGui:FindFirstChild("DialogueGui")
-        if existing then hideNow(existing) break end
-        task.wait(0.003)
+        if existing then
+            captureDialogue(existing)
+            break
+        end
+        task.wait(0.002)
     end
 
-    if createdConnection then
-        pcall(function() createdConnection:Disconnect() end)
+    if childConnection then
+        pcall(function() childConnection:Disconnect() end)
     end
 
-    if not gui or not isTokenActive(token, "Quest") then
-        moduleLog("INFO", ("[CombatFarm][FastDialogue] No completion DialogueGui appeared within %.2fs."):format(waitTimeout))
-        return false
+    if not gui then
+        return false, label .. " DialogueGui did not appear"
     end
+    captureDialogue(gui)
 
-    hideNow(gui)
     local originalGui = gui
-    local okFast, info = _inventory:RunFastExistingDialogueOptionLoop("Option1", function()
-        local current = playerGui:FindFirstChild("DialogueGui")
-        return current == nil or current ~= originalGui
-    end, 6, 3.50)
+    local completionCheck
+    if type(isComplete) == "function" then
+        completionCheck = function()
+            local ok, done = pcall(isComplete)
+            return ok and done == true
+        end
+    else
+        completionCheck = function()
+            local current = playerGui:FindFirstChild("DialogueGui")
+            return current == nil or current ~= originalGui
+        end
+    end
+
+    local okFast, info = _inventory:RunFastExistingDialogueOptionLoop(
+        "Option1",
+        completionCheck,
+        12,
+        math.max(1.25, waitTimeout)
+    )
 
     if okFast then
-        moduleLog("INFO", "[CombatFarm][FastDialogue] Quest completion dialogue cleared invisibly: " .. tostring(info or "fast"))
-        return true
+        moduleLog("INFO", ("[CombatFarm][FastDialogue] %s cleared invisibly: %s"):format(label, tostring(info or "fast")))
+        return true, info
     end
 
-    moduleLog("INFO", "[CombatFarm][FastDialogue] Quest completion dialogue fast-clear was not confirmed: " .. tostring(info or "unknown"))
-    return false
+    return false, tostring(info or (label .. " fast route failed"))
 end
 
 local function runQuestFarm(token)
@@ -1285,12 +1327,7 @@ local function runQuestFarm(token)
                 questCompleted = true
                 moduleLog("INFO", ("[CombatFarm] Quest objective complete: %s | %s/%s")
                     :format(tostring(currentQuest), tostring(progress), tostring(maxProgress)))
-                -- killTarget already waits for mapped delayed completion pages.
-                -- Only clear here if one is still present; never add another fixed
-                -- wait after the post-kill event-driven watcher already succeeded.
-                if Player.PlayerGui:FindFirstChild("DialogueGui") then
-                    finishQuestDialogueFast(token, 0.20)
-                end
+                goToSafeSpot("Quest objective complete; ready to turn in")
                 return true
             end
 
@@ -1354,7 +1391,7 @@ local function farmLoop(token)
                 moduleLog("INFO", "[CombatFarm] Quest completed. Re-taking highest/selected quest...")
                 questCompleted = false
                 questOnCooldown = false
-                if not waitCancelable(0.45, token) then break end
+                if not waitCancelable(0.05, token) then break end
             else
                 if questOnCooldown then
                     local remaining = math.max(1, math.ceil(cooldownUntil - tick()))
