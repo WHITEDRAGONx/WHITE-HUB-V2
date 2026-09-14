@@ -1149,7 +1149,7 @@ local function finishQuestDialogueFast(token)
         return false
     end
 
-    local waitDeadline = tick() + 1.50
+    local waitDeadline = tick() + 2.00
     local gui = nil
     while tick() < waitDeadline and isTokenActive(token, "Quest") do
         gui = Player.PlayerGui:FindFirstChild("DialogueGui")
@@ -1164,7 +1164,7 @@ local function finishQuestDialogueFast(token)
     local okFast, info = _inventory:RunFastExistingDialogueOptionLoop("Option1", function()
         local current = Player.PlayerGui:FindFirstChild("DialogueGui")
         return current == nil or current ~= originalGui
-    end, 3, 1.60)
+    end, 4, 2.50)
 
     if okFast then
         moduleLog("INFO", "[CombatFarm][FastDialogue] Quest completion dialogue cleared invisibly: " .. tostring(info or "fast"))
