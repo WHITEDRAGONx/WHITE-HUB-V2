@@ -428,6 +428,7 @@ local function waitToken(seconds, token, expectedMode)
     return true
 end
 
+-- Build: R11-NO-DAMAGE-MELEE-FALLBACK
 -- =============================================
 -- COMBAT CORE (Xenon V5 style)
 -- =============================================
@@ -562,18 +563,12 @@ local function killTarget(targetName, token)
             standPart.CFrame = standCF
         end
 
-        -- If there is no Stand, or Stand M1s have failed to deal damage for a
-        -- short window, the player itself moves into melee range. This also covers
-        -- stands whose normal M1 is not useful for farming.
-        if hasStand and not playerMeleeFallback
-            and standPart and standPart.Parent
-            and tick() >= standGraceUntil
-            and tick() >= meleeFallbackGraceUntil
-            and tick() - lastDamageAt > 3.0
-            and tick() - lastSkillCastAt > 1.25 then
-            playerMeleeFallback = true
-            moduleLog("INFO", "[CombatFarm][MeleeFallback] Summoned Stand produced no damage; moving player into melee range.")
-        end
+        -- IMPORTANT: do NOT move the player into melee range just because the
+        -- Stand has not dealt damage recently. Time-stop, invulnerability,
+        -- ragdoll and other YBA states can legitimately pause damage and made
+        -- the old detector pull the player out of the safe underground position.
+        -- Player melee positioning is now used only when the account has no Stand
+        -- (plus temporary CLOSE AOE casts below).
 
         local closeCasting = tick() < closeCastUntil
         if closeCastWasActive and not closeCasting then
@@ -581,7 +576,7 @@ local function killTarget(targetName, token)
             -- underground after the cast even if melee fallback had previously
             -- activated; it may re-enable later only after a fresh no-damage test.
             closeCastKey = nil
-            playerMeleeFallback = false
+            playerMeleeFallback = not hasStand
             lastDamageAt = tick()
             meleeFallbackGraceUntil = tick() + 1.75
         end
@@ -634,7 +629,7 @@ local function killTarget(targetName, token)
                     -- Prevent the generic no-damage detector from converting this
                     -- temporary AOE reposition into permanent melee fallback.
                     lastDamageAt = tick()
-                    playerMeleeFallback = false
+                    playerMeleeFallback = not hasStand
                     meleeFallbackGraceUntil = closeCastUntil + 1.75
                     local nearCF = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.8
                     hrp.CFrame = CFrame.lookAt(nearCF.Position, enemyHRP.Position)
