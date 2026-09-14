@@ -13,7 +13,7 @@ local PlayerGui = Player:WaitForChild("PlayerGui")
 
 local UI = {}
 
-local UI_BUILD = "FUTURE-GOLD-2026.09.14-R5-DYNAMIC-QUESTS"
+local UI_BUILD = "FUTURE-GOLD-2026.09.14-R6-MOBILE-SKILLS"
 UI.Build = UI_BUILD
 
 local THEME = {
@@ -1029,16 +1029,134 @@ function UI:Create()
     end)
     
     MakeSection(QuestPage, "AUTO SKILLS")
-    local skillsLabel = UI:AddLabel(QuestPage, "Skills: None")
-    
-    local function updateSkillsLabel()
-        local skills = _config:Get("AutoSkills") or {}
-        local text = #skills > 0 and "Skills: " .. table.concat(skills, ", ") or "Skills: None"
-        skillsLabel.Text = text
+    local skillsLabel = UI:AddLabel(QuestPage, "Stand skills: detecting...")
+    skillsLabel.TextSize = 11
+
+    local skillHolder = Instance.new("Frame")
+    skillHolder.Size = UDim2.new(1,-4,0,32)
+    skillHolder.BackgroundTransparency = 1
+    skillHolder.Parent = QuestPage
+    local skillLayout = Instance.new("UIListLayout")
+    skillLayout.Padding = UDim.new(0,4)
+    skillLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    skillLayout.Parent = skillHolder
+
+    local skillToggleLabels = {}
+
+    local function getSelectedSkills()
+        local current = (_config and _config:Get("AutoSkills")) or {}
+        if type(current) ~= "table" then current = {} end
+        return current
     end
-    updateSkillsLabel()
-    
-    MakeToggle(QuestPage, "Add Skill (press a key)", false, function(v)
+
+    local function setSkillEnabled(key, enabled)
+        if not _config then return end
+        local current = getSelectedSkills()
+        local idx = table.find(current, key)
+        if enabled and not idx then
+            table.insert(current, key)
+        elseif not enabled and idx then
+            table.remove(current, idx)
+        end
+        _config:Set("AutoSkills", current)
+    end
+
+    local function clearSkillRows()
+        for _, label in ipairs(skillToggleLabels) do
+            toggleObjects[label] = nil
+        end
+        skillToggleLabels = {}
+        for _, child in ipairs(skillHolder:GetChildren()) do
+            if child ~= skillLayout then
+                child:Destroy()
+            end
+        end
+    end
+
+    local function rebuildSkillRows()
+        clearSkillRows()
+
+        local catalog = nil
+        if _combatFarm and type(_combatFarm.GetSkillCatalog) == "function" then
+            local ok, result = pcall(_combatFarm.GetSkillCatalog, _combatFarm)
+            if ok then catalog = result end
+        end
+
+        catalog = catalog or {
+            stand = "Unknown",
+            source = "generic",
+            skills = {
+                { key = "E", name = "Primary Skill" },
+                { key = "R", name = "Heavy Skill" },
+                { key = "T", name = "Skill T" },
+                { key = "Y", name = "Skill Y" },
+                { key = "G", name = "Skill G" },
+                { key = "X", name = "Skill X" },
+                { key = "C", name = "Skill C" },
+            },
+        }
+
+        local selected = getSelectedSkills()
+        local rows = 0
+        for _, skill in ipairs(catalog.skills or {}) do
+            local key = tostring(skill.key or "")
+            if key ~= "" and Enum.KeyCode[key] then
+                local label = ("Skill %s • %s%s"):format(
+                    key,
+                    tostring(skill.name or key),
+                    skill.closeCast and " [CLOSE AOE]" or ""
+                )
+                skillToggleLabels[#skillToggleLabels + 1] = label
+                rows = rows + 1
+                MakeToggle(skillHolder, label, table.find(selected, key) ~= nil, function(v)
+                    setSkillEnabled(key, v)
+                end)
+            end
+        end
+
+        skillHolder.Size = UDim2.new(1,-4,0,math.max(32, rows * 36))
+        skillsLabel.Text = ("Stand: %s • %s • %d combat skill(s)"):format(
+            tostring(catalog.stand or "Unknown"),
+            catalog.source == "stand-preset" and "detected preset"
+                or (catalog.source == "gui-detected" and "GUI-detected" or "generic mobile keys"),
+            rows
+        )
+        runtimeLog("INFO", ("Skill UI refreshed for stand=%s source=%s rows=%d")
+            :format(tostring(catalog.stand), tostring(catalog.source), rows))
+    end
+
+    local refreshSkillsBtn = Instance.new("TextButton")
+    refreshSkillsBtn.Size = UDim2.new(1,-4,0,34)
+    refreshSkillsBtn.BackgroundColor3 = THEME.GOLD_DARK
+    refreshSkillsBtn.BorderSizePixel = 0
+    refreshSkillsBtn.Text = "REFRESH STAND SKILLS"
+    refreshSkillsBtn.TextColor3 = THEME.WHITE
+    refreshSkillsBtn.TextSize = 12
+    refreshSkillsBtn.Font = Enum.Font.GothamBold
+    refreshSkillsBtn.Parent = QuestPage
+    Instance.new("UICorner", refreshSkillsBtn).CornerRadius = UDim.new(0,7)
+    styleActionButton(refreshSkillsBtn, true)
+    refreshSkillsBtn.MouseButton1Click:Connect(rebuildSkillRows)
+
+    local clearSkillsBtn = Instance.new("TextButton")
+    clearSkillsBtn.Size = UDim2.new(1,-4,0,32)
+    clearSkillsBtn.BackgroundColor3 = THEME.PANEL3
+    clearSkillsBtn.BorderSizePixel = 0
+    clearSkillsBtn.Text = "CLEAR SELECTED SKILLS"
+    clearSkillsBtn.TextColor3 = THEME.WHITE
+    clearSkillsBtn.TextSize = 11
+    clearSkillsBtn.Font = Enum.Font.GothamBold
+    clearSkillsBtn.Parent = QuestPage
+    Instance.new("UICorner", clearSkillsBtn).CornerRadius = UDim.new(0,7)
+    styleActionButton(clearSkillsBtn, false)
+    clearSkillsBtn.MouseButton1Click:Connect(function()
+        if _config then _config:Set("AutoSkills", {}) end
+        rebuildSkillRows()
+    end)
+
+    -- Desktop-only convenience remains available, but mobile no longer depends on
+    -- keyboard capture because every detected combat skill has its own toggle.
+    MakeToggle(QuestPage, "PC: Add Skill (press a key)", false, function(v)
         if activeSkillCapture then
             activeSkillCapture:Disconnect()
             activeSkillCapture = nil
@@ -1049,29 +1167,28 @@ function UI:Create()
             if gp then return end
             local key = input.KeyCode.Name
             if key and key ~= "Unknown" then
-                local current = _config:Get("AutoSkills") or {}
-                if not table.find(current, key) then
-                    table.insert(current, key)
-                    _config:Set("AutoSkills", current)
-                    updateSkillsLabel()
-                end
+                setSkillEnabled(key, true)
                 if activeSkillCapture then
                     activeSkillCapture:Disconnect()
                     activeSkillCapture = nil
                 end
-                UI:SetToggleValue("Add Skill (press a key)", false)
+                UI:SetToggleValue("PC: Add Skill (press a key)", false)
+                rebuildSkillRows()
             end
         end)
     end)
-    
-    MakeToggle(QuestPage, "Clear Skills", false, function(v)
-        if v then
-            _config:Set("AutoSkills", {})
-            updateSkillsLabel()
-            UI:SetToggleValue("Clear Skills", false)
-        end
-    end)
-    
+
+    rebuildSkillRows()
+
+    local stats = Player:FindFirstChild("PlayerStats")
+    local standValue = stats and stats:FindFirstChild("Stand")
+    if standValue then
+        trackConnection(standValue:GetPropertyChangedSignal("Value"):Connect(function()
+            task.wait(0.20)
+            rebuildSkillRows()
+        end))
+    end
+
     AutoCanvas(QuestPage)
 
     -- =====================
