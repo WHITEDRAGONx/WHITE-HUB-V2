@@ -18,6 +18,14 @@ local _combatFarm  = nil
 
 local toggleObjects = {}
 local dropdownContainer = nil
+local mainScreenGui = nil
+local uiConnections = {}
+local activeSkillCapture = nil
+
+local function trackConnection(connection)
+    if connection then table.insert(uiConnections, connection) end
+    return connection
+end
 
 -- Dynamic NPC list (unique names)
 local dynamicNPCList = {}
@@ -34,6 +42,7 @@ end
 -- =====================
 local function CreateCreditsPopup()
     local gui = Instance.new("ScreenGui")
+    gui.Name         = "WhiteHubCreditsPopup"
     gui.Parent       = PlayerGui
     gui.ResetOnSpawn = false
 
@@ -135,12 +144,12 @@ local function MakeToggle(parent, labelText, default, onChanged)
     lbl.TextXAlignment   = Enum.TextXAlignment.Left
     lbl.Parent           = holder
 
-    local enabled = (default == nil) and true or default
+    local state = { enabled = (default == nil) and true or default }
 
     local track = Instance.new("TextButton")
     track.Size             = UDim2.new(0,44,0,22)
     track.Position         = UDim2.new(1,-52,0.5,-11)
-    track.BackgroundColor3 = enabled and Color3.fromRGB(145,95,255) or Color3.fromRGB(30,30,42)
+    track.BackgroundColor3 = state.enabled and Color3.fromRGB(145,95,255) or Color3.fromRGB(30,30,42)
     track.Text             = ""
     track.BorderSizePixel  = 0
     track.Parent           = holder
@@ -148,28 +157,36 @@ local function MakeToggle(parent, labelText, default, onChanged)
 
     local circle = Instance.new("Frame")
     circle.Size             = UDim2.new(0,15,0,15)
-    circle.Position         = enabled and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
+    circle.Position         = state.enabled and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
     circle.BackgroundColor3 = Color3.fromRGB(255,255,255)
     circle.BorderSizePixel  = 0
     circle.Parent           = track
     Instance.new("UICorner", circle).CornerRadius = UDim.new(1,0)
 
+    local function render(animated)
+        local bg = state.enabled and Color3.fromRGB(145,95,255) or Color3.fromRGB(30,30,42)
+        local pos = state.enabled and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
+        if animated then
+            TweenService:Create(track, TweenInfo.new(0.18), {BackgroundColor3 = bg}):Play()
+            TweenService:Create(circle, TweenInfo.new(0.18), {Position = pos}):Play()
+        else
+            track.BackgroundColor3 = bg
+            circle.Position = pos
+        end
+    end
+
     track.MouseButton1Click:Connect(function()
-        enabled = not enabled
-        TweenService:Create(track, TweenInfo.new(0.18), {
-            BackgroundColor3 = enabled and Color3.fromRGB(145,95,255) or Color3.fromRGB(30,30,42)
-        }):Play()
-        TweenService:Create(circle, TweenInfo.new(0.18), {
-            Position = enabled and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
-        }):Play()
-        onChanged(enabled)
+        state.enabled = not state.enabled
+        render(true)
+        onChanged(state.enabled)
     end)
 
     toggleObjects[labelText] = {
         holder = holder,
         track = track,
         circle = circle,
-        enabled = enabled
+        state = state,
+        render = render,
     }
 end
 
@@ -236,57 +253,28 @@ local function MakeStyledDropdown(parent, labelText, options, callback)
     btnStroke.Color = Color3.fromRGB(80,70,140)
     btnStroke.Thickness = 1.2
 
-    local menu = nil
-    local active = false
     local currentOptions = options
+    local menu = nil
+    local outsideConnection = nil
 
-    -- Declared before rebuildMenu so option callbacks capture the local function.
     local function hideMenu()
+        if outsideConnection then
+            outsideConnection:Disconnect()
+            outsideConnection = nil
+        end
         if menu then
-            menu.Visible = false
-            active = false
+            menu:Destroy()
+            menu = nil
         end
-    end
-
-    local function rebuildMenu(newOptions)
-        if not menu then return end
-        for _, child in pairs(menu:GetChildren()) do
-            if child:IsA("TextButton") then
-                child:Destroy()
-            end
-        end
-        for _, opt in ipairs(newOptions) do
-            local btn = Instance.new("TextButton")
-            btn.Size = UDim2.new(1,0,0,30)
-            btn.BackgroundColor3 = Color3.fromRGB(40,40,55)
-            btn.Text = opt
-            btn.TextColor3 = Color3.fromRGB(255,255,255)
-            btn.TextSize = 14
-            btn.Font = Enum.Font.Gotham
-            btn.Parent = menu
-            Instance.new("UICorner", btn).CornerRadius = UDim.new(0,4)
-            local optStroke = Instance.new("UIStroke", btn)
-            optStroke.Color = Color3.fromRGB(60,55,85)
-            optStroke.Thickness = 1
-            btn.MouseButton1Click:Connect(function()
-                dropdownBtn.Text = opt
-                callback(opt)
-                hideMenu()  -- FECHA O MENU AO SELECIONAR
-            end)
-        end
-        local count = #newOptions
-        local height = math.min(count * 32, 150)
-        menu.Size = UDim2.new(0, 200, 0, height)
     end
 
     local function showMenu()
         hideMenu()
         local container = ensureDropdownContainer()
         menu = Instance.new("ScrollingFrame")
-        menu.Size = UDim2.new(0, 200, 0, 150)
         menu.BackgroundColor3 = Color3.fromRGB(30,30,42)
         menu.BorderSizePixel = 0
-        menu.Visible = true
+        menu.ScrollBarThickness = 5
         menu.ZIndex = 20
         menu.Parent = container
         Instance.new("UICorner", menu).CornerRadius = UDim.new(0,7)
@@ -297,48 +285,55 @@ local function MakeStyledDropdown(parent, labelText, options, callback)
         local menuLayout = Instance.new("UIListLayout", menu)
         menuLayout.Padding = UDim.new(0,2)
 
-        rebuildMenu(currentOptions)
+        for _, opt in ipairs(currentOptions) do
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(1,-5,0,30)
+            btn.BackgroundColor3 = Color3.fromRGB(40,40,55)
+            btn.Text = opt
+            btn.TextColor3 = Color3.fromRGB(255,255,255)
+            btn.TextSize = 14
+            btn.Font = Enum.Font.Gotham
+            btn.ZIndex = 21
+            btn.Parent = menu
+            Instance.new("UICorner", btn).CornerRadius = UDim.new(0,4)
+            btn.MouseButton1Click:Connect(function()
+                dropdownBtn.Text = opt
+                callback(opt)
+                hideMenu()
+            end)
+        end
 
+        local count = #currentOptions
+        local height = math.min(math.max(count, 1) * 32, 150)
+        menu.Size = UDim2.new(0, 200, 0, height)
+        menu.CanvasSize = UDim2.new(0,0,0,count * 32)
         local btnAbsPos = dropdownBtn.AbsolutePosition
         local btnSize = dropdownBtn.AbsoluteSize
         menu.Position = UDim2.new(0, btnAbsPos.X, 0, btnAbsPos.Y + btnSize.Y)
-        active = true
 
-        local function onInputBegan(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                task.wait(0.05)
-                if menu and menu.Visible then
-                    local mousePos = UserInputService:GetMouseLocation()
-                    local menuAbsPos = menu.AbsolutePosition
-                    local menuSize = menu.AbsoluteSize
-                    if mousePos.X < menuAbsPos.X or mousePos.X > menuAbsPos.X + menuSize.X or
-                       mousePos.Y < menuAbsPos.Y or mousePos.Y > menuAbsPos.Y + menuSize.Y then
-                        hideMenu()
-                    end
-                end
+        outsideConnection = UserInputService.InputBegan:Connect(function(input)
+            if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+            task.wait()
+            if not menu then return end
+            local mousePos = UserInputService:GetMouseLocation()
+            local p, s = menu.AbsolutePosition, menu.AbsoluteSize
+            if mousePos.X < p.X or mousePos.X > p.X + s.X or mousePos.Y < p.Y or mousePos.Y > p.Y + s.Y then
+                hideMenu()
             end
-        end
-        local connection
-        connection = UserInputService.InputBegan:Connect(onInputBegan)
-        local function onMenuRemoved()
-            if connection then connection:Disconnect() end
-        end
-        menu.AncestryChanged:Connect(onMenuRemoved)
+        end)
     end
 
     dropdownBtn.MouseButton1Click:Connect(function()
-        if active then
-            hideMenu()
-        else
-            showMenu()
-        end
+        if menu then hideMenu() else showMenu() end
     end)
 
     return dropdownBtn, function(newOptions)
-        currentOptions = newOptions
-        dropdownBtn.Text = newOptions[1] or "None"
-        if menu and menu.Visible then
-            rebuildMenu(newOptions)
+        hideMenu()
+        currentOptions = newOptions or {}
+        if #currentOptions == 0 then
+            dropdownBtn.Text = "None"
+        elseif not table.find(currentOptions, dropdownBtn.Text) then
+            dropdownBtn.Text = currentOptions[1]
         end
     end
 end
@@ -387,13 +382,12 @@ end
 function UI:SetToggleValue(toggleName, value)
     local toggle = toggleObjects[toggleName]
     if toggle then
-        toggle.enabled = value
-        toggle.track.BackgroundColor3 = value and Color3.fromRGB(145,95,255) or Color3.fromRGB(30,30,42)
-        toggle.circle.Position = value and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
-        if _config then _config:Set(toggleName, value) end
-    else
-        warn("[UI] Toggle not found: " .. toggleName)
+        toggle.state.enabled = value == true
+        toggle.render(false)
+        return true
     end
+    warn("[UI] Toggle not found: " .. toggleName)
+    return false
 end
 
 -- =====================
@@ -401,7 +395,12 @@ end
 -- =====================
 local function updateNPCList()
     local uniqueNames = {}
-    for _, obj in pairs(workspace.Living:GetChildren()) do
+    local living = workspace:FindFirstChild("Living")
+    if not living then
+        dynamicNPCList = {}
+        return dynamicNPCList
+    end
+    for _, obj in pairs(living:GetChildren()) do
         if obj:FindFirstChild("Spawn") then
             uniqueNames[obj.Name] = true
         end
@@ -416,25 +415,37 @@ local function updateNPCList()
 end
 
 function UI:Create()
+    self:Destroy()
+    toggleObjects = {}
+
+    for _, guiName in ipairs({"WhiteHubV3", "DropdownContainer", "WhiteHubCreditsPopup"}) do
+        local old = PlayerGui:FindFirstChild(guiName)
+        if old then old:Destroy() end
+    end
+
     CreateCreditsPopup()
 
     -- Initial NPC scan
     updateNPCList()
-    -- Watch for NPC changes
-    workspace.Living.ChildAdded:Connect(function(child)
-        if child:FindFirstChild("Spawn") then
+    local living = workspace:FindFirstChild("Living")
+    if living then
+        trackConnection(living.ChildAdded:Connect(function(child)
+            if child:FindFirstChild("Spawn") then
+                updateNPCList()
+                if npcDropdownRefresh then npcDropdownRefresh(dynamicNPCList) end
+            end
+        end))
+        trackConnection(living.ChildRemoved:Connect(function()
             updateNPCList()
             if npcDropdownRefresh then npcDropdownRefresh(dynamicNPCList) end
-        end
-    end)
-    workspace.Living.ChildRemoved:Connect(function()
-        updateNPCList()
-        if npcDropdownRefresh then npcDropdownRefresh(dynamicNPCList) end
-    end)
+        end))
+    end
 
     local W, H = 380, 320
 
     local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "WhiteHubV3"
+    mainScreenGui = ScreenGui
     ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     ScreenGui.ResetOnSpawn   = false
     ScreenGui.Parent         = PlayerGui
@@ -613,9 +624,18 @@ function UI:Create()
 
     MakeSection(FarmPage, "PRESTIGE")
     MakeToggle(FarmPage, "Auto Prestige", _config and _config:Get("AutoPrestige"), function(v)
-        if _config then _config:Set("AutoPrestige", v) end
+        if _config then
+            if v then
+                _config:SetMany({ AutoPrestige = true, QuestFarmEnabled = false, NPCFarmEnabled = false })
+            else
+                _config:Set("AutoPrestige", false)
+            end
+        end
         getgenv().AutoPrestigeEnabled = v
         if v then
+            UI:SetToggleValue("Quest Farm", false)
+            UI:SetToggleValue("NPC Farm", false)
+            if _combatFarm then _combatFarm:Stop() end
             print("[UI] Auto Prestige enabled.")
         else
             print("[UI] Auto Prestige disabled.")
@@ -660,14 +680,28 @@ function UI:Create()
     local questDropdown = MakeStyledDropdown(QuestPage, "Select Quest", questList, function(selected)
         if _config then _config:Set("SelectedQuest", selected) end
     end)
+    local savedQuest = _config and _config:Get("SelectedQuest")
+    if savedQuest and savedQuest ~= "" and table.find(questList, savedQuest) then
+        questDropdown.Text = savedQuest
+    end
     
-    -- Quest Farm toggle (uses CombatFarm)
+    -- Quest/NPC are mutually exclusive and CombatFarm enforces one worker.
     MakeToggle(QuestPage, "Quest Farm", _config and _config:Get("QuestFarmEnabled"), function(v)
-        if _config then _config:Set("QuestFarmEnabled", v) end
+        if _config then
+            if v then
+                _config:SetMany({ QuestFarmEnabled = true, NPCFarmEnabled = false, AutoPrestige = false })
+            else
+                _config:Set("QuestFarmEnabled", false)
+            end
+        end
         if v then
+            getgenv().AutoPrestigeEnabled = false
+            UI:SetToggleValue("NPC Farm", false)
+            UI:SetToggleValue("Auto Prestige", false)
             if _combatFarm then _combatFarm:StartQuest() end
         else
-            if _combatFarm then _combatFarm:Stop() end
+            local running, mode = _combatFarm and _combatFarm:IsRunning()
+            if running and mode == "Quest" then _combatFarm:Stop() end
         end
     end)
     
@@ -678,14 +712,27 @@ function UI:Create()
         if _config then _config:Set("SelectedNPC", selected) end
     end)
     npcDropdownRefresh = npcRefresh
+    local savedNPC = _config and _config:Get("SelectedNPC")
+    if savedNPC and savedNPC ~= "" and table.find(dynamicNPCList, savedNPC) then
+        npcBtn.Text = savedNPC
+    end
     
-    -- NPC Farm toggle (uses CombatFarm)
     MakeToggle(QuestPage, "NPC Farm", _config and _config:Get("NPCFarmEnabled"), function(v)
-        if _config then _config:Set("NPCFarmEnabled", v) end
+        if _config then
+            if v then
+                _config:SetMany({ NPCFarmEnabled = true, QuestFarmEnabled = false, AutoPrestige = false })
+            else
+                _config:Set("NPCFarmEnabled", false)
+            end
+        end
         if v then
+            getgenv().AutoPrestigeEnabled = false
+            UI:SetToggleValue("Quest Farm", false)
+            UI:SetToggleValue("Auto Prestige", false)
             if _combatFarm then _combatFarm:StartNPC() end
         else
-            if _combatFarm then _combatFarm:Stop() end
+            local running, mode = _combatFarm and _combatFarm:IsRunning()
+            if running and mode == "NPC" then _combatFarm:Stop() end
         end
     end)
     
@@ -700,40 +747,36 @@ function UI:Create()
     updateSkillsLabel()
     
     MakeToggle(QuestPage, "Add Skill (press a key)", false, function(v)
-        if v then
-            local connection
-            connection = UserInputService.InputBegan:Connect(function(input, gp)
-                if gp then return end
-                local key = input.KeyCode.Name
-                if key and key ~= "Unknown" then
-                    local current = _config:Get("AutoSkills") or {}
-                    if not table.find(current, key) then
-                        table.insert(current, key)
-                        _config:Set("AutoSkills", current)
-                        updateSkillsLabel()
-                    end
-                    connection:Disconnect()
-                    local toggleObj = toggleObjects["Add Skill (press a key)"]
-                    if toggleObj then
-                        toggleObj.enabled = false
-                        toggleObj.track.BackgroundColor3 = Color3.fromRGB(30,30,42)
-                        toggleObj.circle.Position = UDim2.new(0,3,0.5,-7.5)
-                    end
-                end
-            end)
+        if activeSkillCapture then
+            activeSkillCapture:Disconnect()
+            activeSkillCapture = nil
         end
+        if not v then return end
+
+        activeSkillCapture = UserInputService.InputBegan:Connect(function(input, gp)
+            if gp then return end
+            local key = input.KeyCode.Name
+            if key and key ~= "Unknown" then
+                local current = _config:Get("AutoSkills") or {}
+                if not table.find(current, key) then
+                    table.insert(current, key)
+                    _config:Set("AutoSkills", current)
+                    updateSkillsLabel()
+                end
+                if activeSkillCapture then
+                    activeSkillCapture:Disconnect()
+                    activeSkillCapture = nil
+                end
+                UI:SetToggleValue("Add Skill (press a key)", false)
+            end
+        end)
     end)
     
     MakeToggle(QuestPage, "Clear Skills", false, function(v)
         if v then
             _config:Set("AutoSkills", {})
             updateSkillsLabel()
-            local toggleObj = toggleObjects["Clear Skills"]
-            if toggleObj then
-                toggleObj.enabled = false
-                toggleObj.track.BackgroundColor3 = Color3.fromRGB(30,30,42)
-                toggleObj.circle.Position = UDim2.new(0,3,0.5,-7.5)
-            end
+            UI:SetToggleValue("Clear Skills", false)
         end
     end)
     
@@ -899,13 +942,13 @@ function UI:Create()
     ToggleBtn.MouseButton1Click:Connect(ToggleWindow)
     CloseButton.MouseButton1Click:Connect(function() if isOpen then ToggleWindow() end end)
 
-    UserInputService.InputBegan:Connect(function(input, gp)
+    trackConnection(UserInputService.InputBegan:Connect(function(input, gp)
         if gp then return end
         if input.KeyCode == Enum.KeyCode.RightAlt then ToggleWindow()
         elseif input.KeyCode == Enum.KeyCode.RightControl then
             ToggleBtn.Visible = not ToggleBtn.Visible
         end
-    end)
+    end))
 
     local dragging, dragStart, startPos = false, nil, nil
     TopBar.InputBegan:Connect(function(input)
@@ -918,15 +961,51 @@ function UI:Create()
             end)
         end
     end)
-    UserInputService.InputChanged:Connect(function(input)
+    trackConnection(UserInputService.InputChanged:Connect(function(input)
         if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local d = input.Position - dragStart
             MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
         end
-    end)
+    end))
+
+    -- Restore a persisted combat mode, resolving old configs that had both enabled.
+    if _config then
+        if _config:Get("QuestFarmEnabled") then
+            _config:Set("NPCFarmEnabled", false)
+            UI:SetToggleValue("NPC Farm", false)
+            if _combatFarm then _combatFarm:StartQuest() end
+        elseif _config:Get("NPCFarmEnabled") then
+            if _combatFarm then _combatFarm:StartNPC() end
+        end
+    end
 end
 
 function UI:Notify(msg) print("[UI] " .. tostring(msg)) end
-function UI:SetVisible(value) end
+
+function UI:SetVisible(value)
+    if mainScreenGui then
+        mainScreenGui.Enabled = value == true
+    end
+end
+
+function UI:Destroy()
+    if activeSkillCapture then
+        pcall(function() activeSkillCapture:Disconnect() end)
+        activeSkillCapture = nil
+    end
+    for _, connection in ipairs(uiConnections) do
+        pcall(function() connection:Disconnect() end)
+    end
+    table.clear(uiConnections)
+    if dropdownContainer then
+        pcall(function() dropdownContainer:Destroy() end)
+        dropdownContainer = nil
+    end
+    if mainScreenGui then
+        pcall(function() mainScreenGui:Destroy() end)
+        mainScreenGui = nil
+    end
+    toggleObjects = {}
+end
 
 return UI
