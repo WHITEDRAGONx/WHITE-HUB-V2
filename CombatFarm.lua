@@ -1,7 +1,7 @@
 -- =====================
 -- CombatFarm.lua
 -- Unified combat: NPC and Quest farming.
--- QUEST/COMBAT BUILD: R4-QUEST-LOOP-MOBILE-SKILLS
+-- QUEST/COMBAT BUILD: R7-XENON-CHAIN-SKILL-WINDOWS-FAST-QUEST
 -- Logic identical to Xenon V5 (stand positioning, attacks, death detection).
 -- FIXED: player positioned underground (yOffset -35) with noclip for safety.
 -- =====================
@@ -28,6 +28,10 @@ local currentQuest = nil
 local questCompleted = false
 local questOnCooldown = false
 local cooldownUntil = 0
+
+local SAFE_SPOT = CFrame.new(978, -42, -49)
+local lastSafeTeleportAt = 0
+local lastStandSummonLogAt = 0
 
 local questInfo = {
     ["Officer Sam [Lvl. 1+]"] = { enemy = "Thug", autoChoose = true },
@@ -224,17 +228,16 @@ local function ensureStandSummoned(character)
     if not summoned then
         return character:FindFirstChild("StandMorph") ~= nil
     end
-    if summoned.Value == true then
-        return true
-    end
-    if tick() - lastStandSummonAt < 1.5 then
-        return false
-    end
+    if summoned.Value == true then return true end
+    -- Only toggle when the authoritative flag explicitly says OFF. This avoids
+    -- summon/desummon spam if StandMorph replication is late.
+    if tick() - lastStandSummonAt < 1.0 then return false end
     local remoteFunc = character:FindFirstChild("RemoteFunction")
     if not remoteFunc then return false end
     lastStandSummonAt = tick()
-    pcall(function()
-        remoteFunc:InvokeServer("ToggleStand", "Toggle")
+    lastStandSummonLogAt = tick()
+    task.spawn(function()
+        pcall(function() remoteFunc:InvokeServer("ToggleStand", "Toggle") end)
     end)
     return false
 end
@@ -250,6 +253,27 @@ local function moduleLog(level, ...)
     else
         _rawPrint(...)
     end
+end
+
+local function goToSafeSpot(reason)
+    if not _movement then return false end
+    local hrp = _movement:GetCharacter("HumanoidRootPart")
+    if not hrp then return false end
+    local distance = (hrp.Position - SAFE_SPOT.Position).Magnitude
+    if distance <= 6 then return true end
+    if tick() - lastSafeTeleportAt < 0.75 then return true end
+    lastSafeTeleportAt = tick()
+    _movement:SetNoclip(true)
+    _movement:ClearFocus()
+    pcall(function() _movement:Teleport(SAFE_SPOT) end)
+    pcall(function()
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+    end)
+    _movement:SetNoclip(false)
+    _movement:FixCamera()
+    moduleLog("INFO", "[CombatFarm][SafeSpot] " .. tostring(reason or "No active target") .. ".")
+    return true
 end
 
 function CombatFarm:Init(Modules)
@@ -459,6 +483,10 @@ local function killTarget(targetName, token)
     local perSkillLastUse = {}
     local closeCastUntil = 0
     local closeCastKey = nil
+    local nextM1At = 0
+    local suppressM1Until = 0
+    local lastSkillCastAt = -math.huge
+    local closeCastWasActive = false
 
     moduleLog("INFO", ("[CombatFarm][XenonLock] Locked %s | hp=%s source=%s stand=%s"):format(
         tostring(targetName), tostring(lastKnownHp), tostring(hpSource), tostring(getCurrentStandName())
@@ -525,12 +553,20 @@ local function killTarget(targetName, token)
         -- If there is no Stand, or Stand M1s have failed to deal damage for a
         -- short window, the player itself moves into melee range. This also covers
         -- stands whose normal M1 is not useful for farming.
-        if hasStand and not playerMeleeFallback and tick() - lastDamageAt > 2.0 then
+        if hasStand and not playerMeleeFallback
+            and tick() - lastDamageAt > 3.0
+            and tick() - lastSkillCastAt > 1.25 then
             playerMeleeFallback = true
-            moduleLog("INFO", "[CombatFarm][MeleeFallback] No damage detected from Stand M1; moving player into melee range.")
+            moduleLog("INFO", "[CombatFarm][MeleeFallback] No damage detected; moving player into melee range.")
         end
 
         local closeCasting = tick() < closeCastUntil
+        if closeCastWasActive and not closeCasting then
+            -- CLOSE AOE finished: immediately allow the normal safe-under-NPC
+            -- positioning to take over again instead of leaving the player beside the NPC.
+            closeCastKey = nil
+        end
+        closeCastWasActive = closeCasting
         if closeCasting or playerMeleeFallback then
             -- Player-centered hitboxes/AOE need the character itself close to the
             -- victim. Face the NPC from just behind it so short-radius moves land.
@@ -549,18 +585,14 @@ local function killTarget(targetName, token)
             hrp.AssemblyAngularVelocity = Vector3.zero
         end)
 
-        if not attackBusy then
-            attackBusy = true
-            task.spawn(function()
-                pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
-                attackBusy = false
-            end)
-        end
-
-        -- Auto Skills: one skill at a time, throttled. This avoids firing every
-        -- configured RemoteEvent every render frame on mobile.
+        -- Auto Skills are checked before M1. If no skills are enabled, preserve
+        -- the original full-speed M1 spam exactly. If skills are enabled, create
+        -- tiny input windows so a skill is not starved by continuous M1 requests.
         local skills = _config:Get("AutoSkills")
-        if type(skills) == "table" and #skills > 0 and tick() >= nextSkillAt then
+        local hasAutoSkills = type(skills) == "table" and #skills > 0
+        local castedSkillThisFrame = false
+
+        if hasAutoSkills and tick() >= nextSkillAt then
             if skillIndex > #skills then skillIndex = 1 end
             local sk = tostring(skills[skillIndex])
             skillIndex = skillIndex + 1
@@ -569,11 +601,20 @@ local function killTarget(targetName, token)
             if keyCode and since >= 2.0 then
                 local profile = getSkillProfile(sk)
                 perSkillLastUse[sk] = tick()
+                lastSkillCastAt = tick()
                 nextSkillAt = tick() + 0.28
+                castedSkillThisFrame = true
 
+                local skillWindow = 0.18
                 if profile and profile.closeCast then
+                    local hold = profile.hold or 0.28
                     closeCastKey = sk
-                    closeCastUntil = tick() + (profile.hold or 0.28)
+                    closeCastUntil = tick() + hold
+                    closeCastWasActive = true
+                    skillWindow = math.max(skillWindow, hold)
+                    -- Prevent the generic no-damage detector from converting this
+                    -- temporary AOE reposition into permanent melee fallback.
+                    lastDamageAt = tick()
                     local nearCF = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.8
                     hrp.CFrame = CFrame.lookAt(nearCF.Position, enemyHRP.Position)
                     pcall(function()
@@ -582,12 +623,23 @@ local function killTarget(targetName, token)
                     end)
                 end
 
-                task.spawn(function()
-                    pcall(function() useMove(keyCode) end)
-                end)
+                suppressM1Until = tick() + skillWindow
+                task.spawn(function() pcall(function() useMove(keyCode) end) end)
             else
                 nextSkillAt = tick() + 0.08
             end
+        end
+
+        local canM1 = (not hasAutoSkills) or (not castedSkillThisFrame and tick() >= suppressM1Until and tick() >= nextM1At)
+        if canM1 and not attackBusy then
+            attackBusy = true
+            if hasAutoSkills then
+                nextM1At = tick() + 0.075
+            end
+            task.spawn(function()
+                pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
+                attackBusy = false
+            end)
         end
 
         task.wait()
@@ -857,7 +909,7 @@ local function dialogueStageSignature()
 end
 
 local function findQuestPrompt(questName)
-    local cleanName = tostring(questName):gsub("%s*%[Lvl%.%s*%d+%+%]%s*$", "")
+    local cleanName = tostring(questName):gsub("%s*%[Lvl%.?%s*%d+%+%]%s*$", "")
     local roots = {
         workspace:FindFirstChild("Dialogues"),
         ReplicatedStorage:FindFirstChild("Dialogue"),
@@ -921,6 +973,29 @@ local function acceptQuest(questName, token)
     end
 
     moduleLog("INFO", "[CombatFarm] Opening updated quest dialogue: " .. questName)
+
+    -- Reuse the exact fast dialogue engine proven by Merchant when available.
+    -- Normal leveling quests use affirmative Option1 pages; the loop stops the
+    -- moment PlayerStats confirms an active quest, so quests with fewer pages do
+    -- not receive extra selections.
+    if _inventory and type(_inventory.RunFastDialogueOptionLoop) == "function" then
+        local okFast, fastInfo = _inventory:RunFastDialogueOptionLoop(prompt, "Option1", function()
+            local p, m = readQuestState()
+            local active = (m or 0) > 0 and (p or 0) < (m or 0)
+            local changed = p ~= beforeProgress or m ~= beforeMax
+            return active and (changed or previousCompleted or (beforeMax or 0) == 0)
+        end, 8, 3.0)
+        if okFast then
+            local p, m = readQuestState()
+            questCompleted = false
+            moduleLog("INFO", ("[CombatFarm][FastDialogue] Quest accepted automatically: %s | progress=%s/%s | %s")
+                :format(tostring(questName), tostring(p), tostring(m), tostring(fastInfo or "fast")))
+            return true
+        else
+            moduleLog("INFO", "[CombatFarm][FastDialogue] Fast route did not confirm quest; using visible compatibility route. " .. tostring(fastInfo or ""))
+        end
+    end
+
     local opened = pcall(function() fireproximityprompt(prompt) end)
     if not opened then
         moduleLog("WARN", "[CombatFarm] Could not trigger quest prompt: " .. questName)
@@ -1119,8 +1194,13 @@ local function farmLoop(token)
             if token ~= runId or stopRequested then break end
             if ok then
                 moduleLog("INFO", "[CombatFarm] NPC killed. Looking for another alive spawn...")
+                local selectedNPC = _config:Get("SelectedNPC")
+                if not selectedNPC or selectedNPC == "" or not getClosestNPC(selectedNPC) then
+                    goToSafeSpot("All selected NPC spawns are currently dead")
+                end
                 if not waitCancelable(0.02, token) then break end
             else
+                goToSafeSpot("Waiting for selected NPC to respawn")
                 moduleLog("INFO", "[CombatFarm] No alive NPC found. Retrying shortly...")
                 if not waitCancelable(0.75, token) then break end
             end
@@ -1224,6 +1304,7 @@ function CombatFarm:StartQuest()
 end
 
 function CombatFarm:Stop()
+    local previousMode = activeMode
     runId = runId + 1
     stopRequested = true
     isRunning = false
@@ -1232,6 +1313,9 @@ function CombatFarm:Stop()
     _movement:SetNoclip(false)
     _movement:ClearFocus()
     _movement:FixCamera()
+    if previousMode == "NPC" then
+        goToSafeSpot("NPC Farm disabled")
+    end
     moduleLog("INFO", "[CombatFarm] Stopped immediately and cleaned combat state.")
 end
 
