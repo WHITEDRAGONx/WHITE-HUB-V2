@@ -1824,6 +1824,86 @@ function Inventory:RunFastDialogueOptionLoop(prompt, optionName, isComplete, max
     return success == true, info
 end
 
+-- Fast controller for a DialogueGui that was opened by the game itself (for
+-- example the automatic dialogue shown after finishing a quest). Unlike
+-- RunFastDialogueOptionLoop this does NOT fire a ProximityPrompt and does NOT
+-- close the current DialogueGui before starting. Rendering is suppressed as
+-- soon as the GUI is detected, so the user should not have to watch the page.
+function Inventory:RunFastExistingDialogueOptionLoop(optionName, isComplete, maxStages, timeout)
+    if type(isComplete) ~= "function" then
+        isComplete = function()
+            return getDialogueGui() == nil
+        end
+    end
+    if not hasFinalZeroDelaySupport() then
+        return false, "FINAL dialogue APIs unsupported"
+    end
+
+    maxStages = math.max(1, tonumber(maxStages) or 4)
+    timeout = math.max(0.35, tonumber(timeout) or 1.8)
+    optionName = tostring(optionName or "Option1")
+
+    restoreDialogueRendering()
+
+    local state = newFinalState()
+    local startedAt = tick()
+    installFastDialogueWait(state)
+
+    local okRun, success, info = xpcall(function()
+        if not waitForDialogueGuiHidden(math.min(0.75, timeout)) then
+            return false, "DialogueGui did not appear"
+        end
+
+        local previousSignature = nil
+        local stages = 0
+        local deadline = tick() + timeout
+
+        while tick() < deadline and stages < maxStages do
+            local completeOk, complete = pcall(isComplete)
+            if completeOk and complete then
+                return true, string.format("%.3fs stages=%d gcScans=%d", tick() - startedAt, stages, state.gcScans or 0)
+            end
+
+            local remaining = math.max(0.10, deadline - tick())
+            local _, signature = waitForFinalStage(previousSignature, math.min(0.55, remaining), state)
+            if not signature then
+                local completeOk2, complete2 = pcall(isComplete)
+                if completeOk2 and complete2 then
+                    return true, string.format("%.3fs stages=%d gcScans=%d", tick() - startedAt, stages, state.gcScans or 0)
+                end
+                task.wait(0.01)
+                continue
+            end
+
+            local selected, reason = injectDialogueOption(optionName)
+            if not selected then
+                return false, "option injection failed: " .. tostring(reason)
+            end
+
+            stages = stages + 1
+            previousSignature = signature
+            state.active1982 = nil
+            state.lastGCScan = 0
+            task.wait(0.01)
+        end
+
+        local completeOk, complete = pcall(isComplete)
+        if completeOk and complete then
+            return true, string.format("%.3fs stages=%d gcScans=%d", tick() - startedAt, stages, state.gcScans or 0)
+        end
+        return false, "completion state not confirmed"
+    end, function(err)
+        return tostring(err)
+    end)
+
+    restoreFinalState(state)
+    closeDialogueIfOpen()
+    restoreDialogueRendering()
+
+    if not okRun then return false, tostring(success) end
+    return success == true, info
+end
+
 function Inventory:HasStand()
     return self:GetCurrentStand() ~= "None"
 end
@@ -1849,7 +1929,7 @@ end
 
 function Inventory:GetDialogueDiagnostics()
     return {
-        Build = "ZERO-DELAY-2026.09.14-R3-GENERIC-FAST-DIALOGUE",
+        Build = "ZERO-DELAY-2026.09.14-R4-QUEST-FINISH-DIALOGUE",
         FingerprintChecked = _fingerprint.checked,
         DialogueTypeDetected = _fingerprint.dialogueType,
         DialogueTypeLine = _fingerprint.dialogueTypeLine,
