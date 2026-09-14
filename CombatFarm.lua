@@ -19,6 +19,8 @@ local _webhook   = nil
 local activeMode = nil
 local isRunning = false
 local stopRequested = false
+local runId = 0
+local questWatcherConnection = nil
 local currentQuest = nil
 local questCompleted = false
 local questOnCooldown = false
@@ -41,19 +43,37 @@ function CombatFarm:Init(Modules)
     _serverHop = Modules.ServerHop
     _webhook   = Modules.Webhook
 
-    task.spawn(function()
-        while true do
-            task.wait(0.5)
-            local hud = Player.PlayerGui:FindFirstChild("HUD")
-            if hud then
-                local completedFrame = hud:FindFirstChild("QuestCompleted")
-                if completedFrame and completedFrame.Visible then
+    if questWatcherConnection then
+        pcall(function() questWatcherConnection:Disconnect() end)
+        questWatcherConnection = nil
+    end
+
+    -- Event-driven quest completion watcher instead of a permanent 0.5s polling loop.
+    local function hookHUD()
+        local hud = Player.PlayerGui:FindFirstChild("HUD")
+        if not hud then return end
+        local completedFrame = hud:FindFirstChild("QuestCompleted")
+        if completedFrame and completedFrame:IsA("GuiObject") then
+            questWatcherConnection = completedFrame:GetPropertyChangedSignal("Visible"):Connect(function()
+                if completedFrame.Visible then
                     questCompleted = true
                     print("[CombatFarm] Quest completed.")
                 end
-            end
+            end)
+            if completedFrame.Visible then questCompleted = true end
         end
-    end)
+    end
+
+    hookHUD()
+    if not questWatcherConnection then
+        task.spawn(function()
+            for _ = 1, 20 do
+                task.wait(0.5)
+                if questWatcherConnection then return end
+                hookHUD()
+            end
+        end)
+    end
 end
 
 -- =============================================
@@ -109,7 +129,7 @@ end
 -- =============================================
 -- COMBAT CORE (Xenon V5 style)
 -- =============================================
-local function killTarget(targetName)
+local function killTarget(targetName, token)
     local target = getClosestNPC(targetName) or workspace.Living:FindFirstChild(targetName)
     if not target then
         print("[CombatFarm] Target not found: " .. targetName)
@@ -129,6 +149,8 @@ local function killTarget(targetName)
 
     -- Equip stand
     local standPart = nil
+    local standAlignPos, standAlignOri = nil, nil
+    local standAlignPosEnabled, standAlignOriEnabled = nil, nil
     local hasStand = _inventory:HasStand()
     if hasStand then
         equipStand()
@@ -139,8 +161,15 @@ local function killTarget(targetName)
             if standAttach then
                 local alignPos = standAttach:FindFirstChild("AlignPosition")
                 local alignOri = standAttach:FindFirstChild("AlignOrientation")
-                if alignPos then alignPos.Enabled = false end
-                if alignOri then alignOri.Enabled = false end
+                standAlignPos, standAlignOri = alignPos, alignOri
+                if alignPos then
+                    standAlignPosEnabled = alignPos.Enabled
+                    alignPos.Enabled = false
+                end
+                if alignOri then
+                    standAlignOriEnabled = alignOri.Enabled
+                    alignOri.Enabled = false
+                end
             end
             standPart.CanCollide = true
         end
@@ -165,7 +194,7 @@ local function killTarget(targetName)
     local startTime = tick()
     local killed = false
 
-    while not stopRequested and tick() - startTime < 60 do
+    while not stopRequested and token == runId and tick() - startTime < 60 do
         target = getClosestNPC(targetName) or workspace.Living:FindFirstChild(targetName)
         if not target then
             killed = true
@@ -175,8 +204,9 @@ local function killTarget(targetName)
         local enemyHRP = target:FindFirstChild("HumanoidRootPart")
         local enemyHumanoid = target:FindFirstChildWhichIsA("Humanoid")
         local enemyHealth = target:FindFirstChild("Health")
+        local currentHealth = enemyHealth and tonumber(enemyHealth.Value) or (enemyHumanoid and enemyHumanoid.Health)
 
-        if not enemyHRP or not enemyHumanoid or not enemyHealth or enemyHealth.Value <= 0 then
+        if not enemyHRP or not enemyHumanoid or not currentHealth or currentHealth <= 0 then
             killed = true
             break
         end
@@ -218,6 +248,13 @@ local function killTarget(targetName)
         end)
     end
 
+    if standAlignPos and standAlignPos.Parent and standAlignPosEnabled ~= nil then
+        pcall(function() standAlignPos.Enabled = standAlignPosEnabled end)
+    end
+    if standAlignOri and standAlignOri.Parent and standAlignOriEnabled ~= nil then
+        pcall(function() standAlignOri.Enabled = standAlignOriEnabled end)
+    end
+
     _movement:SetNoclip(false)
 
     if hrp and hrp.Parent then
@@ -250,13 +287,13 @@ end
 -- =============================================
 -- NPC FARM
 -- =============================================
-local function runNPCFarm()
+local function runNPCFarm(token)
     local npcName = _config:Get("SelectedNPC")
     if not npcName or npcName == "" then
         print("[CombatFarm] No NPC selected.")
         return false
     end
-    return killTarget(npcName)
+    return killTarget(npcName, token)
 end
 
 -- =============================================
@@ -386,11 +423,11 @@ local function acceptQuest(questName)
     return false
 end
 
-local function collectItem(itemName, requiredAmount)
+local function collectItem(itemName, requiredAmount, token)
     local inventory = _inventory
     local movement  = _movement
     local startTime = tick()
-    while inventory:Count(itemName) < requiredAmount and (tick() - startTime) < 120 do
+    while token == runId and not stopRequested and inventory:Count(itemName) < requiredAmount and (tick() - startTime) < 120 do
         local itemModel = nil
         local itemsFolder = workspace.Item_Spawns and workspace.Item_Spawns.Items
         if itemsFolder then
@@ -425,7 +462,7 @@ local function collectItem(itemName, requiredAmount)
     return inventory:Count(itemName) >= requiredAmount
 end
 
-local function runQuestFarm()
+local function runQuestFarm(token)
     local autoChoose = _config:Get("AutoChooseQuest")
     if autoChoose then
         currentQuest = getBestQuest()
@@ -448,8 +485,12 @@ local function runQuestFarm()
     end
 
     local data = questInfo[currentQuest]
+    if not data then
+        warn("[CombatFarm] Unknown quest configuration: " .. tostring(currentQuest))
+        return false
+    end
     if data.enemy then
-        local ok = killTarget(data.enemy)
+        local ok = killTarget(data.enemy, token)
         if ok then
             local timeout = tick()
             while not questCompleted and tick() - timeout < 15 do
@@ -459,7 +500,7 @@ local function runQuestFarm()
         end
         return false
     elseif data.item then
-        return collectItem(data.item, data.amount)
+        return collectItem(data.item, data.amount, token)
     end
     return false
 end
@@ -467,70 +508,112 @@ end
 -- =============================================
 -- MAIN LOOP
 -- =============================================
-local function farmLoop()
-    while not stopRequested do
+local function waitCancelable(seconds, token)
+    local deadline = tick() + seconds
+    while tick() < deadline do
+        if stopRequested or token ~= runId then return false end
+        task.wait(math.min(0.25, deadline - tick()))
+    end
+    return true
+end
+
+local function farmLoop(token)
+    while not stopRequested and token == runId do
         if activeMode == "NPC" then
-            local ok = runNPCFarm()
+            local ok = runNPCFarm(token)
+            if token ~= runId or stopRequested then break end
             if ok then
                 print("[CombatFarm] NPC killed. Waiting for respawn...")
-                task.wait(5)
             else
                 print("[CombatFarm] NPC farm failed. Retrying in 5 seconds...")
-                task.wait(5)
             end
+            if not waitCancelable(5, token) then break end
+
         elseif activeMode == "Quest" then
-            local ok = runQuestFarm()
+            local ok = runQuestFarm(token)
+            if token ~= runId or stopRequested then break end
+
             if ok then
                 print("[CombatFarm] Quest completed! Moving to next.")
-                task.wait(3)
+                if not waitCancelable(3, token) then break end
                 questCompleted = false
                 questOnCooldown = false
             else
                 if questOnCooldown then
-                    print("[CombatFarm] Quest on cooldown, waiting 60 seconds...")
-                    task.wait(60)
+                    local remaining = math.max(1, math.ceil(cooldownUntil - tick()))
+                    print("[CombatFarm] Quest on cooldown, waiting " .. remaining .. " seconds...")
+                    if not waitCancelable(remaining, token) then break end
                 else
                     print("[CombatFarm] Quest failed. Retrying in 5 seconds...")
-                    task.wait(5)
+                    if not waitCancelable(5, token) then break end
                 end
             end
         else
             break
         end
-        task.wait(1)
+
+        if not waitCancelable(0.25, token) then break end
+    end
+
+    if token == runId then
+        isRunning = false
+        activeMode = nil
     end
 end
 
 -- =============================================
 -- PUBLIC API
 -- =============================================
-function CombatFarm:StartNPC()
-    if isRunning and activeMode == "NPC" then return end
-    if isRunning then self:Stop() end
-    activeMode = "NPC"
+local function startMode(mode)
+    if isRunning and activeMode == mode then return end
+
+    -- Invalidate any previous worker before starting a new one.
+    runId = runId + 1
     stopRequested = false
+    activeMode = mode
     isRunning = true
-    print("[CombatFarm] Starting NPC farming (Xenon V5 style).")
-    task.spawn(farmLoop)
+
+    local token = runId
+    if mode == "Quest" then
+        questCompleted = false
+        questOnCooldown = false
+    end
+
+    print("[CombatFarm] Starting " .. mode .. " farming (single-worker mode).")
+    task.spawn(function()
+        farmLoop(token)
+    end)
+end
+
+function CombatFarm:StartNPC()
+    startMode("NPC")
 end
 
 function CombatFarm:StartQuest()
-    if isRunning and activeMode == "Quest" then return end
-    if isRunning then self:Stop() end
-    activeMode = "Quest"
-    stopRequested = false
-    isRunning = true
-    questCompleted = false
-    questOnCooldown = false
-    print("[CombatFarm] Starting Quest farming (Xenon V5 style).")
-    task.spawn(farmLoop)
+    startMode("Quest")
 end
 
 function CombatFarm:Stop()
+    runId = runId + 1
     stopRequested = true
     isRunning = false
     activeMode = nil
+    questCompleted = false
+    _movement:SetNoclip(false)
+    _movement:ClearFocus()
     print("[CombatFarm] Stopped.")
+end
+
+function CombatFarm:IsRunning()
+    return isRunning, activeMode
+end
+
+function CombatFarm:Destroy()
+    self:Stop()
+    if questWatcherConnection then
+        pcall(function() questWatcherConnection:Disconnect() end)
+        questWatcherConnection = nil
+    end
 end
 
 return CombatFarm
