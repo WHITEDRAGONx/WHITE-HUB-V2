@@ -1,7 +1,7 @@
 -- =====================
 -- CombatFarm.lua
 -- Unified combat: NPC and Quest farming.
--- QUEST DIALOGUE BUILD: INTERNAL-OPTION-2026.09.14-R2-DYNAMIC-QUESTS
+-- QUEST/COMBAT BUILD: INTERNAL-OPTION-R3-XENON-LOCK
 -- Logic identical to Xenon V5 (stand positioning, attacks, death detection).
 -- FIXED: player positioned underground (yOffset -35) with noclip for safety.
 -- =====================
@@ -139,16 +139,38 @@ local function equipStand()
     end
 end
 
+local function getNPCHealthState(npc)
+    if not npc or not npc.Parent then
+        return nil, "despawned"
+    end
+
+    -- YBA NPCs expose their authoritative combat health through a custom Health
+    -- Value. Xenon V5 relied on this value instead of Humanoid.Health. The
+    -- Humanoid may enter a death/ragdoll state before YBA has actually credited
+    -- the kill, so prefer Health.Value whenever it exists.
+    local healthValue = npc:FindFirstChild("Health")
+    if healthValue then
+        local hp = tonumber(healthValue.Value)
+        if hp ~= nil then
+            return hp, "HealthValue"
+        end
+    end
+
+    local hum = npc:FindFirstChildWhichIsA("Humanoid")
+    if hum then
+        return tonumber(hum.Health), "Humanoid"
+    end
+
+    return nil, "unknown"
+end
+
 local function isNPCAlive(npc)
     if not npc or not npc.Parent then return false end
-    local hrp = npc:FindFirstChild("HumanoidRootPart")
-    local hum = npc:FindFirstChildWhichIsA("Humanoid")
-    if not hrp or not hum or hum.Health <= 0 then return false end
-    local healthValue = npc:FindFirstChild("Health")
-    if healthValue and tonumber(healthValue.Value) and tonumber(healthValue.Value) <= 0 then
-        return false
+    local hp = getNPCHealthState(npc)
+    if hp ~= nil then
+        return hp > 0
     end
-    return true
+    return npc:FindFirstChild("HumanoidRootPart") ~= nil
 end
 
 local function getClosestNPC(npcName)
@@ -187,6 +209,10 @@ local function isTokenActive(token, expectedMode)
     return true
 end
 
+-- Forward declaration: killTarget waits for QuestProgress credit before the
+-- concrete readQuestState implementation later in this module.
+local readQuestState
+
 local function waitToken(seconds, token, expectedMode)
     local deadline = tick() + seconds
     while tick() < deadline do
@@ -200,15 +226,18 @@ end
 -- COMBAT CORE (Xenon V5 style)
 -- =============================================
 local function killTarget(targetName, token)
+    -- Lock one concrete NPC exactly like Xenon V5. Do not re-select by name until
+    -- this model has actually died/despawned.
     local target = getClosestNPC(targetName)
     if not target then
         moduleLog("INFO", "[CombatFarm] No alive target found: " .. targetName)
         return false
     end
 
-    local hrp = _movement:GetCharacter("HumanoidRootPart")
-    local remoteFunc = _movement:GetCharacter("RemoteFunction")
-    if not hrp or not remoteFunc then
+    local character = _movement:GetCharacter()
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    local remoteFunc = character and character:FindFirstChild("RemoteFunction")
+    if not character or not hrp or not remoteFunc then
         return false
     end
 
@@ -217,125 +246,110 @@ local function killTarget(targetName, token)
     local oldCameraSubject = camera and camera.CameraSubject
     local oldCameraType = camera and camera.CameraType
 
-    -- Equip stand
-    local standPart = nil
-    local standAlignPos, standAlignOri = nil, nil
-    local standAlignPosEnabled, standAlignOriEnabled = nil, nil
-    local standCanCollide, standMassless = nil, nil
+    local questProgressBefore, questMaxBefore = nil, nil
+    if activeMode == "Quest" then
+        questProgressBefore, questMaxBefore = readQuestState()
+    end
+
     local hasStand = _inventory:HasStand()
     if hasStand then
         equipStand()
-        local standMorph = _movement:GetCharacter("StandMorph")
-        if standMorph and standMorph.PrimaryPart then
-            standPart = standMorph.PrimaryPart
-            standCanCollide = standPart.CanCollide
-            standMassless = standPart.Massless
-
-            -- Collision was one of the main causes of Stand fling when its CFrame
-            -- was forced into an NPC. Keep the Stand non-collidable and massless
-            -- only while CombatFarm owns it.
-            standPart.CanCollide = false
-            standPart.Massless = true
-
-            local standAttach = standPart:FindFirstChild("StandAttach")
-            if standAttach then
-                local alignPos = standAttach:FindFirstChild("AlignPosition")
-                local alignOri = standAttach:FindFirstChild("AlignOrientation")
-                standAlignPos, standAlignOri = alignPos, alignOri
-                if alignPos then
-                    standAlignPosEnabled = alignPos.Enabled
-                    alignPos.Enabled = false
-                end
-                if alignOri then
-                    standAlignOriEnabled = alignOri.Enabled
-                    alignOri.Enabled = false
-                end
-            end
-        end
     end
 
-    -- YBA reads FocusCam internally. Roblox's own camera is pointed at a smooth,
-    -- invisible anchor following the Stand so physics corrections do not shake
-    -- the player's view every frame.
-    local character = _movement:GetCharacter()
-    local focusCam = character and character:FindFirstChild("FocusCam")
+    -- Xenon keeps the Stand's native constraints/collision intact and simply
+    -- drags its PrimaryPart behind the locked NPC every frame.
+    local standMorph = hasStand and character:FindFirstChild("StandMorph") or nil
+    local standPart = standMorph and standMorph.PrimaryPart or nil
+
+    local focusCam = character:FindFirstChild("FocusCam")
     local createdFocusCam = false
     local previousFocusValue = focusCam and focusCam.Value or nil
-    if not focusCam and character then
+    if not focusCam then
         focusCam = Instance.new("ObjectValue")
         focusCam.Name = "FocusCam"
         focusCam.Parent = character
         createdFocusCam = true
     end
 
-    local cameraAnchor = nil
-    if camera then
-        cameraAnchor = Instance.new("Part")
-        cameraAnchor.Name = "WhiteHubCombatCamera"
-        cameraAnchor.Size = Vector3.new(1, 1, 1)
-        cameraAnchor.Transparency = 1
-        cameraAnchor.Anchored = true
-        cameraAnchor.CanCollide = false
-        cameraAnchor.CanTouch = false
-        cameraAnchor.CanQuery = false
-        cameraAnchor.CFrame = (standPart and standPart.CFrame) or hrp.CFrame
-        cameraAnchor.Parent = workspace
-        pcall(function()
-            camera.CameraType = Enum.CameraType.Custom
-            camera.CameraSubject = cameraAnchor
-        end)
-    end
-
-    if focusCam then
-        focusCam.Value = standPart or target:FindFirstChild("HumanoidRootPart")
-    end
-
     _movement:SetNoclip(true)
-    local combatFreeze = _movement:Freeze()
 
     local yOffset = -35
     if targetName == "The Idol" then yOffset = 35 end
 
     local startTime = tick()
     local killed = false
-    local fixedPlayerDistance = -2.5
+    local lastKnownHp, hpSource = getNPCHealthState(target)
+    local missingPartsSince = nil
+    local attackBusy = false
+
+    moduleLog("INFO", ("[CombatFarm][XenonLock] Locked %s | hp=%s source=%s"):format(
+        tostring(targetName), tostring(lastKnownHp), tostring(hpSource)
+    ))
 
     while isTokenActive(token) and tick() - startTime < 60 do
-        -- This invocation owns one concrete NPC. Once it dies we return so the
-        -- outer loop can immediately choose another alive spawn with the same name.
-        if not isNPCAlive(target) then
+        if not target or not target.Parent then
+            -- A locked NPC disappearing from workspace.Living after being alive is
+            -- treated as a real death/despawn, never as a reason to switch early.
             killed = true
             break
         end
 
+        local hp, source = getNPCHealthState(target)
+        if hp ~= nil then
+            lastKnownHp = hp
+            hpSource = source
+            if hp <= 0 then
+                -- Match Xenon's small post-zero settle before releasing the target.
+                task.wait(0.215)
+                killed = true
+                break
+            end
+        end
+
         local enemyHRP = target:FindFirstChild("HumanoidRootPart")
-        if not enemyHRP then break end
+        local enemyHumanoid = target:FindFirstChildWhichIsA("Humanoid")
+
+        if not enemyHRP or not enemyHumanoid then
+            -- Do not abandon a still-alive YBA NPC because ragdoll/death code
+            -- temporarily replaced a part. Give the locked target a grace window.
+            if not missingPartsSince then missingPartsSince = tick() end
+            if tick() - missingPartsSince > 1.0 then
+                local currentHp = getNPCHealthState(target)
+                if currentHp ~= nil and currentHp <= 0 then
+                    killed = true
+                    break
+                elseif not target.Parent then
+                    killed = true
+                    break
+                end
+                -- Still alive: keep the same target and keep waiting for parts.
+                missingPartsSince = tick()
+            end
+            task.wait(0.03)
+            continue
+        end
+        missingPartsSince = nil
+
+        -- Xenon camera behavior: FocusCam stays on the enemy HRP rather than the
+        -- Stand. This avoids camera subject changes while the Stand is force-moved.
+        if focusCam and focusCam.Parent then
+            focusCam.Value = enemyHRP
+        end
+
+        -- Refresh StandMorph because YBA may recreate it after summon/animation.
+        if hasStand and (not standPart or not standPart.Parent) then
+            standMorph = character:FindFirstChild("StandMorph")
+            standPart = standMorph and standMorph.PrimaryPart or nil
+        end
 
         if standPart and standPart.Parent then
             local standCF = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 1.1
             standPart.CFrame = standCF
-            hrp.CFrame = standCF + standCF.LookVector * fixedPlayerDistance + Vector3.new(0, yOffset, 0)
-
-            pcall(function()
-                standPart.AssemblyLinearVelocity = Vector3.zero
-                standPart.AssemblyAngularVelocity = Vector3.zero
-            end)
-
-            if focusCam and focusCam.Parent then
-                focusCam.Value = standPart
-            end
-
-            if cameraAnchor and cameraAnchor.Parent then
-                -- Smooth camera tracking without lagging far behind the combat.
-                cameraAnchor.CFrame = cameraAnchor.CFrame:Lerp(standPart.CFrame, 0.45)
-            end
+            -- Same spatial model as Xenon: player follows the Stand but remains
+            -- vertically separated from combat to avoid knockback/void issues.
+            hrp.CFrame = standCF + standCF.LookVector * -2.5 + Vector3.new(0, yOffset, 0)
         else
-            local playerCF = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.3 + Vector3.new(0, yOffset, 0)
-            hrp.CFrame = playerCF
-            if focusCam and focusCam.Parent then focusCam.Value = enemyHRP end
-            if cameraAnchor and cameraAnchor.Parent then
-                cameraAnchor.CFrame = cameraAnchor.CFrame:Lerp(enemyHRP.CFrame, 0.45)
-            end
+            hrp.CFrame = enemyHRP.CFrame - enemyHRP.CFrame.LookVector * 2.3 + Vector3.new(0, yOffset, 0)
         end
 
         pcall(function()
@@ -343,32 +357,52 @@ local function killTarget(targetName, token)
             hrp.AssemblyAngularVelocity = Vector3.zero
         end)
 
-        if not combatFreeze or not combatFreeze.Parent then
-            combatFreeze = _movement:Freeze()
+        -- Xenon attacks asynchronously so InvokeServer cannot stall the positioning
+        -- loop and let the Stand fall away from the target.
+        if not attackBusy then
+            attackBusy = true
+            task.spawn(function()
+                pcall(function() remoteFunc:InvokeServer("Attack", "m1") end)
+                attackBusy = false
+            end)
         end
 
-        pcall(function()
-            remoteFunc:InvokeServer("Attack", "m1")
-        end)
-
         local skills = _config:Get("AutoSkills")
-        if type(skills) == "table" then
-            for _, sk in ipairs(skills) do
-                if not isTokenActive(token) then break end
-                local keyCode = Enum.KeyCode[sk]
-                if keyCode then
-                    pcall(function() useMove(keyCode) end)
+        if type(skills) == "table" and #skills > 0 then
+            task.spawn(function()
+                for _, sk in ipairs(skills) do
+                    if not isTokenActive(token) then break end
+                    local keyCode = Enum.KeyCode[sk]
+                    if keyCode then
+                        pcall(function() useMove(keyCode) end)
+                    end
                 end
-            end
+            end)
         end
 
         task.wait()
     end
 
-    _movement:Unfreeze(combatFreeze)
-
-    if cameraAnchor and cameraAnchor.Parent then
-        cameraAnchor:Destroy()
+    if killed and activeMode == "Quest" and isTokenActive(token, "Quest") then
+        -- Do not select the next same-name spawn until YBA has had a chance to
+        -- credit the kill. This directly addresses kills visually ending but not
+        -- incrementing QuestProgress.
+        local settleDeadline = tick() + 1.25
+        while tick() < settleDeadline and isTokenActive(token, "Quest") do
+            local progress, maxProgress = readQuestState()
+            if questCompleted
+                or progress ~= questProgressBefore
+                or maxProgress ~= questMaxBefore
+                or ((maxProgress or 0) > 0 and (progress or 0) >= (maxProgress or 0)) then
+                moduleLog("INFO", ("[CombatFarm][XenonLock] Kill credited | progress=%s/%s"):format(
+                    tostring(progress), tostring(maxProgress)
+                ))
+                break
+            end
+            task.wait(0.05)
+        end
+    elseif killed then
+        task.wait(0.25)
     end
 
     if focusCam and focusCam.Parent then
@@ -381,23 +415,6 @@ local function killTarget(targetName, token)
         end)
     end
 
-    if standAlignPos and standAlignPos.Parent and standAlignPosEnabled ~= nil then
-        pcall(function() standAlignPos.Enabled = standAlignPosEnabled end)
-    end
-    if standAlignOri and standAlignOri.Parent and standAlignOriEnabled ~= nil then
-        pcall(function() standAlignOri.Enabled = standAlignOriEnabled end)
-    end
-    if standPart and standPart.Parent then
-        pcall(function()
-            if standCanCollide ~= nil then standPart.CanCollide = standCanCollide end
-            if standMassless ~= nil then standPart.Massless = standMassless end
-            standPart.AssemblyLinearVelocity = Vector3.zero
-            standPart.AssemblyAngularVelocity = Vector3.zero
-        end)
-    end
-
-    -- Only the currently owning worker restores global movement/camera state.
-    -- Stop() handles this itself when a worker is invalidated by toggling OFF.
     if token == runId then
         _movement:SetNoclip(false)
         if hrp and hrp.Parent then
@@ -415,6 +432,16 @@ local function killTarget(targetName, token)
                 if oldCameraType then camera.CameraType = oldCameraType end
             end)
         end
+    end
+
+    if killed then
+        moduleLog("INFO", ("[CombatFarm][XenonLock] Confirmed death: %s | lastHp=%s source=%s"):format(
+            tostring(targetName), tostring(lastKnownHp), tostring(hpSource)
+        ))
+    else
+        moduleLog("WARN", ("[CombatFarm][XenonLock] Target lock ended without confirmed death: %s | lastHp=%s source=%s"):format(
+            tostring(targetName), tostring(lastKnownHp), tostring(hpSource)
+        ))
     end
 
     return killed
@@ -464,7 +491,7 @@ local function getBestQuest()
     return best
 end
 
-local function readQuestState()
+readQuestState = function()
     local stats = Player:FindFirstChild("PlayerStats")
     if not stats then return nil, nil end
 
