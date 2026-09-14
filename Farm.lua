@@ -18,7 +18,7 @@ local _webhook   = nil
 
 local SpawnedItems    = {}
 local ItemSpawnFolder = nil
-local NO_ITEM_TIMEOUT = 10   -- <-- alterado de 20 para 10
+local NO_ITEM_TIMEOUT = 20   -- wait longer before treating the server as having no spawned items
 local lastItemTime    = tick()
 
 local lastSellItemsSnapshot = nil
