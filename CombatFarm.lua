@@ -1,6 +1,7 @@
 -- =====================
 -- CombatFarm.lua
 -- Unified combat: NPC and Quest farming.
+-- QUEST DIALOGUE BUILD: INTERNAL-OPTION-2026.09.14-R1
 -- Logic identical to Xenon V5 (stand positioning, attacks, death detection).
 -- FIXED: player positioned underground (yOffset -35) with noclip for safety.
 -- =====================
@@ -481,6 +482,80 @@ local function findDialogueOption(optionName)
     return option:FindFirstChildWhichIsA("GuiButton", true)
 end
 
+
+-- New YBA dialogue callbacks (v1.7974+) store the selected option in callback U[1].
+-- DialogueAnalyzer confirmed the quest NPC uses the same ClientFunctions callback shape
+-- as Merchant: one MouseButton1Click callback, with U[2] pointing at the option ImageLabel.
+local function injectDialogueOption(optionName)
+    local btn = findDialogueOption(optionName)
+    if not btn or not btn.Visible then return false, "not-ready" end
+
+    local getCon = type(getconnections) == "function" and getconnections or nil
+    local setUp = type(setupvalue) == "function" and setupvalue
+        or (debug and type(debug.setupvalue) == "function" and debug.setupvalue)
+    local getUp = type(getupvalue) == "function" and getupvalue
+        or (debug and type(debug.getupvalue) == "function" and debug.getupvalue)
+
+    if not getCon or not setUp then return false, "unsupported" end
+
+    local okConnections, connections = pcall(getCon, btn.MouseButton1Click)
+    if not okConnections or type(connections) ~= "table" then
+        return false, "no-connections"
+    end
+
+    for _, connection in ipairs(connections) do
+        local fn = connection and (connection.Function or connection["function"])
+        if type(fn) == "function" then
+            local structurallyValid = true
+            if getUp then
+                local okU2, u2 = pcall(getUp, fn, 2)
+                -- On the mapped ClientFunctions:2063 callback U[2] is the option ImageLabel.
+                -- If the executor exposes U[2], reject unrelated callbacks instead of writing U[1].
+                if okU2 and u2 ~= nil then
+                    structurallyValid = typeof(u2) == "Instance" and (u2 == btn.Parent or btn:IsDescendantOf(u2))
+                end
+            end
+
+            if structurallyValid then
+                local okSet = pcall(setUp, fn, 1, optionName)
+                if okSet then
+                    if getUp then
+                        local okVerify, selected = pcall(getUp, fn, 1)
+                        if okVerify and selected ~= nil and tostring(selected) ~= tostring(optionName) then
+                            -- The callback shape changed; do not claim success.
+                        else
+                            return true, "internal"
+                        end
+                    else
+                        return true, "internal"
+                    end
+                end
+            end
+        end
+    end
+
+    return false, "callback-mismatch"
+end
+
+local function dialogueStageSignature()
+    local gui = Player.PlayerGui:FindFirstChild("DialogueGui")
+    if not gui then return nil end
+    local options = gui:FindFirstChild("Options", true)
+    if not options then return nil end
+
+    local parts = {}
+    for i = 1, 8 do
+        local option = options:FindFirstChild("Option" .. i)
+        if option then
+            local label = option:FindFirstChildWhichIsA("TextLabel", true)
+            local button = option:FindFirstChildWhichIsA("TextButton", true)
+            local text = (button and button.Text) or (label and label.Text) or ""
+            parts[#parts + 1] = "Option" .. i .. "=" .. tostring(text)
+        end
+    end
+    return #parts > 0 and table.concat(parts, " | ") or nil
+end
+
 local function findQuestPrompt(questName)
     local cleanName = tostring(questName):gsub("%s*%[Lvl%.%s*%d+%+%]%s*$", "")
     local roots = {
@@ -541,29 +616,56 @@ local function acceptQuest(questName, token)
         return false
     end
 
-    -- v1.7974+ quest dialogues are client UI driven. Historically quest choices
-    -- are affirmative Option1, so advance only Option1 and stop the instant the
-    -- PlayerStats quest state changes.
+    -- DialogueAnalyzer mapping (2026-09-14): this quest path uses the same
+    -- ClientFunctions option callback as Merchant and accepts with:
+    -- Option1 -> Option1 -> Option1. Prefer internal U[1] injection; retain the
+    -- visible click path only as an executor-compatibility fallback.
     local deadline = tick() + 8
-    local nextClickAt = 0
+    local lastStageSignature = nil
+    local lastAdvanceAt = 0
+    local internalStages = 0
+    local fallbackClicks = 0
+
     while tick() < deadline and isTokenActive(token, "Quest") do
         local progress, maxProgress = readQuestState()
         if (maxProgress or 0) > 0 or progress ~= beforeProgress or maxProgress ~= beforeMax then
             questCompleted = false
-            moduleLog("INFO", "[CombatFarm] Quest accepted through updated dialogue: " .. questName)
+            moduleLog("INFO", ("[CombatFarm] Quest accepted through updated dialogue: %s | internalStages=%d fallbackClicks=%d")
+                :format(questName, internalStages, fallbackClicks))
             return true
         end
 
         local btn = findDialogueOption("Option1")
-        if btn and btn.Visible and tick() >= nextClickAt then
-            nextClickAt = tick() + 0.15
-            clickDialogueButton(btn)
-            task.wait(0.08)
+        local signature = dialogueStageSignature()
+        if btn and btn.Visible and signature then
+            local isNewStage = signature ~= lastStageSignature
+            local retryExpired = (tick() - lastAdvanceAt) >= 0.45
+            if isNewStage or retryExpired then
+                local injected = false
+                local okInject, route = injectDialogueOption("Option1")
+                if okInject then
+                    injected = true
+                    internalStages = internalStages + 1
+                    lastStageSignature = signature
+                    lastAdvanceAt = tick()
+                    task.wait(0.04)
+                end
+
+                if not injected then
+                    if clickDialogueButton(btn) then
+                        fallbackClicks = fallbackClicks + 1
+                        lastStageSignature = signature
+                        lastAdvanceAt = tick()
+                    end
+                    task.wait(0.08)
+                end
+            else
+                task.wait(0.03)
+            end
         else
-            task.wait(0.05)
+            task.wait(0.04)
             if not Player.PlayerGui:FindFirstChild("DialogueGui") and tick() + 0.5 < deadline then
-                -- If the UI closed before quest state changed, do not keep blindly
-                -- clicking anything else; this is usually cooldown/requirements.
+                -- UI closed before PlayerStats changed: cooldown, requirement, or dialogue mismatch.
                 break
             end
         end
@@ -576,7 +678,7 @@ local function acceptQuest(questName, token)
         return true
     end
 
-    moduleLog("INFO", "[CombatFarm] Quest acceptance failed/cooldown with new dialogue.")
+    moduleLog("INFO", "[CombatFarm] Quest acceptance failed/cooldown with new dialogue. Last stage: " .. tostring(dialogueStageSignature()))
     questOnCooldown = true
     cooldownUntil = tick() + 60
     return false
