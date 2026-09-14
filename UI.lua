@@ -13,7 +13,7 @@ local PlayerGui = Player:WaitForChild("PlayerGui")
 
 local UI = {}
 
-local UI_BUILD = "FUTURE-GOLD-2026.09.14-R4-CONSOLE-FILTERS"
+local UI_BUILD = "FUTURE-GOLD-2026.09.14-R5-DYNAMIC-QUESTS"
 UI.Build = UI_BUILD
 
 local THEME = {
@@ -106,9 +106,12 @@ local function trackConnection(connection)
     return connection
 end
 
--- Dynamic NPC list (unique names)
+-- Dynamic NPC / Quest lists. Quest names are discovered from workspace.Dialogues
+-- so the dropdown stays current when YBA adds or removes level quests.
 local dynamicNPCList = {}
 local npcDropdownRefresh = nil
+local dynamicQuestList = {}
+local questDropdownRefresh = nil
 
 function UI:Init(Modules)
     _config      = Modules.Config
@@ -550,6 +553,58 @@ local function updateNPCList()
     return newList
 end
 
+local QUEST_FALLBACK = {
+    "Officer Sam [Lvl. 1+]",
+    "Deputy Bertrude [Lvl. 10+]",
+    "Abbacchio's Partner [Lvl 15+]",
+    "Homeless Man Jill [Lvl. 15+]",
+    "Darius, The Executioner [Lvl. 20+]",
+    "Dracula [Lvl. 20+]",
+    "William Zeppeli [Lvl. 25+]",
+    "Doppio [Lvl. 30+]",
+    "Kars [Lvl. 30+]",
+    "Dio [Lvl. 35+]",
+    "Pucci [Lvl. 40+]",
+}
+
+local function questLevelFromName(name)
+    local n = tostring(name)
+    return tonumber(n:match("%[Lvl%.?%s*(%d+)%+%]")) or tonumber(n:match("[Ll]vl%.?%s*(%d+)%+")) or 999
+end
+
+local function updateQuestList()
+    local names = {}
+    local dialogues = workspace:FindFirstChild("Dialogues")
+
+    if dialogues then
+        for _, obj in ipairs(dialogues:GetChildren()) do
+            local name = tostring(obj.Name)
+            if name:lower():find("lvl", 1, true) then
+                names[name] = true
+            end
+        end
+    end
+
+    -- The dialogue folder can populate a moment after the UI. Keep a complete
+    -- fallback so the dropdown is still useful during that short window.
+    if next(names) == nil then
+        for _, name in ipairs(QUEST_FALLBACK) do
+            names[name] = true
+        end
+    end
+
+    local list = {}
+    for name in pairs(names) do list[#list + 1] = name end
+    table.sort(list, function(a, b)
+        local la, lb = questLevelFromName(a), questLevelFromName(b)
+        if la == lb then return a < b end
+        return la < lb
+    end)
+
+    dynamicQuestList = list
+    return list
+end
+
 function UI:Create()
     self:Destroy()
     toggleObjects = {}
@@ -562,8 +617,38 @@ function UI:Create()
 
     CreateCreditsPopup()
 
-    -- Initial NPC scan
+    -- Initial dynamic scans
     updateNPCList()
+    updateQuestList()
+
+    local dialogues = workspace:FindFirstChild("Dialogues")
+    if dialogues then
+        trackConnection(dialogues.ChildAdded:Connect(function()
+            updateQuestList()
+            if questDropdownRefresh then questDropdownRefresh(dynamicQuestList) end
+        end))
+        trackConnection(dialogues.ChildRemoved:Connect(function()
+            updateQuestList()
+            if questDropdownRefresh then questDropdownRefresh(dynamicQuestList) end
+        end))
+    else
+        -- Dialogue folder can arrive late on some executors/loads.
+        task.spawn(function()
+            local folder = workspace:WaitForChild("Dialogues", 15)
+            if not folder or not mainScreenGui then return end
+            updateQuestList()
+            if questDropdownRefresh then questDropdownRefresh(dynamicQuestList) end
+            trackConnection(folder.ChildAdded:Connect(function()
+                updateQuestList()
+                if questDropdownRefresh then questDropdownRefresh(dynamicQuestList) end
+            end))
+            trackConnection(folder.ChildRemoved:Connect(function()
+                updateQuestList()
+                if questDropdownRefresh then questDropdownRefresh(dynamicQuestList) end
+            end))
+        end)
+    end
+
     local living = workspace:FindFirstChild("Living")
     if living then
         trackConnection(living.ChildAdded:Connect(function(child)
@@ -864,22 +949,25 @@ function UI:Create()
         runtimeLog("INFO", "Auto Choose Quest = " .. tostring(v))
     end)
     
-    local questList = {
-        "Officer Sam [Lvl. 1+]",
-        "Deputy Bertrude [Lvl. 10+]",
-        "Homeless Man Jill [Lvl. 15+]",
-        "Dracula [Lvl. 20+]",
-        "William Zeppeli [Lvl. 25+]",
-        "Doppio [Lvl. 30+]",
-        "Dio [Lvl. 35+]"
-    }
-    local questDropdown = MakeStyledDropdown(QuestPage, "Select Quest", questList, function(selected)
+    local questDropdown, questRefresh = MakeStyledDropdown(QuestPage, "Select Quest", dynamicQuestList, function(selected)
         if _config then _config:Set("SelectedQuest", selected) end
+        runtimeLog("INFO", "Selected quest = " .. tostring(selected))
     end)
+    questDropdownRefresh = questRefresh
     local savedQuest = _config and _config:Get("SelectedQuest")
-    if savedQuest and savedQuest ~= "" and table.find(questList, savedQuest) then
+    if savedQuest and savedQuest ~= "" and table.find(dynamicQuestList, savedQuest) then
         questDropdown.Text = savedQuest
     end
+
+    local questNote = Instance.new("TextLabel")
+    questNote.Size = UDim2.new(1,-4,0,28)
+    questNote.BackgroundTransparency = 1
+    questNote.Text = "Quest list is detected live. Special quests may require separate mapping."
+    questNote.TextColor3 = THEME.MUTED
+    questNote.TextSize = 10
+    questNote.Font = Enum.Font.Gotham
+    questNote.TextWrapped = true
+    questNote.Parent = QuestPage
     
     -- Quest/NPC are mutually exclusive and CombatFarm enforces one worker.
     MakeToggle(QuestPage, "Quest Farm", _config and _config:Get("QuestFarmEnabled"), function(v)
