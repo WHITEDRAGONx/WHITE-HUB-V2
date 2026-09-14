@@ -618,6 +618,10 @@ end
 
 local _cachedDialogueType = nil
 local FINAL_SMALL_CONSTANT_MAX = 2.0
+-- Performance guardrails for Delta/mobile. The FINAL route stays fast, but avoids
+-- full getgc scans and deep patch work every rendered frame.
+local FINAL_FORCE_INTERVAL = 0.02
+local FINAL_GC_RESCAN_INTERVAL = 0.035
 
 local function getIndexedUpvalue(fn, index)
     if type(_rawGetUpvalue) ~= "function" or type(fn) ~= "function" then
@@ -792,11 +796,16 @@ local function newFinalState()
         upvaluePatches = {}, upvalueSeen = setmetatable({}, {__mode = "k"}),
         constantPatches = {}, constantSeen = setmetatable({}, {__mode = "k"}),
         richSeen = setmetatable({}, {__mode = "k"}),
+        constantScanned = setmetatable({}, {__mode = "k"}),
         waitPatch = nil,
+        active1982 = nil,
+        lastGCScan = 0,
+        clickContinue = nil,
         signalFires = 0,
         direct1982Calls = 0,
         richObjects = 0,
         constantsZeroed = 0,
+        gcScans = 0,
     }
 end
 
@@ -842,10 +851,11 @@ end
 
 local function patchRichObject(state, richObject)
     if type(richObject) ~= "table" then return end
-    if not state.richSeen[richObject] then
-        state.richSeen[richObject] = true
-        state.richObjects = state.richObjects + 1
-    end
+    -- A RichText result is immutable enough for this dialogue stage. Re-walking
+    -- the same nested table every force tick wastes CPU and causes mobile FPS drops.
+    if state.richSeen[richObject] then return end
+    state.richSeen[richObject] = true
+    state.richObjects = state.richObjects + 1
 
     zeroDelayFields(state, richObject, 0, {})
 
@@ -873,6 +883,8 @@ end
 
 local function patchSmallConstants(state, fn)
     if type(_rawSetConstant) ~= "function" or type(_rawGetConstants) ~= "function" then return end
+    if state.constantScanned[fn] then return end
+    state.constantScanned[fn] = true
     local ok, constants = pcall(_rawGetConstants, fn)
     if not ok or type(constants) ~= "table" then return end
 
@@ -946,8 +958,25 @@ local function fireButtonSignal(button, state)
     return false
 end
 
-local function findFresh1982Closure()
+local function findFresh1982Closure(state)
     if type(_rawGetGC) ~= "function" then return nil end
+
+    -- Reuse the current stage closure. getgc(true) is one of the most expensive
+    -- executor operations here, so only scan again after the stage changes or
+    -- when no usable closure has been discovered yet.
+    if state and type(state.active1982) == "function" then
+        return state.active1982
+    end
+
+    local now = tick()
+    if state and (now - (state.lastGCScan or 0)) < FINAL_GC_RESCAN_INTERVAL then
+        return nil
+    end
+    if state then
+        state.lastGCScan = now
+        state.gcScans = (state.gcScans or 0) + 1
+    end
+
     local ok, objects = pcall(_rawGetGC, true)
     if not ok or type(objects) ~= "table" then return nil end
 
@@ -964,11 +993,14 @@ local function findFresh1982Closure()
             end
         end
     end
-    return best or fallback
+
+    local found = best or fallback
+    if state then state.active1982 = found end
+    return found
 end
 
 local function patchAndInvoke1982(state)
-    local fn = findFresh1982Closure()
+    local fn = findFresh1982Closure(state)
     if type(fn) ~= "function" then return false end
 
     local hasTimestamp, timestamp = getIndexedUpvalue(fn, 1)
@@ -992,7 +1024,11 @@ local function forceDialogueAdvance(dialogueGui, state)
     if not dialogueGui then return end
     suppressDialogueRendering()
 
-    local clickContinue = findClickContinue(dialogueGui)
+    local clickContinue = state.clickContinue
+    if not clickContinue or not clickContinue.Parent then
+        clickContinue = findClickContinue(dialogueGui)
+        state.clickContinue = clickContinue
+    end
     if clickContinue then fireButtonSignal(clickContinue, state) end
     patchAndInvoke1982(state)
 end
@@ -1012,7 +1048,7 @@ local function waitForFinalStage(previousSignature, timeout, state)
             end
             forceDialogueAdvance(gui, state)
         end
-        task.wait()
+        task.wait(FINAL_FORCE_INTERVAL)
     end
     return nil, nil, loops
 end
@@ -1090,16 +1126,16 @@ local function tryFinalMerchantSell(itemName, merchantPrompt)
                 return 0, "stage " .. tostring(stage) .. " timed out"
             end
 
-            moduleLog("INFO", string.format(
-                "[Inventory][ZeroDelay] Stage %d ready at +%.3fs after %d force loop(s).",
-                stage, tick() - startedAt, loops or 0
-            ))
-
             local selected, selectReason = injectDialogueOption(optionName)
             if not selected then
                 return 0, "stage " .. tostring(stage) .. " injection failed: " .. tostring(selectReason)
             end
             previousSignature = signature
+
+            -- The next dialogue page creates a new line-1982 closure. Drop only
+            -- this tiny cache so the next stage performs one fresh GC discovery.
+            state.active1982 = nil
+            state.lastGCScan = 0
         end
 
         local verifyDeadline = tick() + 0.55
@@ -1127,9 +1163,9 @@ local function tryFinalMerchantSell(itemName, merchantPrompt)
 
     if soldAmount and soldAmount > 0 then
         moduleLog("INFO", string.format(
-            "[Inventory][ZeroDelay] ✅ Sold %dx %s in %.3fs | signals=%d direct1982=%d rich=%d constants=%d",
+            "[Inventory][ZeroDelay] ✅ Sold %dx %s in %.3fs | signals=%d direct1982=%d rich=%d constants=%d gcScans=%d",
             soldAmount, itemName, tick() - startedAt, state.signalFires, state.direct1982Calls,
-            state.richObjects, state.constantsZeroed
+            state.richObjects, state.constantsZeroed, state.gcScans or 0
         ))
         return true, soldAmount
     end
