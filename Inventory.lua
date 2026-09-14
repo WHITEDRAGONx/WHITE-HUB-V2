@@ -1086,6 +1086,24 @@ local function fireButtonSignal(button, state)
     return false
 end
 
+local function clickContinueConnectionCount(button)
+    if not button or type(_rawGetConnections) ~= "function" then return 0 end
+    local signal = nil
+    pcall(function() signal = button.MouseButton1Click end)
+    if not signal then return 0 end
+    local ok, conns = pcall(_rawGetConnections, signal)
+    if not ok or type(conns) ~= "table" then return 0 end
+    local count = 0
+    for _, conn in pairs(conns) do
+        local enabled = true
+        pcall(function()
+            if conn.Enabled ~= nil then enabled = conn.Enabled end
+        end)
+        if enabled then count = count + 1 end
+    end
+    return count
+end
+
 local function findAdvanceClosureFromClickContinue(state)
     local button = state and state.clickContinue
     if not button or type(_rawGetConnections) ~= "function" then return nil end
@@ -1856,40 +1874,72 @@ function Inventory:RunFastExistingDialogueOptionLoop(optionName, isComplete, max
 
         local previousSignature = nil
         local stages = 0
+        local continueFires = 0
+        local lastContinueFireAt = 0
         local deadline = tick() + timeout
 
         while tick() < deadline and stages < maxStages do
             local completeOk, complete = pcall(isComplete)
             if completeOk and complete then
-                return true, string.format("%.3fs stages=%d gcScans=%d", tick() - startedAt, stages, state.gcScans or 0)
+                return true, string.format("%.3fs stages=%d continues=%d gcScans=%d", tick() - startedAt, stages, continueFires, state.gcScans or 0)
             end
 
-            local remaining = math.max(0.10, deadline - tick())
-            local _, signature = waitForFinalStage(previousSignature, math.min(0.55, remaining), state)
-            if not signature then
-                local completeOk2, complete2 = pcall(isComplete)
-                if completeOk2 and complete2 then
-                    return true, string.format("%.3fs stages=%d gcScans=%d", tick() - startedAt, stages, state.gcScans or 0)
-                end
-                task.wait(0.01)
+            local gui = getDialogueGui()
+            if not gui then
+                task.wait(0.005)
                 continue
             end
+            suppressDialogueRendering()
 
-            local selected, reason = injectDialogueOption(optionName)
-            if not selected then
-                return false, "option injection failed: " .. tostring(reason)
+            local signature = select(1, getDialogueStateSignature())
+            if signature ~= "" and signature ~= previousSignature then
+                local selected, reason = injectDialogueOption(optionName)
+                if not selected then
+                    return false, "option injection failed: " .. tostring(reason)
+                end
+                stages = stages + 1
+                previousSignature = signature
+
+                -- The next page may reuse DialogueGui/ClickContinue but replace
+                -- its callback. Drop stage-local caches so the new line-2088
+                -- continuation callback is discovered immediately.
+                state.active1982 = nil
+                state.clickContinue = nil
+                state.lastGCScan = 0
+                task.wait(0.005)
+            elseif signature == "" then
+                -- DialogueAnalyzer confirmed that Dio/Jotaro completion has a
+                -- second, option-less stage whose ClickContinue callback lives at
+                -- ClientFunctions:2088. Fire that live signal directly instead
+                -- of waiting for the visible text animation.
+                local clickContinue = findClickContinue(gui)
+                state.clickContinue = clickContinue
+                local connCount = clickContinueConnectionCount(clickContinue)
+                local now = tick()
+                local fired = false
+                if clickContinue and (connCount > 0 or now - lastContinueFireAt >= 0.02) then
+                    fired = fireButtonSignal(clickContinue, state)
+                    if fired then
+                        continueFires = continueFires + 1
+                        lastContinueFireAt = now
+                    end
+                end
+
+                -- Keep the proven RichText/advance-closure accelerator running as
+                -- a fallback while the continue callback is being installed.
+                patchAndInvoke1982(state)
+                task.wait(0.005)
+            else
+                -- Same option page is still animating/processing. Force the text
+                -- engine forward but do not inject the option twice.
+                forceDialogueAdvance(gui, state)
+                task.wait(0.005)
             end
-
-            stages = stages + 1
-            previousSignature = signature
-            state.active1982 = nil
-            state.lastGCScan = 0
-            task.wait(0.01)
         end
 
         local completeOk, complete = pcall(isComplete)
         if completeOk and complete then
-            return true, string.format("%.3fs stages=%d gcScans=%d", tick() - startedAt, stages, state.gcScans or 0)
+            return true, string.format("%.3fs stages=%d continues=%d gcScans=%d", tick() - startedAt, stages, continueFires, state.gcScans or 0)
         end
         return false, "completion state not confirmed"
     end, function(err)
@@ -1929,7 +1979,7 @@ end
 
 function Inventory:GetDialogueDiagnostics()
     return {
-        Build = "ZERO-DELAY-2026.09.14-R4-QUEST-FINISH-DIALOGUE",
+        Build = "ZERO-DELAY-2026.09.14-R5-CONTINUE-STAGE",
         FingerprintChecked = _fingerprint.checked,
         DialogueTypeDetected = _fingerprint.dialogueType,
         DialogueTypeLine = _fingerprint.dialogueTypeLine,
